@@ -1,0 +1,26 @@
+[project]
+name = "ctrlapp"
+version = "0.0.1"
+description = "Windows desktop agent driven by Claude vision — no MCP, no app APIs."
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.40.0",
+    "mss>=9.0.1",
+    "Pillow>=10.0.0",
+    "pyautogui>=0.9.54",
+    "pywin32>=306; sys_platform == 'win32'",
+    "pyperclip>=1.8.2",
+    "tomli>=2.0.1; python_version < '3.11'",
+    "rich>=13.7.0",
+    "imagehash>=4.3.1",
+]
+
+[project.scripts]
+ctrlapp = "ctrlapp.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ctrlapp"]

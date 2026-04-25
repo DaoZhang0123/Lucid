@@ -1,0 +1,91 @@
+# ctrlapp 运行时配置
+# 所有参数均可被命令行覆盖；空值表示按事件触发或采用默认。
+
+[llm]
+# Claude 模型 ID（design.md §1 中产品目标 Opus 4.6）。
+# 走 Anthropic 原生 API 时建议 "claude-opus-4-5"；走本地 LiteLLM/Copilot 代理可填 "claude-opus-4.6"。
+model = "claude-opus-4-5"
+# 最长输出 token
+max_tokens = 4096
+# 单次任务最多 ReAct 步数（硬上限，防失控）
+max_steps = 40
+# 是否启用 prompt caching（系统 prompt 与早期截图）
+enable_prompt_cache = true
+# 对话历史里最多保留多少张截图（含任务起始那张）。
+# 超出后旧图会被替换成占位文字，防止上游 413 Request Entity Too Large。
+# 设 0 表示不裁剪（仅在确认上游能扛大请求体时使用）。
+keep_recent_screenshots = 4
+
+# === 本地 LiteLLM 代理（如 litellm-ghc-proxy-lite） ===
+# 主 ReAct 循环 与 --smoke-test 都走这里。
+[llm.proxy]
+base_url = "http://localhost:4000"
+model = "claude-opus-4.6"
+# 留空则从环境变量 LITELLM_MASTER_KEY 读取
+api_key = ""
+
+[logging]
+# 是否把每次运行的主要信息与截图持久化到本地
+enabled = true
+# 日志根目录（相对仓库根 / 或绝对路径都行）
+dir = "logs"
+# 文本日志等级：DEBUG | INFO | WARNING | ERROR | OFF
+# - DEBUG  额外记录每条 messages 摘要、tool_call 原始参数
+# - INFO   step 概要 / 工具调用 action / 模型文本回复（推荐）
+# - WARNING 只记安全确认 / 工具错误
+# - ERROR  只记异常
+# - OFF    不写文本
+text_level = "INFO"
+# 截图保存等级：DEBUG | INFO | WARNING | OFF
+# - DEBUG  保存所有截图（含动作前每张原图）
+# - INFO   只保存"任务起始"与"每步动作后"截图（推荐）
+# - WARNING 仅在 tool 报错时落盘
+# - OFF    完全不存图（隐私优先时用）
+image_level = "INFO"
+# 截图存储格式：png | jpg
+image_format = "png"
+# JPG 质量（仅 image_format=jpg 时生效）
+jpg_quality = 85
+# 历史轮转：最多保留多少次运行的目录
+keep_runs = 20
+
+[screenshot]
+# === 三级金字塔（design.md §4.5.3） ===
+# 单位：秒；0 表示仅按事件触发，不做周期截图
+l1_fullscreen_interval = 60.0
+l2_activewindow_interval = 8.0
+l3_cursor_interval = 0.0   # Phase 0 改为按事件触发
+
+# L3 鼠标周边方块边长 = 2 * radius
+l3_radius_px = 100
+
+# 下采样长边；0 = 不缩放
+l1_max_long_edge = 1568
+l2_max_long_edge = 1568
+l3_max_long_edge = 0
+
+# 历史滑窗：每级别保留最近 K 张
+keep_recent_l1 = 2
+keep_recent_l2 = 4
+keep_recent_l3 = 6
+
+# 变化检测：相似度 > 阈值时跳过本次 LLM 调用（dHash 距离换算）
+skip_if_similarity_above = 0.985
+
+[safety]
+# 危险动作触发 HITL 二次确认的关键字
+hitl_keywords = ["删除", "delete", "rm ", "format", "shutdown", "转账", "支付", "确认付款"]
+# 全局急停热键（design.md §4.7）
+emergency_hotkey = "ctrl+alt+esc"
+# 默认自动度档位：full | confirm_critical | confirm_each
+autonomy = "confirm_critical"
+
+[input]
+# 输入策略：clipboard | unicode_sendinput
+# - clipboard（默认推荐）：action="type" 的任何文本均走 Ctrl+V 粘贴，
+#   完全避开当前输入法状态（中/英/中文标点等）对打字的干扰。
+#   内部的 \n / \t 会被拆成「粘贴可见部分 + 按 Enter/Tab」以保证动作准确。
+# - unicode_sendinput：走 pyautogui.typewrite，只支持 ASCII，中文会乱码。
+chinese_input = "clipboard"
+# 每个动作之间的最小间隔（秒），给 UI 留响应时间
+action_delay = 0.15
