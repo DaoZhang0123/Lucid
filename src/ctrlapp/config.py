@@ -51,6 +51,13 @@ class SafetyConfig:
     hitl_keywords: list[str] = field(default_factory=list)
     emergency_hotkey: str = "ctrl+alt+esc"
     autonomy: str = "confirm_critical"
+    # 安全兑底（架构层 + 行为层）
+    # 架构层：点击类动作后额外拓 L3 鼠标周边高清取证图，让模型看清落点。
+    # 代价：每次点击后 prompt 多一张小图（带宽上变慢）。
+    verify_click_with_l3: bool = True
+    # 行为层：在保存/打开对话框里检测到“在左侧 25% 区域点击”时，注入一条
+    # “请用文件名框/地址栏 type 路径”的纠正提示，避免模型去左侧导航树逐层点。
+    save_dialog_sidebar_guard: bool = True
 
 
 @dataclass

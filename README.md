@@ -15,7 +15,7 @@
 
 - ✅ Windows 原生 Python 进程（不走 Docker）
 - ✅ Per-Monitor V2 DPI Aware + 多屏虚拟坐标
-- ✅ 三级金字塔截图骨架（L1/L2/L3，当前 ReAct 主用 L1）
+- ✅ 三级金字塔截图接入 ReAct：模型可调 `action="screenshot"` + `level="fullscreen" | "active_window" | "cursor_local"` 选粒度
 - ✅ `computer` 工具完整动作派发（点击 / 拖拽 / 滚轮 / 中文 type / 快捷键）4个
 - ✅ 中文输入走剪贴板 + Ctrl+V
 - ✅ Safety Layer：危险词命中 / `confirm_each` 档位的终端 y/n 确认
@@ -112,7 +112,7 @@ Prompt: 你是谁？一句话。
 → computer.type {'text': 'hello from ctrlapp'}
 ```
 
-> 滑窗上限由 `[llm].keep_recent_screenshots` 控制（默认 4），超出后旧图在发出前被替换为占位文本，本地 `messages.jsonl` 和 `step-*.png` 仍会完整落盘。
+> 滑窗上限由 `[llm].keep_recent_screenshots` 控制（默认 4）。裁剪规则 = **每级（L1/L2/L3）最新一张** ⊕ **全局最近 N 张**，这样任意一级上都总能在 prompt 里看到最新证据；其余旧图在发出前被替换为占位文本，本地 `messages.jsonl` 和 `step-*.png` 仍会完整落盘。
 
 #### 端到端：写文件并落盘
 
@@ -227,9 +227,9 @@ src/ctrlapp/
 
 | Phase | 状态 | 内容 |
 | --- | --- | --- |
-| 0 Spike | ✅ 本仓 | CLI 跑通闭环 |
-| 1 MVP | ⏳ | Tauri + WebView2 托盘聊天窗、全局急停热键、回放 |
+| 0 Spike | ✅ 本仓 | CLI 跑通闭环（含端到端写文件并保存） |
+| 1 MVP | ⏳ | Tauri + WebView2 托盘聊天窗、全局急停热键、回放、5 个示例场景 |
 | 2 准生产 | ⏳ | Set-of-Mark 增强、speculative multi-action、隐私沙箱 |
 | 3 平台化 | ⏳ | 任务模板、企业策略 |
 
-设计细节见 [design.md](design.md)。
+设计细节见 [design.md](design.md)，详细任务拆解见 [todo.md](todo.md)。

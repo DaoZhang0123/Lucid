@@ -23,6 +23,31 @@ class ToolResult:
     image_png: bytes | None = None
 
 
+_LEVEL_ALIASES = {
+    None: ScreenLevel.L1,
+    "": ScreenLevel.L1,
+    "l1": ScreenLevel.L1,
+    "fullscreen": ScreenLevel.L1,
+    "full": ScreenLevel.L1,
+    "screen": ScreenLevel.L1,
+    "l2": ScreenLevel.L2,
+    "active_window": ScreenLevel.L2,
+    "active": ScreenLevel.L2,
+    "window": ScreenLevel.L2,
+    "l3": ScreenLevel.L3,
+    "cursor_local": ScreenLevel.L3,
+    "cursor": ScreenLevel.L3,
+    "local": ScreenLevel.L3,
+}
+
+
+def _parse_level(raw: Any) -> ScreenLevel:
+    if isinstance(raw, ScreenLevel):
+        return raw
+    key = raw.lower().strip() if isinstance(raw, str) else raw
+    return _LEVEL_ALIASES.get(key, ScreenLevel.L1)
+
+
 class ComputerTool:
     """Anthropic computer_use_20250124 兼容动作派发器。"""
 
@@ -51,9 +76,10 @@ class ComputerTool:
             "function": {
                 "name": "computer",
                 "description": (
-                    f"Control the Windows desktop. The screenshots you receive are {screen_w}x{screen_h} pixels; "
-                    "use that coordinate space when specifying `coordinate`. Always start with action='screenshot' "
-                    "if you have not seen the screen recently."
+                    f"Control the Windows desktop. The default screenshots you receive are {screen_w}x{screen_h} pixels (level=fullscreen); "
+                    "use that coordinate space when specifying `coordinate`. You can request a more detailed screenshot by calling "
+                    "action='screenshot' with level='active_window' (the focused window only) or level='cursor_local' (a small patch around the mouse). "
+                    "Coordinates you give afterwards are interpreted in the most recent screenshot's coordinate space."
                 ),
                 "parameters": {
                     "type": "object",
@@ -80,12 +106,22 @@ class ComputerTool:
                             ],
                             "description": "The desktop action to perform.",
                         },
+                        "level": {
+                            "type": "string",
+                            "enum": ["fullscreen", "active_window", "cursor_local"],
+                            "description": (
+                                "Only for action='screenshot'. "
+                                "fullscreen = whole virtual desktop (default, coarse, good for orientation); "
+                                "active_window = the currently focused window only (medium, good for in-app work); "
+                                "cursor_local = a small high-detail patch around the mouse cursor (best for precise targeting before a click)."
+                            ),
+                        },
                         "coordinate": {
                             "type": "array",
                             "items": {"type": "integer"},
                             "minItems": 2,
                             "maxItems": 2,
-                            "description": "[x, y] in screenshot pixel coordinates.",
+                            "description": "[x, y] in the most recent screenshot's pixel coordinates.",
                         },
                         "text": {
                             "type": "string",
@@ -126,9 +162,18 @@ class ComputerTool:
         text = p.get("text")
 
         if a == "screenshot":
-            cap = self.sensor.capture(ScreenLevel.L1)
+            level = _parse_level(p.get("level"))
+            cap = self.sensor.capture(level)
             self.last_capture = cap
-            return ToolResult(image_png=cap.png_bytes(), output=f"L1 {cap.sent_size[0]}x{cap.sent_size[1]}")
+            tag = {
+                ScreenLevel.L1: "L1/fullscreen",
+                ScreenLevel.L2: "L2/active_window",
+                ScreenLevel.L3: "L3/cursor_local",
+            }[level]
+            return ToolResult(
+                image_png=cap.png_bytes(),
+                output=f"{tag} {cap.sent_size[0]}x{cap.sent_size[1]} (raw {cap.raw_size[0]}x{cap.raw_size[1]} @ offset {cap.offset})",
+            )
 
         if a == "mouse_move":
             x, y = self._coord(coord)

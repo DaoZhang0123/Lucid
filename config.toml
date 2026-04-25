@@ -79,6 +79,11 @@ hitl_keywords = ["删除", "delete", "rm ", "format", "shutdown", "转账", "支
 emergency_hotkey = "ctrl+alt+esc"
 # 默认自动度档位：full | confirm_critical | confirm_each
 autonomy = "confirm_critical"
+# 点击后额外拓一张 L3 落点取证图（架构层兑底）。
+# 优点：模型能看清刚点中什么；缺点：每次点击 prompt 多一张图，上游会变慢。
+verify_click_with_l3 = true
+# 保存/打开对话框中检测到“左侧导航树点击”时注入“请用文件名框/地址栏 type 路径”的纠正提示（行为层兑底）。
+save_dialog_sidebar_guard = true
 
 [input]
 # 输入策略：clipboard | unicode_sendinput
