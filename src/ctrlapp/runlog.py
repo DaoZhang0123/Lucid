@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import shutil
 import time
@@ -54,8 +55,20 @@ class RunLogger:
 
         base = Path(cfg.dir)
         if not base.is_absolute():
-            # 相对路径 → 仓库根（package 上两层）
-            base = Path(__file__).resolve().parents[2] / cfg.dir
+            # 相对路径 → 优先用 %LOCALAPPDATA%\dev.ctrlapp\<dir>，避免 PyInstaller
+            # onefile 模式下 __file__ 落在 %TEMP%\_MEIxxx，导致历史回放找不到目录。
+            # 仅在能找到本地数据目录时使用；否则回退到包根（开发场景）。
+            user_base: Path | None = None
+            if os.name == "nt":
+                local_app = os.environ.get("LOCALAPPDATA")
+                if local_app:
+                    user_base = Path(local_app) / "dev.ctrlapp"
+            elif (home := os.environ.get("HOME")):
+                user_base = Path(home) / ".ctrlapp"
+            if user_base is not None:
+                base = user_base / cfg.dir
+            else:
+                base = Path(__file__).resolve().parents[2] / cfg.dir
         base.mkdir(parents=True, exist_ok=True)
 
         self.run_dir = base / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{_slug(instruction)}"

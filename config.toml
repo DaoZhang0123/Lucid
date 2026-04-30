@@ -8,7 +8,7 @@ model = "claude-opus-4-5"
 # 最长输出 token
 max_tokens = 4096
 # 单次任务最多 ReAct 步数（硬上限，防失控）
-max_steps = 40
+max_steps = 25
 # 是否启用 prompt caching（系统 prompt 与早期截图）
 enable_prompt_cache = true
 # 对话历史里最多保留多少张截图（含任务起始那张）。
@@ -16,13 +16,23 @@ enable_prompt_cache = true
 # 设 0 表示不裁剪（仅在确认上游能扛大请求体时使用）。
 keep_recent_screenshots = 4
 
-# === 本地 LiteLLM 代理（如 litellm-ghc-proxy-lite） ===
-# 主 ReAct 循环 与 --smoke-test 都走这里。
+# === 本地 OpenAI 兼容代理 ===
+# 主 ReAct 循环 与 --smoke-test 都走这里。可选两个本地后端：
+#   1) litellm-ghc-proxy-lite —— base_url=http://localhost:4000, model=github_copilot/...
+#   2) OpenClaw gateway      —— base_url=http://127.0.0.1:18789, model="openclaw"
+#      OpenClaw 把 model 字段当作 agent 选择，必须填 "openclaw"；
+#      具体 backend 模型靠 HTTP header `x-openclaw-model` 选。
+#      需要先在 ~/.openclaw/openclaw.json 里把
+#      `gateway.http.endpoints.chatCompletions.enabled` 设为 true。
 [llm.proxy]
-base_url = "http://localhost:4000"
-model = "claude-opus-4.6"
+base_url = "http://127.0.0.1:18789"
+model = "openclaw"
 # 留空则从环境变量 LITELLM_MASTER_KEY 读取
 api_key = ""
+
+# 任意附加 HTTP 头。走 OpenClaw 时填一行：
+[llm.proxy.extra_headers]
+"x-openclaw-model" = "github-copilot/claude-opus-4.7"
 
 [logging]
 # 是否把每次运行的主要信息与截图持久化到本地

@@ -10,13 +10,20 @@ from __future__ import annotations
 import base64
 import json
 import os
-from typing import Any
+import threading
+from typing import Any, Callable
 
-from openai import APIError, OpenAI
+from openai import APIError
 from rich.console import Console
 
 from .config import Config
 from .input_driver import InputDriver
+from .llm_client import (
+    AnthropicClient,
+    CopilotClient,
+    LLMClient,
+    OpenAIChatClient,
+)
 from .runlog import RunLogger
 from .safety import SafetyLayer
 from .screen import ScreenLevel, ScreenSensor
@@ -43,6 +50,25 @@ SYSTEM_PROMPT = """\
 7. coordinate 必须是图片像素坐标（左上角原点），不要给百分比或相对坐标。
 
 常用技巧：
+- **优先用键盘快捷键，避免鼠标点击**：截图坐标不一定精确，点击小图标/按钮容易点偏。能用键盘做到的事就别用鼠标：
+  - 切换 / 浏览已开窗口：`alt+tab`（顺序切下一个）、`alt+shift+tab`（反向切）、`win+tab`（任务视图，可看缩略图后再切）。
+    **不要**靠点击任务栏小图标来切窗口。
+  - 浏览器：新建空白页用 `ctrl+n`（**不要**点窗口右上角加号），新标签页 `ctrl+t`，关标签 `ctrl+w`，地址栏 `ctrl+l` / `alt+d`，
+    后退/前进 `alt+左/右`，刷新 `f5`。
+  - 文本编辑：全选 `ctrl+a`、复制/粘贴 `ctrl+c`/`ctrl+v`、撤销 `ctrl+z`、保存 `ctrl+s`、查找 `ctrl+f`。
+  - 系统：运行命令 `win+r`、文件资源管理器 `win+e`、桌面 `win+d`、锁屏 `win+l`（别用）、记事本可 `win+r` 然后 type `notepad` 回车。
+  - 窗口排版：`win+左/右` 半屏吸附、`win+上` 最大化、`win+下` 最小化或还原、`win+m` 最小化全部。
+  - 仅当确实没有快捷键、或快捷键不生效时，才退回到鼠标点击；点击前先用 L2/L3 截图看清目标。
+- **不要覆盖用户正在编辑的内容**：执行任何"打开/新建/保存"类操作前都要假设当前已经有用户的工作内容，宁可新开一个也别覆盖：
+  - 写文档：用 `win+r` → `notepad` 回车开**新的**记事本实例；**不要**直接往已经打开的记事本里 type，因为里面可能是用户的稿子。
+    要写在 Word/WPS 里就用 `ctrl+n` 新建文档，**不要**在已打开的文档里直接覆盖写。
+  - 浏览器：开新页面一律 `ctrl+n` 或 `ctrl+t`，**不要**复用当前 tab 的地址栏跳转，会丢掉用户当前在看的页面。
+  - 保存文件时若对话框默认文件名指向已存在文件，先全选删掉再 type 一个**新的、明确的文件名**（带时间戳更稳，例如
+    `C:\\Users\\xxx\\Desktop\\note-20260430.txt`），避免静默覆盖。
+  - 关闭任何窗口/标签前必须确认这是你自己刚开的；不能随手关用户原来的窗口。
+- **打开应用前先看是否已经开着**：要使用某个 App（浏览器/编辑器/聊天工具等）前，先按 `alt+tab` 截图查看已打开的窗口列表。
+  如果目标 App 已经在运行，**新建窗口**（如 `ctrl+n`）继续工作，**不要**直接占用用户原有窗口；只有完全没开时，才通过
+  `win+r` / 开始菜单搜索启动它。
 - **保存/打开对话框定位文件**：优先在**文件名输入框**里直接 type 完整绝对路径（如 `C:\\Users\\xxx\\Desktop\\a.txt`）后按 Enter，
   或者点击对话框顶部的**地址栏**（路径面包屑）然后 type 目标路径回车——**不要**去左侧的"快速访问/此电脑"树里一层层点击导航，
   既慢又容易点错。
@@ -128,22 +154,147 @@ def _resolve_proxy_key(api_key_in_cfg: str) -> str:
     )
 
 
-class Agent:
-    def __init__(self, cfg: Config, api_key: str | None = None) -> None:
-        self.cfg = cfg
-        proxy = cfg.llm.proxy
-        key = api_key or _resolve_proxy_key(proxy.api_key)
-        if not key:
+def _build_llm_client(cfg: Config, api_key_override: str | None) -> LLMClient:
+    """按 cfg.llm.provider 选三种后端之一。
+
+    "proxy"     -> OpenAI 兼容代理 (LiteLLM / OpenClaw / 任意 OpenAI 兼容端点)
+    "anthropic" -> Anthropic 原生 Messages API
+    "copilot"   -> GitHub Copilot OAuth
+
+    显式设置但凭据缺失时，会按 anthropic > copilot > proxy 的优先级回退
+    （避免“点了 copilot 却悄悄走 proxy”这种隐形错配）。
+    """
+    raw_provider = (cfg.llm.provider or "anthropic").strip().lower()
+
+    # 候选探测（按用户指定的优先级）
+    a = cfg.llm.anthropic
+    anthropic_key = api_key_override or a.api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    has_anthropic = bool(anthropic_key)
+
+    has_copilot = False
+    copilot_tm = None
+    try:
+        from .auth.copilot import CopilotTokenManager  # 延迟导入避免循环
+        copilot_tm = CopilotTokenManager(cfg.llm.copilot.state_file or None)
+        has_copilot = bool(copilot_tm.status().get("logged_in"))
+    except Exception:
+        copilot_tm = None
+        has_copilot = False
+
+    proxy = cfg.llm.proxy
+    proxy_key = api_key_override or _resolve_proxy_key(proxy.api_key)
+    has_proxy = bool(proxy_key)
+
+    # 把"auto" / 未知值，或显式 provider 但凭据缺失的情况，按优先级回退
+    def _auto_pick() -> str:
+        if has_anthropic:
+            return "anthropic"
+        if has_copilot:
+            return "copilot"
+        if has_proxy:
+            return "proxy"
+        return "anthropic"  # 没有任何凭据时，让下面 anthropic 分支报详细错
+
+    if raw_provider not in ("anthropic", "copilot", "proxy"):
+        provider = _auto_pick()
+    elif raw_provider == "anthropic" and not has_anthropic and (has_copilot or has_proxy):
+        provider = _auto_pick()
+    elif raw_provider == "copilot" and not has_copilot and (has_anthropic or has_proxy):
+        provider = _auto_pick()
+    elif raw_provider == "proxy" and not has_proxy and (has_anthropic or has_copilot):
+        provider = _auto_pick()
+    else:
+        provider = raw_provider
+
+    if provider == "anthropic":
+        if not anthropic_key:
             raise RuntimeError(
-                "缺少代理 API Key：请设置 LITELLM_MASTER_KEY 环境变量，"
-                "或在 config.toml 的 [llm.proxy].api_key 填入。"
+                "缺少 Anthropic API Key：请设置 ANTHROPIC_API_KEY 环境变量，"
+                "或在设置页 Anthropic.api_key 填入。"
             )
-        self.client = OpenAI(base_url=proxy.base_url.rstrip("/"), api_key=key)
-        self.model = proxy.model
+        return AnthropicClient(
+            api_key=anthropic_key,
+            model=a.model,
+            base_url=a.base_url,
+            anthropic_version=a.anthropic_version,
+        )
+    if provider == "copilot":
+        from .auth.copilot import CopilotAuthError, CopilotTokenManager
+        c = cfg.llm.copilot
+        tm = copilot_tm or CopilotTokenManager(c.state_file or None)
+        if not tm.status().get("logged_in"):
+            raise RuntimeError(
+                "未登录 GitHub Copilot。请到设置页点 “登录 GitHub Copilot” 完成设备码授权。"
+            )
+        # 预热一次：提前发现 token 到期 / 账号被吃
+        try:
+            tm.get_active()
+        except CopilotAuthError as e:
+            raise RuntimeError(str(e))
+        return CopilotClient(token_manager=tm, model=c.model)
+    # proxy
+    if not proxy_key:
+        raise RuntimeError(
+            "缺少代理 API Key：请设置 LITELLM_MASTER_KEY 环境变量，"
+            "或在 config.toml 的 [llm.proxy].api_key 填入。"
+        )
+    return OpenAIChatClient(
+        base_url=proxy.base_url,
+        api_key=proxy_key,
+        model=proxy.model,
+        extra_headers=dict(proxy.extra_headers) if proxy.extra_headers else None,
+    )
+
+
+class CancelledError(RuntimeError):
+    """外部取消驱动时抛出（例如 sidecar.cancel）。"""
+
+
+EventSink = Callable[[dict[str, Any]], None]
+
+
+class Agent:
+    def __init__(
+        self,
+        cfg: Config,
+        api_key: str | None = None,
+        *,
+        event_sink: EventSink | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> None:
+        self.cfg = cfg
+        self.client = _build_llm_client(cfg, api_key)
+        self.model = self.client.model
         self.sensor = ScreenSensor(cfg.screenshot)
         self.driver = InputDriver(cfg.input)
         self.tool = ComputerTool(self.sensor, self.driver)
         self.safety = SafetyLayer(cfg.safety)
+        self.event_sink = event_sink
+        self.cancel_event = cancel_event
+
+    # 事件上报：sidecar 模式下避免使用 rich 控制台（会污染 stdout JSONRPC 通道）
+    def _emit(self, kind: str, **payload: Any) -> None:
+        if self.event_sink is None:
+            return
+        try:
+            evt = {"event": kind, **payload}
+            self.event_sink(evt)
+        except Exception:
+            # event sink 出错不应该干扰主流程
+            pass
+
+    def _print(self, *args: Any, **kw: Any) -> None:
+        """sidecar 模式下静默；CLI 模式下走 rich console。"""
+        if self.event_sink is None:
+            _console.print(*args, **kw)
+
+    def _rule(self, *args: Any, **kw: Any) -> None:
+        if self.event_sink is None:
+            _console.rule(*args, **kw)
+
+    def _check_cancel(self) -> None:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise CancelledError("cancelled by user")
 
     def run(self, instruction: str) -> str:
         log = RunLogger(self.cfg.logging, instruction)
@@ -151,11 +302,21 @@ class Agent:
             f"proxy={self.cfg.llm.proxy.base_url} model={self.model} "
             f"max_steps={self.cfg.llm.max_steps} autonomy={self.cfg.safety.autonomy}"
         )
+        run_dir = str(log.run_dir) if log.run_dir is not None else None
+        self._emit("run_start", instruction=instruction, run_dir=run_dir,
+                   model=self.model, max_steps=self.cfg.llm.max_steps,
+                   autonomy=self.cfg.safety.autonomy)
         try:
             return self._run(instruction, log)
+        except CancelledError:
+            log.warning("cancelled")
+            log.close(status="cancelled")
+            self._emit("final", status="cancelled", text="")
+            return "(已取消)"
         except Exception as e:
             log.error(f"{type(e).__name__}: {e}")
             log.close(status="error")
+            self._emit("error", message=f"{type(e).__name__}: {e}")
             raise
 
     def _run(self, instruction: str, log: RunLogger) -> str:
@@ -198,31 +359,40 @@ class Agent:
         save_dialog_close_keys = {"return", "enter", "esc", "escape"}
 
         for step in range(self.cfg.llm.max_steps):
-            _console.rule(f"[cyan]Step {step + 1}/{self.cfg.llm.max_steps}")
+            self._check_cancel()
+            self._rule(f"[cyan]Step {step + 1}/{self.cfg.llm.max_steps}")
             log.info(f"--- step {step + 1}/{self.cfg.llm.max_steps} ---")
+            self._emit("step_start", step=step + 1, max_steps=self.cfg.llm.max_steps)
             dropped = _prune_old_images(messages, self.cfg.llm.keep_recent_screenshots)
             if dropped:
                 log.debug(f"pruned {dropped} old screenshot(s) from prompt")
             try:
-                resp = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,  # type: ignore[arg-type]
-                    tools=[tool_schema],  # type: ignore[arg-type]
+                resp = self.client.chat(
+                    messages=messages,
+                    tools=[tool_schema],
                     max_tokens=self.cfg.llm.max_tokens,
                 )
             except APIError as e:
-                _console.print(f"[red]API 错误：{e}[/red]")
+                self._print(f"[red]API 错误：{e}[/red]")
                 log.error(f"API error: {e}")
                 log.close(status="api_error")
+                self._emit("error", message=f"API error: {e}")
                 return f"(API error) {e}"
+            except Exception as e:
+                # Anthropic / Copilot SDK 有自己的错误类型，用 base Exception 兜住
+                self._print(f"[red]LLM 调用错误：{type(e).__name__}: {e}[/red]")
+                log.error(f"LLM error: {type(e).__name__}: {e}")
+                log.close(status="api_error")
+                self._emit("error", message=f"LLM error: {e}")
+                return f"(LLM error) {e}"
 
-            msg = resp.choices[0].message
-            tool_calls = list(msg.tool_calls or [])
-            text_content = msg.content or ""
+            tool_calls = resp.tool_calls
+            text_content = resp.text or ""
 
             if text_content.strip():
-                _console.print(f"[white]{text_content}[/white]")
+                self._print(f"[white]{text_content}[/white]")
                 log.info(f"assistant text: {text_content.strip()}")
+                self._emit("assistant_text", step=step + 1, text=text_content)
 
             # 把 assistant 消息原样回塞
             assistant_msg: dict[str, Any] = {"role": "assistant", "content": text_content}
@@ -232,8 +402,8 @@ class Agent:
                         "id": tc.id,
                         "type": "function",
                         "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments or "{}",
+                            "name": tc.name,
+                            "arguments": tc.arguments_json or "{}",
                         },
                     }
                     for tc in tool_calls
@@ -248,6 +418,7 @@ class Agent:
                     final = stripped or "(无文本输出)"
                     log.step_record({"step": step + 1, "final_text": final})
                     log.close(status="ok", final_text=final)
+                    self._emit("final", status="ok", text=final)
                     return final
                 # 推一把：追加一条 user 消息，要求继续调工具或明确声明完成。
                 nudges_left -= 1
@@ -266,16 +437,17 @@ class Agent:
             had_screenshot = False
             step_tool_records: list[dict[str, Any]] = []
             for tc in tool_calls:
-                fn_name = tc.function.name
+                fn_name = tc.name
                 try:
-                    args = json.loads(tc.function.arguments or "{}")
+                    args = json.loads(tc.arguments_json or "{}")
                 except json.JSONDecodeError:
                     args = {}
                 if not isinstance(args, dict):
                     args = {}
                 action = args.pop("action", "")
-                _console.print(f"[magenta]→ {fn_name}.{action}[/magenta] {args}")
+                self._print(f"[magenta]→ {fn_name}.{action}[/magenta] {args}")
                 log.info(f"tool_call {fn_name}.{action} {args}")
+                self._emit("tool_call", step=step + 1, name=fn_name, action=action, args=args)
 
                 if fn_name != "computer":
                     tr = ToolResult(error=f"unknown tool: {fn_name}")
@@ -303,6 +475,8 @@ class Agent:
                     log.save_image(tr.image_png, f"step-{step + 1:03d}-shot", level="DEBUG")
 
                 step_tool_records.append({"action": action, "args": args, "result": content_str})
+                self._emit("tool_result", step=step + 1, action=action,
+                           ok=tr.error is None, output=tr.output or "", error=tr.error or "")
 
                 messages.append(
                     {
@@ -368,6 +542,10 @@ class Agent:
             }[post.level]
             post_png = post.png_bytes()
             saved_name = log.save_image(post_png, f"step-{step + 1:03d}-post-{post.level.value}", level="INFO")
+            self._emit("step_image", step=step + 1, level=level_tag,
+                       width=post.sent_size[0], height=post.sent_size[1],
+                       path=str(log.run_dir / saved_name) if (log.run_dir and saved_name) else None,
+                       phase="post")
 
             # 抓 L3 落点取证图（如果本步有点击且当前 post 不是 L3 本身）
             verify_capture = None
@@ -416,4 +594,5 @@ class Agent:
 
         log.warning("max_steps reached")
         log.close(status="max_steps")
+        self._emit("final", status="max_steps", text="")
         return "(达到最大步数预算，任务可能未完成)"

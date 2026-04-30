@@ -89,9 +89,9 @@
 | 12 | **[OS-Copilot/OS-Atlas](https://github.com/OS-Copilot/OS-Atlas)** | ~1k+ | GUI Agent 基础动作模型 + 数据集 | 纯视觉 | 同上，开源 grounding 模型候选。 |
 | 13 | **[mediar-ai/terminator](https://github.com/mediar-ai/terminator)** | ~1.4k | Rust，"Windows 版 Playwright" | UIA / 选择器（**非纯视觉**） | 反路线但有用：可作为 fallback 工具，处理纯视觉点不准的"魔鬼细节" UI。 |
 | 14 | **[asweigart/pyautogui](https://github.com/asweigart/pyautogui)** / **[nut-tree/nut.js](https://github.com/nut-tree/nut.js)** | 高 | 跨平台输入注入库 | 工具库 | 候选输入层依赖（Python / Node 各一）。 |
-| 15 | **[OpenGVLab/ScaleCUA](https://github.com/OpenGVLab/ScaleCUA)** | ~1.1k | 跨平台 CUA + 数据 | 纯视觉 | ICLR 2026 Oral，开源数据 + 模型，可做模型评测对照。 |
+| 15 | **[OpenGVLab/ScaleCUA](https://github.com/OpenGVLab/ScaleCUA)** | ~1.1k | 跨平台 CUA + 数据 | 纯视觉 | ICLR 2026 Oral，开源数据 + 模型，可做模型 评测对照。 |
 | 16 | **[onuratakan/gpt-computer-assistant](https://github.com/onuratakan/gpt-computer-assistant)** | 较高 | Python 桌面助手 | 视觉 | OpenAI 路线版本，UX 借鉴。 |
-| 17 | **[anthropics/claude-quickstarts/computer-use-demo](https://github.com/anthropics/claude-quickstarts/tree/main/computer-use-demo)** | 高 | Docker + Linux + Streamlit | 纯视觉 | **Anthropic 官方参考**。本项目=它的 Windows 原生工程化版本。 |
+| 17 | **[anthropics/claude-qu   ickstarts/computer-use-demo](https://github.com/anthropics/claude-quickstarts/tree/main/computer-use-demo)** | 高 | Docker + Linux + Streamlit | 纯视觉 | **Anthropic 官方参考**。本项目=它的 Windows 原生工程化版本。 |
 
 ### 3.2 学术 / 评测基准（用来给项目"打分"）
 

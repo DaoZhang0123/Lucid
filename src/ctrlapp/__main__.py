@@ -43,6 +43,11 @@ def main() -> int:
         action="store_true",
         help="只通过代理打一次 /chat/completions 验证连通性，不截图、不操作鼠标键盘。",
     )
+    parser.add_argument(
+        "--sidecar",
+        action="store_true",
+        help="以 stdio JSON-RPC sidecar 模式运行（供 Tauri/前端拉起，详见 sidecar.py）。",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -54,6 +59,11 @@ def main() -> int:
         cfg.llm.max_steps = args.max_steps
     if args.autonomy:
         cfg.safety.autonomy = args.autonomy
+
+    # ------ sidecar 模式：stdio JSON-RPC ------
+    if args.sidecar:
+        from .sidecar import run_sidecar
+        return run_sidecar(cfg)
 
     # ------ smoke test：纯文本一问一答 ------
     if args.smoke_test:
@@ -70,7 +80,12 @@ def main() -> int:
             _console.print(f"[red]{e}[/red]")
             return 1
         _console.rule("[bold green]Reply")
-        _console.print(reply)
+        try:
+            _console.print(reply)
+        except UnicodeEncodeError:
+            # Legacy Windows console (cp936/GBK) can't render emoji etc.
+            sys.stdout.buffer.write(reply.encode("utf-8", errors="replace"))
+            sys.stdout.buffer.write(b"\n")
         return 0
 
     # ------ ReAct 主循环（也走代理） ------

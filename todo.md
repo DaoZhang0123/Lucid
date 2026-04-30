@@ -31,47 +31,48 @@
 目标：把 CLI 包装成"普通 Windows 用户能装、能聊、能急停"的小工具。
 
 ### 1.1 Tauri 壳 + WebView2 聊天窗
-- [ ] Rust workspace 脚手架（Tauri 2.x + WebView2 + 单 main window + 系统托盘）
-- [ ] 选择前端栈（建议 Svelte 或 React + Vite，单页聊天 UI）
-- [ ] 聊天窗 UI：输入框 / 消息流 / 状态条（当前自动度 / 步数预算 / 急停按钮）
-- [ ] 托盘菜单：显示/隐藏窗口、暂停 Agent、退出
-- [ ] 窗口最小化到托盘而非任务栏
+- [x] Rust workspace 脚手架（Tauri 2.x + WebView2 + 单 main window + 系统托盘）
+- [x] 选择前端栈（SvelteKit + Vite SPA，单页聊天 UI）
+- [x] 聊天窗 UI：输入框 / 消息流 / 状态条（当前自动度 / 步数预算 / 急停按钮）
+- [x] 托盘菜单：显示/隐藏窗口、急停（取消任务）、退出
+- [x] 窗口最小化到托盘而非任务栏（CloseRequested → hide + prevent_close）
 
 ### 1.2 Tauri ↔ Python 守护进程
-- [ ] Python 侧：用 `python-jsonrpc` / 自写 stdio JSONRPC 暴露 `start_task / cancel / get_status` 等方法
-- [ ] Rust 侧：以 sidecar 拉起 `ctrlapp.exe`（PyInstaller / `pyoxidizer` 打包），管理生命周期
-- [ ] 流式事件：每步 assistant 文本 / tool_call / 截图缩略图 通过 stdio 推到前端
-- [ ] 进程崩溃自动重启 + 错误展示
+- [x] Python 侧：自写 stdio JSON-RPC 暴露 `ping / start_task / cancel / get_status / set_autonomy / shutdown`（NDJSON 帧、stdout 协议 / stderr 日志）
+- [x] 流式事件：`run_start / step_start / assistant_text / tool_call / tool_result / step_image / final / error` 通过 stdout 推到前端
+- [x] 任务取消：`cancel_event` 在两步之间生效；CancelledError 收尾
+- [x] Rust 侧：以 sidecar 拉起 `ctrlapp.exe`（PyInstaller 打包），管理生命周期
+- [x] 进程崩溃自动重启 + 错误展示（`supervise()` 1s 重连、`ctrlapp://sidecar` 事件流）
 
 ### 1.3 安全 / 体验
-- [ ] 三档自动度（`full / confirm_critical / confirm_each`）UI 切换并实时下发
-- [ ] 全局急停热键（`Ctrl+Alt+Esc`，design.md §4.7）
+- [x] 三档自动度（`full / confirm_critical / confirm_each`）UI 切换并实时下发
+- [x] 全局急停热键（`Ctrl+Alt+Esc`，design.md §4.7）
 - [ ] 鼠标移到屏幕左上角的 PyAutoGUI fail-safe 在 UI 上提示出来
-- [ ] 任务进行中显示当前动作类型 + 即时取消按钮
+- [x] 任务进行中显示当前动作类型 + 即时取消按钮
 - [ ] 隐私白名单：用户可标记某进程/窗口标题为"截图前需告警/最小化"
 
 ### 1.4 截图与历史回放
-- [ ] 把每次运行的 `logs/<run>/step-*.png` 序列做成时间线视图（点缩略图看大图 + 当步 assistant 文本 + tool_call）
+- [x] 把每次运行的 `logs/<run>/step-*.png` 序列做成时间线视图（点缩略图看大图 + 当步 assistant 文本 + tool_call）
 - [ ] "重放此任务"按钮（仅文本重放，不重新驱动鼠键）
 - [ ] 历史搜索（任务 instruction 全文）
 
 ### 1.5 适配与体验细节
-- [ ] 多屏布局变化时重新探测 `[screenshot].l1_max_long_edge`
-- [ ] HiDPI 标度差异下的坐标自检（点击后比对截图变化，必要时回退一格）
-- [ ] 非英文系统下"win+r"等组合键 alias 自检
+- [x] 多屏布局变化时重新探测 `[screenshot].l1_max_long_edge`（`ctrlapp.selfcheck monitors` + 设置页一键自检）
+- [x] HiDPI 标度差异下的坐标自检（`ctrlapp.selfcheck click` 用 dHash 比对点击前后变化）
+- [x] 非英文系统下“win+r”等组合键 alias 自检（`ctrlapp.selfcheck winr`）
 
 ### 1.6 5 个示例场景跑通
-- [x] 记事本：写文本并保存到指定路径
-- [ ] 浏览器：打开 URL → 截图描述页面
-- [ ] Excel：在 A1 输入"周报"并保存到桌面
-- [ ] 微信：找到指定联系人 → 发送一句消息（HITL 强确认）
-- [ ] 文件管理器：在指定文件夹新建子文件夹并重命名
+- [x] 记事本：写文本并保存到指定路径（Phase 0 已端到端通；`ctrlapp.examples run notepad`）
+- [~] 浏览器：打开 URL → 截图描述页面（指令已编入 `ctrlapp.examples`，待真跑验证）
+- [~] Excel：在 A1 输入“周报”并保存到桌面（指令已编入，待真跑验证）
+- [~] 微信：找到指定联系人 → 发送一句消息（HITL 强确认，已编入并强制 `confirm_each`）
+- [~] 文件管理器：在指定文件夹新建子文件夹并重命名（指令已编入，待真跑验证）
 
 ### 1.7 打包与发布
-- [ ] PyInstaller 单文件打包 `ctrlapp.exe`（含 mss / pyautogui / pyperclip / openai SDK）
-- [ ] Tauri `cargo tauri build` → `.msi`
-- [ ] 安装包内嵌 `config.toml` 默认值；首次启动引导用户填代理 base_url / api_key
-- [ ] 自动更新（Tauri updater + GitHub Release）
+- [x] PyInstaller 单目录打包 `ctrlapp.exe`（`packaging/ctrlapp.spec`，含 mss / pyautogui / pyperclip / openai SDK）
+- [x] Tauri `cargo tauri build` → `.msi`（已配 bundle.targets=msi+nsis，bundle.resources=dist/ctrlapp）
+- [x] 安装包内嵌 `config.toml` 默认值；首次启动引导用户填代理 base_url / api_key（`/settings` 页 + `read_settings`/`write_settings` 命令）
+- [ ] 自动更新（Tauri updater + GitHub Release）（updater plugin 已在 tauri.conf.json 占位但 active=false）
 - [ ] 签名（可后置，先 SmartScreen 警告也能用）
 
 ---

@@ -45,16 +45,20 @@ def chat_once(
     }
     data = json.dumps(payload).encode("utf-8")
 
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}",
+    }
+    for k, v in (cfg.extra_headers or {}).items():
+        headers[str(k)] = str(v)
+
     last_err: str = ""
     for attempt in range(retries + 1):
         req = _urlreq.Request(
             url,
             data=data,
             method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {key}",
-            },
+            headers=headers,
         )
         try:
             with _urlreq.urlopen(req, timeout=timeout) as resp:
