@@ -350,6 +350,46 @@ pub async fn copilot_logout() -> Result<Value, String> {
     instance().request("copilot_logout", json!({})).await
 }
 
+// ---- Thread (conversation) management ----
+
+#[tauri::command]
+pub async fn thread_new(title: Option<String>) -> Result<Value, String> {
+    instance().request("thread_new", json!({"title": title.unwrap_or_default()})).await
+}
+
+#[tauri::command]
+pub async fn thread_list() -> Result<Value, String> {
+    instance().request("thread_list", json!({})).await
+}
+
+#[tauri::command]
+pub async fn thread_read(id: String) -> Result<Value, String> {
+    instance().request("thread_read", json!({"id": id})).await
+}
+
+#[tauri::command]
+pub async fn thread_set_active(id: Option<String>) -> Result<Value, String> {
+    instance().request("thread_set_active", json!({"id": id})).await
+}
+
+#[tauri::command]
+pub async fn thread_delete(id: String) -> Result<Value, String> {
+    instance().request("thread_delete", json!({"id": id})).await
+}
+
+/// Read an image file inside a thread directory, return as data URL.
+#[tauri::command]
+pub async fn thread_read_image(app: AppHandle, thread_id: String, file_name: String) -> Result<String, String> {
+    let p = logs_root(&app).join(&thread_id).join(&file_name);
+    let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let mime = if file_name.ends_with(".jpg") || file_name.ends_with(".jpeg") {
+        "image/jpeg"
+    } else { "image/png" };
+    Ok(format!("data:{};base64,{}", mime, b64))
+}
+
 /// Tell the sidecar to re-read the user-config so settings changes take effect
 /// without restarting the whole process. Will refuse if a task is in-flight.
 #[tauri::command]
@@ -601,7 +641,7 @@ fn ensure_settings_file(path: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let skeleton = "[llm]\nmax_steps = 25\n\n[llm.proxy]\nbase_url = \"http://localhost:4000\"\nmodel = \"\"\napi_key = \"\"\n\n[safety]\nautonomy = \"confirm_critical\"\n";
+    let skeleton = "[llm]\nprovider = \"anthropic\"\nmax_steps = 25\nmax_tokens = 16384\nkeep_recent_screenshots = 4\n\n[llm.anthropic]\nmodel = \"claude-opus-4-6\"\napi_key = \"\"\n\n[llm.copilot]\nmodel = \"claude-opus-4-6\"\n\n[llm.proxy]\nbase_url = \"http://localhost:4000\"\nmodel = \"\"\napi_key = \"\"\n\n[safety]\nautonomy = \"confirm_critical\"\n";
     std::fs::write(path, skeleton)
 }
 

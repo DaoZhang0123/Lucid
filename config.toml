@@ -1,56 +1,66 @@
 # ctrlapp 运行时配置
-# 所有参数均可被命令行覆盖；空值表示按事件触发或采用默认。
+#
+# 这个文件是「示例 / 默认模板」，会被打进发行包；安装后真实的用户配置在
+#   %LOCALAPPDATA%\dev.ctrlapp\config.toml
+# 里改它，不要改这个文件（会在升级时被覆盖）。
+#
+# 三个 LLM 后端任选其一，靠 [llm].provider 切换。
 
 [llm]
-# Claude 模型 ID（design.md §1 中产品目标 Opus 4.6）。
-# 走 Anthropic 原生 API 时建议 "claude-opus-4-5"；走本地 LiteLLM/Copilot 代理可填 "claude-opus-4.6"。
-model = "claude-opus-4-5"
-# 最长输出 token
-max_tokens = 4096
+# provider: anthropic | copilot | proxy
+#   anthropic — 直接调 Anthropic 原生 Messages API，需要 ANTHROPIC_API_KEY
+#   copilot   — 走 GitHub Copilot OAuth（设置页里登录），免费额度充足
+#   proxy     — 走任意 OpenAI 兼容代理（LiteLLM、OpenClaw、自建网关…）
+provider = "copilot"
+
 # 单次任务最多 ReAct 步数（硬上限，防失控）
 max_steps = 25
+
+# 模型最长输出 token（Claude Opus 4.x 上限 32768；agent 场景中庸 16384 平衡延迟与不被截断）
+max_tokens = 16384
+
 # 是否启用 prompt caching（系统 prompt 与早期截图）
 enable_prompt_cache = true
+
 # 对话历史里最多保留多少张截图（含任务起始那张）。
 # 超出后旧图会被替换成占位文字，防止上游 413 Request Entity Too Large。
 # 设 0 表示不裁剪（仅在确认上游能扛大请求体时使用）。
 keep_recent_screenshots = 4
 
-# === 本地 OpenAI 兼容代理 ===
+# === provider = "anthropic" 时使用 ===
+[llm.anthropic]
+model = "claude-opus-4-6"
+# 留空则从 ANTHROPIC_API_KEY 环境变量读
+api_key = ""
+base_url = "https://api.anthropic.com"
+anthropic_version = "2023-06-01"
+
+# === provider = "copilot" 时使用 ===
+[llm.copilot]
+model = "claude-opus-4-6"
+# 留空走默认路径 %LOCALAPPDATA%\dev.ctrlapp\copilot.json
+state_file = ""
+
+# === provider = "proxy" 时使用 ===
 # 主 ReAct 循环 与 --smoke-test 都走这里。可选两个本地后端：
 #   1) litellm-ghc-proxy-lite —— base_url=http://localhost:4000, model=github_copilot/...
 #   2) OpenClaw gateway      —— base_url=http://127.0.0.1:18789, model="openclaw"
 #      OpenClaw 把 model 字段当作 agent 选择，必须填 "openclaw"；
 #      具体 backend 模型靠 HTTP header `x-openclaw-model` 选。
-#      需要先在 ~/.openclaw/openclaw.json 里把
-#      `gateway.http.endpoints.chatCompletions.enabled` 设为 true。
 [llm.proxy]
-base_url = "http://127.0.0.1:18789"
-model = "openclaw"
+base_url = "http://localhost:4000"
+model = "github_copilot/claude-opus-4-6"
 # 留空则从环境变量 LITELLM_MASTER_KEY 读取
 api_key = ""
-
-# 任意附加 HTTP 头。走 OpenClaw 时填一行：
-[llm.proxy.extra_headers]
-"x-openclaw-model" = "github-copilot/claude-opus-4.7"
 
 [logging]
 # 是否把每次运行的主要信息与截图持久化到本地
 enabled = true
-# 日志根目录（相对仓库根 / 或绝对路径都行）
+# 日志根目录（相对路径会落到 %LOCALAPPDATA%\dev.ctrlapp\logs）
 dir = "logs"
 # 文本日志等级：DEBUG | INFO | WARNING | ERROR | OFF
-# - DEBUG  额外记录每条 messages 摘要、tool_call 原始参数
-# - INFO   step 概要 / 工具调用 action / 模型文本回复（推荐）
-# - WARNING 只记安全确认 / 工具错误
-# - ERROR  只记异常
-# - OFF    不写文本
 text_level = "INFO"
 # 截图保存等级：DEBUG | INFO | WARNING | OFF
-# - DEBUG  保存所有截图（含动作前每张原图）
-# - INFO   只保存"任务起始"与"每步动作后"截图（推荐）
-# - WARNING 仅在 tool 报错时落盘
-# - OFF    完全不存图（隐私优先时用）
 image_level = "INFO"
 # 截图存储格式：png | jpg
 image_format = "png"
@@ -85,22 +95,19 @@ skip_if_similarity_above = 0.985
 [safety]
 # 危险动作触发 HITL 二次确认的关键字
 hitl_keywords = ["删除", "delete", "rm ", "format", "shutdown", "转账", "支付", "确认付款"]
-# 全局急停热键（design.md §4.7）
+# 全局急停热键
 emergency_hotkey = "ctrl+alt+esc"
 # 默认自动度档位：full | confirm_critical | confirm_each
 autonomy = "confirm_critical"
-# 点击后额外拓一张 L3 落点取证图（架构层兑底）。
-# 优点：模型能看清刚点中什么；缺点：每次点击 prompt 多一张图，上游会变慢。
+# 点击后额外抓一张 L3 落点取证图（架构层兜底）。
 verify_click_with_l3 = true
-# 保存/打开对话框中检测到“左侧导航树点击”时注入“请用文件名框/地址栏 type 路径”的纠正提示（行为层兑底）。
+# 保存/打开对话框中检测到"左侧导航树点击"时注入纠正提示（行为层兜底）。
 save_dialog_sidebar_guard = true
 
 [input]
 # 输入策略：clipboard | unicode_sendinput
-# - clipboard（默认推荐）：action="type" 的任何文本均走 Ctrl+V 粘贴，
-#   完全避开当前输入法状态（中/英/中文标点等）对打字的干扰。
-#   内部的 \n / \t 会被拆成「粘贴可见部分 + 按 Enter/Tab」以保证动作准确。
-# - unicode_sendinput：走 pyautogui.typewrite，只支持 ASCII，中文会乱码。
+# - clipboard（推荐）：action="type" 走剪贴板粘贴，避开输入法状态干扰，中英文/路径都能直接传。
+# - unicode_sendinput：走 pyautogui.typewrite，只支持 ASCII。
 chinese_input = "clipboard"
 # 每个动作之间的最小间隔（秒），给 UI 留响应时间
 action_delay = 0.15

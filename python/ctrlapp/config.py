@@ -52,7 +52,7 @@ class LLMConfig:
     #   "copilot"   GitHub Copilot OAuth (内置 device-code 登录)
     provider: str = "anthropic"
     model: str = "claude-opus-4-5"
-    max_tokens: int = 4096
+    max_tokens: int = 16384
     max_steps: int = 25
     enable_prompt_cache: bool = True
     # 发往模型的对话历史里最多保留多少张截图（含起始图）。

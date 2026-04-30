@@ -203,7 +203,7 @@ PowerShell 看 UTF-8 日志：`Get-Content path/run.log -Encoding UTF8`
 ## 目录结构
 
 ```
-src/ctrlapp/
+python/ctrlapp/
 ├── __main__.py        # CLI 入口
 ├── config.py          # config.toml 加载
 ├── dpi.py             # Per-Monitor V2 DPI + 虚拟屏幕矩形
@@ -215,6 +215,11 @@ src/ctrlapp/
 ├── safety.py          # HITL 拦截
 ├── runlog.py          # 每次运行的本地日志（文本 + 截图）
 └── loop.py            # ReAct 主循环（openai SDK 走代理）
+
+app/
+├── src/               # SvelteKit UI（聊天主界面、设置、历史回放）
+├── src-tauri/         # Rust Tauri 壳：管 sidecar 进程 / 设置文件 / 系统集成
+└── package.json
 ```
 
 ## 风险提醒

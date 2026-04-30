@@ -1,6 +1,6 @@
 """PyInstaller entry shim.
 
-`src/ctrlapp/__main__.py` uses package-relative imports (`from .config import ...`),
+`python/ctrlapp/__main__.py` uses package-relative imports (`from .config import ...`),
 which PyInstaller can't satisfy if it's invoked directly as the entry script.
 This wrapper imports the package first so the relative imports resolve.
 """

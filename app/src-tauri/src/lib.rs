@@ -57,6 +57,12 @@ pub fn run() {
             sidecar::copilot_login_poll,
             sidecar::copilot_logout,
             sidecar::reload_config,
+            sidecar::thread_new,
+            sidecar::thread_list,
+            sidecar::thread_read,
+            sidecar::thread_set_active,
+            sidecar::thread_delete,
+            sidecar::thread_read_image,
         ])
         .setup(move |app| {
             // ---------- system tray ----------

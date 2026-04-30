@@ -5,9 +5,17 @@ export type ChatItem =
   | { kind: "user"; text: string }
   | { kind: "assistant"; step?: number; text: string }
   | { kind: "tool"; step: number; action: string; args: any; result?: { ok: boolean; output?: string; error?: string } }
-  | { kind: "image"; step: number; level: string; path?: string }
+  | { kind: "image"; step: number; level: string; threadId?: string; file?: string; path?: string; dataUrl?: string }
   | { kind: "system"; text: string }
   | { kind: "final"; status: string; text: string };
+
+export type ThreadMeta = {
+  id: string;
+  title: string;
+  created_ms?: number;
+  updated_ms?: number;
+  task_count?: number;
+};
 
 // 模块级单例：跨路由切换保持聊天状态。
 export const chat = $state({
@@ -17,6 +25,8 @@ export const chat = $state({
   totalSteps: 0,
   sidecarReady: false,
   sidecarStderr: [] as string[],
+  threads: [] as ThreadMeta[],
+  activeThreadId: null as string | null,
 });
 
 let started = false;
@@ -35,43 +45,69 @@ function lastToolCallFor(step: number, action: string): ChatItem | undefined {
   return undefined;
 }
 
+async function loadImageDataUrl(threadId: string, file: string): Promise<string | undefined> {
+  try {
+    return await invoke<string>("thread_read_image", { threadId, fileName: file });
+  } catch {
+    return undefined;
+  }
+}
+
+function handleEvent(v: any) {
+  const k = v.event;
+  if (k === "ready") {
+    chat.sidecarReady = true;
+    push({ kind: "system", text: `sidecar ready · provider=${v.provider ?? "?"} · model=${v.model} · autonomy=${v.autonomy} · max_steps=${v.max_steps}` });
+    void refreshThreadList();
+  } else if (k === "thread_changed") {
+    chat.activeThreadId = v.id;
+    void refreshThreadList();
+  } else if (k === "run_start") {
+    chat.running = true;
+    chat.currentStep = 0;
+    chat.totalSteps = v.max_steps ?? 0;
+    push({ kind: "system", text: `开始任务` });
+  } else if (k === "step_start") {
+    chat.currentStep = v.step;
+    chat.totalSteps = v.max_steps ?? chat.totalSteps;
+  } else if (k === "assistant_text") {
+    push({ kind: "assistant", step: v.step, text: v.text });
+  } else if (k === "tool_call") {
+    push({ kind: "tool", step: v.step, action: v.action, args: v.args });
+  } else if (k === "tool_result") {
+    const t = lastToolCallFor(v.step, v.action);
+    if (t && t.kind === "tool") {
+      t.result = { ok: v.ok, output: v.output, error: v.error };
+      chat.items = [...chat.items];
+    }
+  } else if (k === "step_image") {
+    const item: ChatItem = { kind: "image", step: v.step, level: v.level, threadId: v.thread_id, file: v.file, path: v.path };
+    push(item);
+    // 异步加载缩略图（直接读 thread 目录里的文件）
+    if (v.thread_id && v.file) {
+      void (async () => {
+        const url = await loadImageDataUrl(v.thread_id, v.file);
+        if (url) {
+          item.dataUrl = url;
+          chat.items = [...chat.items];
+        }
+      })();
+    }
+  } else if (k === "final") {
+    chat.running = false;
+    push({ kind: "final", status: v.status, text: v.text });
+  } else if (k === "error") {
+    chat.running = false;
+    push({ kind: "system", text: `错误：${v.message}` });
+  } else if (k === "user_input") {
+    // 这个事件只在重放老 thread 时使用；实时 user 消息已经在 startTask 里 push
+  }
+}
+
 export async function ensureChatListeners(): Promise<void> {
   if (started) return;
   started = true;
-  unlistenEvent = await listen<any>("ctrlapp://event", (e) => {
-    const v = e.payload;
-    const k = v.event;
-    if (k === "ready") {
-      chat.sidecarReady = true;
-      push({ kind: "system", text: `sidecar ready · provider=${v.provider ?? "?"} · model=${v.model} · autonomy=${v.autonomy} · max_steps=${v.max_steps}` });
-    } else if (k === "run_start") {
-      chat.running = true;
-      chat.currentStep = 0;
-      chat.totalSteps = v.max_steps ?? 0;
-      push({ kind: "system", text: `开始任务（${v.run_dir ?? ""}）` });
-    } else if (k === "step_start") {
-      chat.currentStep = v.step;
-      chat.totalSteps = v.max_steps ?? chat.totalSteps;
-    } else if (k === "assistant_text") {
-      push({ kind: "assistant", step: v.step, text: v.text });
-    } else if (k === "tool_call") {
-      push({ kind: "tool", step: v.step, action: v.action, args: v.args });
-    } else if (k === "tool_result") {
-      const t = lastToolCallFor(v.step, v.action);
-      if (t && t.kind === "tool") {
-        t.result = { ok: v.ok, output: v.output, error: v.error };
-        chat.items = [...chat.items];
-      }
-    } else if (k === "step_image") {
-      push({ kind: "image", step: v.step, level: v.level, path: v.path });
-    } else if (k === "final") {
-      chat.running = false;
-      push({ kind: "final", status: v.status, text: v.text });
-    } else if (k === "error") {
-      chat.running = false;
-      push({ kind: "system", text: `错误：${v.message}` });
-    }
-  });
+  unlistenEvent = await listen<any>("ctrlapp://event", (e) => handleEvent(e.payload));
   unlistenSidecar = await listen<any>("ctrlapp://sidecar", (e) => {
     const v = e.payload;
     if (v.kind === "stderr") {
@@ -88,6 +124,7 @@ export async function ensureChatListeners(): Promise<void> {
       push({ kind: "system", text: "🛑 急停：已请求取消任务" });
     }
   });
+  void refreshThreadList();
 }
 
 export function disposeChatListeners(): void {
@@ -96,6 +133,16 @@ export function disposeChatListeners(): void {
   unlistenEvent = null;
   unlistenSidecar = null;
   started = false;
+}
+
+export async function refreshThreadList(): Promise<void> {
+  try {
+    const r = await invoke<any>("thread_list");
+    chat.threads = (r?.threads ?? []) as ThreadMeta[];
+    chat.activeThreadId = (r?.active ?? chat.activeThreadId) as string | null;
+  } catch {
+    // sidecar 可能还没起来，忽略
+  }
 }
 
 export async function startTask(text: string, autonomy: string, maxSteps: number): Promise<void> {
@@ -125,6 +172,8 @@ export async function cancelTask(): Promise<void> {
   }
 }
 
+/** 新建 thread：清空 UI 和 active 标记，但不真的创建目录；
+ *  等用户首次发送任务时，后端会自动以 instruction 作为标题创建 thread。 */
 export async function newThread(): Promise<void> {
   if (chat.running) {
     try { await invoke("sidecar_cancel"); } catch {}
@@ -132,5 +181,94 @@ export async function newThread(): Promise<void> {
   chat.items = [];
   chat.currentStep = 0;
   chat.totalSteps = 0;
-  push({ kind: "system", text: "— 新对话已开始 —" });
+  try {
+    await invoke("thread_set_active", { id: null });
+    chat.activeThreadId = null;
+    push({ kind: "system", text: "— 新对话已开始，输入消息后将出现在左侧列表 —" });
+  } catch (e) {
+    push({ kind: "system", text: `新建对话失败：${e}` });
+  }
+  void refreshThreadList();
+}
+
+/** 把某个历史 thread 加载进聊天窗口，并设为 active（后续输入会续写到它里面）。 */
+export async function openThread(id: string): Promise<void> {
+  if (chat.running) {
+    try { await invoke("sidecar_cancel"); } catch {}
+  }
+  try {
+    await invoke("thread_set_active", { id });
+  } catch (e) {
+    push({ kind: "system", text: `切换 thread 失败：${e}` });
+    return;
+  }
+  let data: any;
+  try {
+    data = await invoke<any>("thread_read", { id });
+  } catch (e) {
+    push({ kind: "system", text: `读取 thread 失败：${e}` });
+    return;
+  }
+  chat.items = [];
+  chat.activeThreadId = id;
+  chat.currentStep = 0;
+  chat.totalSteps = 0;
+  const events: any[] = data?.events ?? [];
+  // 把 events.jsonl 重放成 ChatItem 列表
+  for (const v of events) {
+    const k = v.event;
+    if (k === "user_input") {
+      chat.items.push({ kind: "user", text: v.text ?? "" });
+    } else if (k === "run_start") {
+      chat.items.push({ kind: "system", text: "开始任务" });
+    } else if (k === "assistant_text") {
+      chat.items.push({ kind: "assistant", step: v.step, text: v.text ?? "" });
+    } else if (k === "tool_call") {
+      chat.items.push({ kind: "tool", step: v.step, action: v.action, args: v.args });
+    } else if (k === "tool_result") {
+      // 找最近一个未填 result 的 tool_call 填进去
+      for (let i = chat.items.length - 1; i >= 0; i--) {
+        const it = chat.items[i];
+        if (it.kind === "tool" && it.step === v.step && it.action === v.action && !it.result) {
+          it.result = { ok: v.ok, output: v.output, error: v.error };
+          break;
+        }
+      }
+    } else if (k === "step_image") {
+      chat.items.push({ kind: "image", step: v.step, level: v.level, threadId: v.thread_id ?? id, file: v.file, path: v.path });
+    } else if (k === "final") {
+      chat.items.push({ kind: "final", status: v.status, text: v.text ?? "" });
+    } else if (k === "task_close") {
+      // 静默
+    } else if (k === "error") {
+      chat.items.push({ kind: "system", text: `错误：${v.message}` });
+    }
+  }
+  chat.items = [...chat.items];
+  // 异步加载所有图片
+  for (const it of chat.items) {
+    if (it.kind === "image" && it.threadId && it.file && !it.dataUrl) {
+      void (async () => {
+        const url = await loadImageDataUrl(it.threadId!, it.file!);
+        if (url) {
+          it.dataUrl = url;
+          chat.items = [...chat.items];
+        }
+      })();
+    }
+  }
+}
+
+export async function deleteThread(id: string): Promise<void> {
+  try {
+    await invoke("thread_delete", { id });
+  } catch (e) {
+    push({ kind: "system", text: `删除 thread 失败：${e}` });
+    return;
+  }
+  if (chat.activeThreadId === id) {
+    chat.activeThreadId = null;
+    chat.items = [];
+  }
+  void refreshThreadList();
 }

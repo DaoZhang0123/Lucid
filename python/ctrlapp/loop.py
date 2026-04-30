@@ -24,7 +24,7 @@ from .llm_client import (
     LLMClient,
     OpenAIChatClient,
 )
-from .runlog import RunLogger
+from .runlog import ThreadLog
 from .safety import SafetyLayer
 from .screen import ScreenLevel, ScreenSensor
 from .tools import ComputerTool, ToolResult
@@ -261,6 +261,7 @@ class Agent:
         *,
         event_sink: EventSink | None = None,
         cancel_event: threading.Event | None = None,
+        thread_log: ThreadLog | None = None,
     ) -> None:
         self.cfg = cfg
         self.client = _build_llm_client(cfg, api_key)
@@ -271,6 +272,7 @@ class Agent:
         self.safety = SafetyLayer(cfg.safety)
         self.event_sink = event_sink
         self.cancel_event = cancel_event
+        self.thread_log = thread_log
 
     # 事件上报：sidecar 模式下避免使用 rich 控制台（会污染 stdout JSONRPC 通道）
     def _emit(self, kind: str, **payload: Any) -> None:
@@ -297,7 +299,7 @@ class Agent:
             raise CancelledError("cancelled by user")
 
     def run(self, instruction: str) -> str:
-        log = RunLogger(self.cfg.logging, instruction)
+        log = self.thread_log or ThreadLog.create(self.cfg.logging, instruction)
         log.info(
             f"proxy={self.cfg.llm.proxy.base_url} model={self.model} "
             f"max_steps={self.cfg.llm.max_steps} autonomy={self.cfg.safety.autonomy}"
@@ -326,7 +328,14 @@ class Agent:
         screen_w, screen_h = first.sent_size
         tool_schema = ComputerTool.openai_tool_schema(screen_w, screen_h)
         log.info(f"initial screenshot {screen_w}x{screen_h}")
-        log.save_image(first.png_bytes(), "step-000-init", level="INFO")
+        init_name = log.save_image(first.png_bytes(), "step-000-init", level="INFO")
+        if init_name:
+            self._emit("step_image", step=0, level=first.level.value,
+                       width=screen_w, height=screen_h,
+                       path=str(log.run_dir / init_name) if log.run_dir else None,
+                       file=init_name,
+                       thread_id=log.id if log else None,
+                       phase="init")
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -545,6 +554,8 @@ class Agent:
             self._emit("step_image", step=step + 1, level=level_tag,
                        width=post.sent_size[0], height=post.sent_size[1],
                        path=str(log.run_dir / saved_name) if (log.run_dir and saved_name) else None,
+                       file=saved_name,
+                       thread_id=log.id if log else None,
                        phase="post")
 
             # 抓 L3 落点取证图（如果本步有点击且当前 post 不是 L3 本身）

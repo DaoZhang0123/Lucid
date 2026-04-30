@@ -20,15 +20,18 @@
 方法            说明
 ============== ==========================================================
 ``ping``        连通性探活，返回 ``{"pong": True}``。
-``start_task``  开始一个任务。``params``: ``{"instruction": str,
-                "autonomy"?: "full"|"confirm_critical"|"confirm_each",
-                "max_steps"?: int}``。
-                同一时刻只能有一个任务在跑。
-``cancel``      请求取消当前任务（在两步之间生效）。
-``get_status``  返回 ``{"running": bool, "instruction"?: str,
-                "autonomy": str, "max_steps": int}``。
-``set_autonomy`` 修改默认自动度（不影响正在跑的任务）。
-``shutdown``    优雅退出。先 cancel，再返回响应，然后进程退出。
+``start_task``  开始一个任务。使用当前 active thread（没有则以该 instruction
+                为标题自动新建）。``params``: ``{"instruction": str,
+                "autonomy"?: ..., "max_steps"?: int}``。
+``cancel``      请求取消当前任务。
+``get_status``  返回运行中的任务状态。
+``set_autonomy`` 修改默认自动度。
+``thread_new``    ``{title?}`` 创建新 thread 并设为 active。
+``thread_list``   列出所有 thread（按 updated_ms 倒序）。
+``thread_read``   ``{id}`` 读某 thread 的 events.jsonl + meta。
+``thread_set_active`` ``{id?}`` 切换 active thread（id=null 为清空）。
+``thread_delete`` ``{id}`` 删除某 thread 目录。
+``shutdown``    优雅退出。
 ============== ==========================================================
 
 事件类型：
@@ -57,6 +60,7 @@ from rich.console import Console
 from .config import Config, load_config
 from .dpi import set_dpi_aware
 from .loop import Agent
+from .runlog import ThreadLog
 
 # rich 默认会写 stdout，会污染协议——sidecar 模式必须把 console 重定向到 stderr。
 _err_console = Console(file=sys.stderr)
@@ -77,6 +81,7 @@ class Sidecar:
         self._cancel = threading.Event()
         self._current_instruction: str | None = None
         self._shutdown = threading.Event()
+        self._active_thread: ThreadLog | None = None
 
     # ------------------------------------------------------------------
     # 主循环
@@ -197,6 +202,57 @@ class Sidecar:
         self.cfg.safety.autonomy = autonomy
         return {"autonomy": autonomy}
 
+    # ---- thread management ----
+
+    def _ensure_active_thread(self, fallback_title: str) -> ThreadLog:
+        if self._active_thread is None:
+            self._active_thread = ThreadLog.create(self.cfg.logging, fallback_title)
+            _writeln({"event": "thread_changed", "id": self._active_thread.id,
+                      "title": self._active_thread.title})
+        return self._active_thread
+
+    def _rpc_thread_new(self, params: dict[str, Any]) -> dict[str, Any]:
+        title = (params.get("title") or "").strip() or "新对话"
+        if self._worker and self._worker.is_alive():
+            self._cancel.set()
+        self._active_thread = ThreadLog.create(self.cfg.logging, title)
+        _writeln({"event": "thread_changed", "id": self._active_thread.id,
+                  "title": self._active_thread.title})
+        return {"id": self._active_thread.id, "title": self._active_thread.title}
+
+    def _rpc_thread_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {"threads": ThreadLog.list_threads(self.cfg.logging),
+                "active": self._active_thread.id if self._active_thread else None}
+
+    def _rpc_thread_read(self, params: dict[str, Any]) -> dict[str, Any]:
+        tid = params.get("id")
+        if not tid:
+            raise ValueError("id required")
+        return ThreadLog.read_thread(self.cfg.logging, tid)
+
+    def _rpc_thread_set_active(self, params: dict[str, Any]) -> dict[str, Any]:
+        tid = params.get("id")
+        if self._worker and self._worker.is_alive():
+            raise RuntimeError("task running; cancel first")
+        if not tid:
+            self._active_thread = None
+            return {"active": None}
+        self._active_thread = ThreadLog.open(self.cfg.logging, tid)
+        _writeln({"event": "thread_changed", "id": self._active_thread.id,
+                  "title": self._active_thread.title})
+        return {"active": self._active_thread.id}
+
+    def _rpc_thread_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        tid = params.get("id")
+        if not tid:
+            raise ValueError("id required")
+        if self._active_thread and self._active_thread.id == tid:
+            if self._worker and self._worker.is_alive():
+                raise RuntimeError("task running; cancel first")
+            self._active_thread = None
+        ok = ThreadLog.delete_thread(self.cfg.logging, tid)
+        return {"deleted": ok}
+
     def _rpc_start_task(self, params: dict[str, Any]) -> dict[str, Any]:
         instruction = (params.get("instruction") or "").strip()
         if not instruction:
@@ -215,14 +271,18 @@ class Sidecar:
             if max_steps:
                 self.cfg.llm.max_steps = int(max_steps)
 
+            # 确保有 active thread（没有则以当前 instruction 为标题新建）
+            thread = self._ensure_active_thread(instruction)
+            thread.append_user_input(instruction)
+
             self._cancel.clear()
             self._current_instruction = instruction
             t = threading.Thread(
-                target=self._run_task, args=(instruction,), daemon=True
+                target=self._run_task, args=(instruction, thread), daemon=True
             )
             self._worker = t
             t.start()
-        return {"started": True, "instruction": instruction}
+        return {"started": True, "instruction": instruction, "thread_id": thread.id}
 
     def _rpc_cancel(self, _params: dict[str, Any]) -> dict[str, Any]:
         if self._worker and self._worker.is_alive():
@@ -239,13 +299,22 @@ class Sidecar:
     # ------------------------------------------------------------------
     # 任务工作线程
     # ------------------------------------------------------------------
-    def _run_task(self, instruction: str) -> None:
+    def _run_task(self, instruction: str, thread: ThreadLog) -> None:
+        def sink(evt: dict[str, Any]) -> None:
+            # 1) 走 stdout 让前端实时看到
+            _writeln(evt)
+            # 2) 同步追加到 thread events.jsonl持久化
+            try:
+                thread.append_event(evt)
+            except Exception:
+                pass
         try:
-            agent = Agent(self.cfg, event_sink=_writeln, cancel_event=self._cancel)
+            agent = Agent(self.cfg, event_sink=sink, cancel_event=self._cancel,
+                          thread_log=thread)
             agent.run(instruction)
         except Exception as e:
             _err_console.print_exception()
-            _writeln({"event": "error", "message": f"{type(e).__name__}: {e}"})
+            sink({"event": "error", "message": f"{type(e).__name__}: {e}"})
         finally:
             self._current_instruction = None
 

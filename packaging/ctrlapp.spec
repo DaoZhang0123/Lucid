@@ -67,7 +67,7 @@ datas = [
 
 a = Analysis(
     [os.path.join(ROOT, "packaging", "ctrlapp_entry.py")],
-    pathex=[os.path.join(ROOT, "src")],
+    pathex=[os.path.join(ROOT, "python")],
     binaries=[],
     datas=datas,
     hiddenimports=hidden,
