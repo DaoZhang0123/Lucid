@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+  import { _ } from "svelte-i18n";
 
   let enabled = $state(true);
   let path = $state("");
@@ -35,7 +36,7 @@
   }
 
   async function clear() {
-    if (!confirm("清空整份 memory.md？此操作不可撤销。")) return;
+    if (!confirm($_("memory.clear_confirm"))) return;
     try {
       await invoke("memory_clear");
       await load();
@@ -47,19 +48,22 @@
   onMount(load);
 </script>
 
+<svelte:head>
+  <title>{$_("memory.page_title")}</title>
+</svelte:head>
+
 <div class="page">
   <header>
-    <a class="back" href="/">‹ 返回</a>
-    <h1>长期记忆 · memory.md</h1>
+    <a class="back" href="/">{$_("common.back")}</a>
+    <h1>{$_("memory.heading")}</h1>
   </header>
 
   <p class="hint">
-    每次任务起手会把这里的内容追加到 system prompt 末尾。Agent 也能用 <code>remember</code>
-    工具主动写入。<strong>不要</strong>在这里写密码 / token 等敏感信息。
+    {@html $_("memory.hint")}
   </p>
   <p class="meta">
-    状态：{enabled ? "已启用" : "已禁用（在 config.toml [memory] 里开启）"}<br/>
-    路径：<code>{path}</code>
+    {$_("memory.status_label")} {enabled ? $_("memory.status_enabled") : $_("memory.status_disabled")}<br/>
+    {$_("memory.path_label")} <code>{path}</code>
   </p>
 
   {#if err}<p class="err">{err}</p>{/if}
@@ -67,10 +71,10 @@
   <textarea bind:value={text} rows="22" disabled={!enabled}></textarea>
 
   <div class="actions">
-    <button onclick={save} disabled={saving || !enabled}>{saving ? "保存中…" : "保存"}</button>
-    <button class="danger" onclick={clear} disabled={!enabled}>清空</button>
-    <button onclick={load}>重新加载</button>
-    {#if savedAt}<span class="ok">已保存 {savedAt}</span>{/if}
+    <button onclick={save} disabled={saving || !enabled}>{saving ? $_("memory.saving_button") : $_("memory.save_button")}</button>
+    <button class="danger" onclick={clear} disabled={!enabled}>{$_("memory.clear_button")}</button>
+    <button onclick={load}>{$_("memory.reload_button")}</button>
+    {#if savedAt}<span class="ok">{$_("memory.saved_at", { values: { at: savedAt } })}</span>{/if}
   </div>
 </div>
 

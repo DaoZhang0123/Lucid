@@ -1,5 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { get } from "svelte/store";
+import { _ } from "svelte-i18n";
+
+function t(key: string, values?: Record<string, string | number | boolean | Date | null | undefined>): string {
+  try {
+    const fn = get(_);
+    return values ? fn(key, { values }) : fn(key);
+  } catch {
+    return key;
+  }
+}
 
 export type ChatItem =
   | { kind: "user"; text: string }
@@ -72,7 +83,7 @@ function handleEvent(v: any) {
     chat.currentStep = 0;
     chat.totalSteps = v.max_steps ?? 0;
     if (v.thread_id) chat.runningThreadId = v.thread_id;
-    push({ kind: "system", text: `开始任务` });
+    push({ kind: "system", text: t("chat.run_started") });
   } else if (k === "step_start") {
     chat.currentStep = v.step;
     chat.totalSteps = v.max_steps ?? chat.totalSteps;
@@ -242,7 +253,7 @@ export async function openThread(id: string): Promise<void> {
     if (k === "user_input") {
       chat.items.push({ kind: "user", text: v.text ?? "" });
     } else if (k === "run_start") {
-      chat.items.push({ kind: "system", text: "开始任务" });
+      chat.items.push({ kind: "system", text: t("chat.run_started") });
     } else if (k === "assistant_text") {
       chat.items.push({ kind: "assistant", step: v.step, text: v.text ?? "" });
     } else if (k === "tool_call") {

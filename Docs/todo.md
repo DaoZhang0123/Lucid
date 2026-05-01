@@ -82,7 +82,6 @@
 ## Phase 2 — 准生产（暂不展开，待 Phase 1 验证后细化）
 
 - [ ] Set-of-Mark 增强模式（候选可点击区域编号叠加在截图上）
-- [ ] Speculative multi-action（一次给多步预案，本地按需执行）
 - [x] 用户可保存的"任务模板"（如"周报流程"）—— `templates.json` + `/templates` 页面，可一键发送
 - [ ] 隐私沙箱：敏感区域自动模糊（密码框 / 网银 / 私聊）
 - [x] 模型可插拔（Claude / GPT-4o / Qwen-VL）通过同一 OpenAI 兼容代理切换 —— 设置页 provider 切换 + `reload_config` 热生效
@@ -119,7 +118,15 @@
 
 ## 横向 / 工程债
 
+- [ ] **国际化（i18n）：仓库 + App 主语言切英文，附中文 / 法语 / 阿拉伯语 / 俄语 翻译**：
+  - **仓库层**：`README.md` / `design.md` / `todo.md` / 代码注释 / SYSTEM_PROMPT 主版本改写为英文，原中文文档移到 `docs/zh-CN/`、新增 `docs/fr-FR/`，README 顶部加 `[English | 中文 | Français]` 切换链接。
+  - **App UI 层**：SvelteKit 引入 i18n 框架（推荐 `svelte-i18n` 或 `@inlang/paraglide-js`），把 `+page.svelte` / `/settings` / `/templates` / `/schedules` / `/memory` / `/tools` / `/icons` 里所有中文硬编码（按钮、标签、占位符、提示）抽到 `messages/{en,zh-CN,fr-FR}.json`；默认 `en`，设置页加"语言"下拉框，写入 `[ui].locale`。
+  - **Sidecar 层**：SYSTEM_PROMPT、所有 `_emit` 推到前端的中文文案、危险词确认提示按 `cfg.ui.locale` 切换；tooltips.py 的 seed 内容也准备 en/zh-CN/fr-FR 三套。
+  - **翻译流水线**：用 `gh ai translate` 或挂个一次性脚本调 LLM 把 zh-CN 批量过一遍生成 en / fr-FR 草稿，人工校 UI 字符串（路径 / 快捷键名等专有名词保持原样）。
+  - **验收**：英文环境装一遍 NSIS 默认 UI 全英；切到中文 / 法语后整窗刷新无残留中文 / 英文。
+- [ ] **README star 数对标 OpenAdapt**：在 README 顶部加一个 "Stargazers" 小节，挂自己仓库的 shields.io star badge（`https://img.shields.io/github/stars/<owner>/<repo>?style=social`），并在脚注里记一组对标基线 —— 参考 [OpenAdaptAI/OpenAdapt](https://github.com/OpenAdaptAI/OpenAdapt)（2026-05-01 抓取：约 1566 stars、233 forks，定位 "Generative RPA / computer-use agent"，与本项目同赛道）。每月人工或脚本（`gh api repos/OpenAdaptAI/OpenAdapt --jq .stargazers_count`）刷一次写进 README 末尾的"对标"表，方便看自己的增长曲线相对位置。
 - [ ] **首次运行引导：把 Windows 任务栏按钮"从不合并"**：在欢迎页 / 设置自检里加一项检测和一键引导——打开「设置 → 个性化 → 任务栏 → 任务栏行为 → 合并任务栏按钮并隐藏标签」改为「从不」。这样任务栏每个窗口都带文字标签，模型靠 OCR 就能知道哪些 App / 窗口已开，不必再依赖图标识别。可在引导里直接 `start ms-settings:taskbar` 跳到对应页面，并给出截图示意。
+- [ ] Image压缩放到context manager里
 - [ ] **Context Manager / 自适应压缩**：当本次发给 LLM 的 messages 估算 token 数（或字节数）逼近模型 context window 阈值（如 70%）时，自动触发"摘要压缩"——把最早的若干 user/assistant/tool 段（除 prelude 外）调用一次廉价模型生成"## 上文摘要"段塞回去，丢掉原始消息（只保留最近 N 步原文 + 最近若干截图）。并入 F3 持久化（saved tail 也走压缩）。配置：`[context] auto_compress_enabled / target_ratio / summary_model / keep_recent_steps`。
 - [ ] 单元测试：`_prune_old_images` / `_split_segments` / `_norm_key` / `RunLogger` 轮转 / `_parse_level`
 - [ ] CI：Windows runner 跑 lint + 单测（不动鼠键的部分）

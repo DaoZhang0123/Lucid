@@ -24,40 +24,41 @@ from pathlib import Path
 
 from .config import ToolsConfig
 
-_HEADER = "# ctrlapp 操作技巧库\n"
+_HEADER = "# ctrlapp Operation Tips Library\n"
 
-# 初始 seed —— 与原 SYSTEM_PROMPT 中的"常用技巧"段保持一致。
+# Initial seed — mirrors the original "common tips" section that used to live in
+# loop.SYSTEM_PROMPT. Each line is one tip, prefixed with a tag for grep-ability.
 _SEED_BODY = """\
-- [seed · keyboard] 优先用键盘快捷键，避免鼠标点击；截图坐标不一定精确，能用键盘做到的就别用鼠标。
-- [seed · keyboard] 切换/浏览已开窗口用 alt+tab / alt+shift+tab / win+tab；不要靠点任务栏小图标切窗口。
-- [seed · browser] 浏览器新建窗口 ctrl+n、新标签页 ctrl+t、关标签 ctrl+w、地址栏 ctrl+l 或 alt+d、后退/前进 alt+左右、刷新 f5。
-- [seed · browser] 不要点窗口右上角加号开新标签——直接用 ctrl+t 更稳。
-- [seed · search] 默认搜索引擎用 bing.com。最快的方式：win+r 打开"运行"，type `https://bing.com/search?q=关键词` 回车，
-  Windows 会用默认浏览器直接打开搜索结果页（无需先开浏览器、也不会动用户已有 tab）。
-  备用方式：浏览器里 ctrl+t 新标签页 → 地址栏 type `bing.com` 回车 → 再 type 关键词。
-  仅当用户明确要求 Google / 百度等其它引擎时才换。
-- [seed · text-edit] 全选 ctrl+a、复制 ctrl+c、粘贴 ctrl+v、撤销 ctrl+z、保存 ctrl+s、查找 ctrl+f。
-- [seed · system] 运行命令 win+r、文件资源管理器 win+e、桌面 win+d；记事本可 win+r 后 type notepad 回车。
-- [seed · window] 窗口排版：win+左/右 半屏吸附，win+上 最大化，win+下 最小化或还原，win+m 全部最小化。
-- [seed · type-text] 文本输入用 action="type" + text="..."，本地驱动走剪贴板粘贴，中英文/路径都可直接传。
-- [seed · 不覆盖] 执行任何"打开/新建/保存"前都要假设当前已经有用户工作内容，宁可新开一个也别覆盖。
-- [seed · 不覆盖] 写文档：win+r → notepad 回车开**新的**记事本；不要直接往已经打开的记事本里 type。
-- [seed · 不覆盖] Word/WPS 用 ctrl+n 新建文档，不要在已打开的文档里直接覆盖写。
-- [seed · 不覆盖] 浏览器开新页面一律 ctrl+n 或 ctrl+t，不要复用当前 tab 的地址栏跳转，会丢掉用户在看的页面。
-- [seed · 不覆盖] 保存文件时若对话框默认文件名指向已存在文件，先全选删掉再 type 一个新的、明确的文件名（带时间戳更稳）。
-- [seed · 不覆盖] 关闭任何窗口/标签前必须确认这是你自己刚开的；不能随手关用户原来的窗口。
-- [seed · 启动 App] 使用某 App 前先 alt+tab 截图看已打开窗口；已在跑就用 ctrl+n 新建窗口续工作，不要占用用户原有窗口；
-  完全没开时才通过 win+r / 开始菜单搜索启动它。
-- [seed · 启动 App] **判断"是否已开"的可靠顺序**：① 看屏幕**下方任务栏**（横条状菜单栏，里面有已开窗口的图标，右侧的系统托盘里还有常驻后台 App 的小图标）有没有该 App 的图标；
-  ② 不确定时按一下 alt+tab 看缩略图列表里有没有它；③ **只有以上两步都没看到时**，才去双击桌面图标 / 用 win+r 启动。
-  绝对不要看到桌面图标就直接双击——这往往会重复启动或聚焦错位。微信、QQ、Steam、网易云等常驻型 App 几乎一定是已在任务栏右侧的系统托盘里跑着。
-- [seed · 启动 App · 微信] 微信常驻系统托盘（屏幕**下方任务栏右侧**那一排小图标里的绿色聊天气泡）。要打开主窗口：右键托盘里的微信图标 → "显示主面板"，
-  或者直接左键单击托盘图标。**不要**双击桌面 WeChat.exe 图标，那只会再启动一份且常被已运行实例拒绝。
-- [seed · 保存对话框] 优先在文件名输入框 type 完整绝对路径回车；或点击对话框顶部地址栏（路径面包屑）然后 type 路径回车；
-  **不要**去左侧『快速访问/此电脑』树里逐层点击导航。
-- [seed · 路径] 桌面路径：%USERPROFILE%\\Desktop 或 C:\\Users\\<用户名>\\Desktop，可以直接当成绝对路径 type 进去。
-- [seed · 对话框] 文件名框已有默认值（如 *.txt）时，先 ctrl+a 全选再 type 新路径，避免拼接出错。
-- [seed · 截图] 点击小按钮/小图标前先 L2 active_window 或 L3 cursor_local 看清，避免点偏。
+- [seed · keyboard] Prefer keyboard shortcuts over mouse clicks; screenshot coordinates aren't always exact, so anything you can do via the keyboard, do via the keyboard.
+- [seed · keyboard] Switch / browse open windows with alt+tab / alt+shift+tab / win+tab; do NOT switch windows by clicking taskbar icons.
+- [seed · browser] Browser: new window ctrl+n, new tab ctrl+t, close tab ctrl+w, address bar ctrl+l or alt+d, back/forward alt+left/right, refresh f5.
+- [seed · browser] Don't click the '+' in the top-right corner to open a new tab — use ctrl+t, it's more reliable.
+- [seed · search] Default search engine is bing.com. Fastest path: win+r to open Run, type `https://bing.com/search?q=keywords` and Enter —
+  Windows opens the result page in the default browser (no need to launch the browser first, no impact on the user's existing tabs).
+  Alternative: in the browser ctrl+t for a new tab, type `bing.com` Enter, then type the keywords.
+  Only switch to Google / Baidu / etc. when the user explicitly asks.
+- [seed · text-edit] Select all ctrl+a, copy ctrl+c, paste ctrl+v, undo ctrl+z, save ctrl+s, find ctrl+f.
+- [seed · system] Run dialog win+r, File Explorer win+e, show desktop win+d; for Notepad use win+r then type notepad and Enter.
+- [seed · window] Window layout: win+left/right snap to half, win+up maximise, win+down minimise / restore, win+m minimise all.
+- [seed · type-text] Use action="type" + text="..." for text input; the local driver pastes via clipboard, works for CJK / paths / English alike.
+- [seed · don't-overwrite] Before any 'open / new / save', assume the user already has work in progress; opening a fresh instance is always safer than overwriting.
+- [seed · don't-overwrite] Writing a doc: win+r -> notepad Enter to open a **new** Notepad; do NOT type into an already-open Notepad.
+- [seed · don't-overwrite] Word/WPS: ctrl+n for a new document, do NOT overwrite an already-open document.
+- [seed · don't-overwrite] Browser: open a new page with ctrl+n or ctrl+t; do NOT navigate the current tab via the address bar, it loses the user's current page.
+- [seed · don't-overwrite] When saving, if the dialog's default filename points at an existing file, ctrl+a select-all and type a new explicit name (a timestamp helps).
+- [seed · don't-overwrite] Before closing any window/tab, confirm it's one you opened yourself; never close the user's pre-existing windows.
+- [seed · launch-app] Before using an App, alt+tab and screenshot to see what's already open; if it's running, ctrl+n a new window to continue work — don't take over the user's existing window;
+  only launch via win+r / start menu when it's not open at all.
+- [seed · launch-app] **Reliable order to decide 'is it already running'**: (1) check the **taskbar at the bottom of the screen** (the horizontal bar with icons of open windows; the system tray on the right has the small icons of resident background Apps);
+  (2) when unsure, alt+tab once and look at the thumbnail list; (3) **only when both above show nothing**, double-click the desktop icon / win+r to launch.
+  Never blindly double-click a desktop icon — that often relaunches or focuses the wrong window. Resident apps like WeChat, QQ, Steam, NetEase Cloud Music are almost always running in the system tray on the right side of the taskbar.
+- [seed · launch-app · wechat] WeChat lives in the system tray (the green chat-bubble icon among the small icons on the **right of the bottom taskbar**). To open the main window: right-click the tray icon -> "Show main panel",
+  or just left-click the tray icon. **Do NOT** double-click the desktop WeChat.exe icon — that just spawns a duplicate which is usually rejected by the running instance.
+- [seed · save-dialog] Prefer typing a full absolute path into the filename field and pressing Enter; or click the address bar (path breadcrumb) at the top of the dialog and type a path then Enter;
+  do NOT navigate by clicking through the 'Quick access / This PC' tree on the left.
+- [seed · paths] Desktop path: %USERPROFILE%\\Desktop or C:\\Users\\<user>\\Desktop, can be typed directly as an absolute path.
+- [seed · dialog] When a filename field already has a default value (e.g. *.txt), ctrl+a select-all first then type the new path, to avoid concatenation errors.
+- [seed · screenshot] Before clicking small buttons / icons, take an L2 active_window or L3 cursor_local screenshot to see clearly and avoid misclicks.
 """
 
 
@@ -106,7 +107,7 @@ def tools_for_prompt(cfg: ToolsConfig) -> str:
             body = body[nl + 1:]
     if not body.strip():
         return ""
-    return "\n## 操作技巧（动态学习，遇到新情况可用 learn_tip 写入）\n" + body.strip() + "\n"
+    return "\n## Operation tips (dynamically learned; use learn_tip to add new ones when you discover them)\n" + body.strip() + "\n"
 
 
 def append_tip(cfg: ToolsConfig, text: str, kind: str = "tip", source: str = "agent") -> bool:

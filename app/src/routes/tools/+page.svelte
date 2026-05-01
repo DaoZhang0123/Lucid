@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+  import { _ } from "svelte-i18n";
 
   let enabled = $state(true);
   let path = $state("");
@@ -52,7 +53,7 @@
   }
 
   async function reset() {
-    if (!confirm("把 tools.md 重置为初始 seed？所有学到的技巧会被清掉。")) return;
+    if (!confirm($_("tools_page.reset_confirm"))) return;
     try {
       await invoke("tools_reset");
       await load();
@@ -64,20 +65,22 @@
   onMount(load);
 </script>
 
+<svelte:head>
+  <title>{$_("tools_page.page_title")}</title>
+</svelte:head>
+
 <div class="page">
   <header>
-    <a class="back" href="/">‹ 返回</a>
-    <h1>操作技巧 · tools.md</h1>
+    <a class="back" href="/">{$_("common.back")}</a>
+    <h1>{$_("tools_page.heading")}</h1>
   </header>
 
   <p class="hint">
-    每次任务起手会把这里的内容追加到 system prompt 末尾，作为"操作技巧库"。Agent 在任务中可以用
-    <code>learn_tip</code> 函数主动追加成功/失败经验。这里只放**操作技法**（怎么操作 App / 对话框
-    最稳妥），不要放用户偏好（那是 memory.md）或单次任务的临时事实。
+    {@html $_("tools_page.hint")}
   </p>
   <p class="meta">
-    状态：{enabled ? "已启用" : "已禁用（在 config.toml [tools] 里开启）"}<br/>
-    路径：<code>{path}</code>
+    {$_("tools_page.status_label")} {enabled ? $_("tools_page.status_enabled") : $_("tools_page.status_disabled")}<br/>
+    {$_("tools_page.path_label")} <code>{path}</code>
   </p>
 
   {#if err}<p class="err">{err}</p>{/if}
@@ -85,26 +88,26 @@
   <div class="quick">
     <input
       type="text"
-      placeholder="手动追加一条技巧（例：Outlook 用 Ctrl+R 回复比点回复按钮稳）"
+      placeholder={$_("tools_page.append_placeholder")}
       bind:value={newTip}
       onkeydown={(e) => { if (e.key === "Enter") appendTip(); }}
       disabled={!enabled}
     />
     <select bind:value={newKind} disabled={!enabled}>
-      <option value="tip">tip</option>
-      <option value="success">success</option>
-      <option value="failure">failure</option>
+      <option value="tip">{$_("tools_page.kind_tip")}</option>
+      <option value="success">{$_("tools_page.kind_success")}</option>
+      <option value="failure">{$_("tools_page.kind_failure")}</option>
     </select>
-    <button onclick={appendTip} disabled={!enabled || !newTip.trim()}>追加</button>
+    <button onclick={appendTip} disabled={!enabled || !newTip.trim()}>{$_("tools_page.append_button")}</button>
   </div>
 
   <textarea bind:value={text} rows="22" disabled={!enabled}></textarea>
 
   <div class="actions">
-    <button onclick={save} disabled={saving || !enabled}>{saving ? "保存中…" : "保存全文"}</button>
-    <button class="danger" onclick={reset} disabled={!enabled}>重置为 seed</button>
-    <button onclick={load}>重新加载</button>
-    {#if savedAt}<span class="ok">已保存 {savedAt}</span>{/if}
+    <button onclick={save} disabled={saving || !enabled}>{saving ? $_("tools_page.saving_button") : $_("tools_page.save_full_button")}</button>
+    <button class="danger" onclick={reset} disabled={!enabled}>{$_("tools_page.reset_button")}</button>
+    <button onclick={load}>{$_("tools_page.reload_button")}</button>
+    {#if savedAt}<span class="ok">{$_("tools_page.saved_at", { values: { at: savedAt } })}</span>{/if}
   </div>
 </div>
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+  import { _ } from "svelte-i18n";
   import {
     chat,
     ensureChatListeners,
@@ -59,7 +60,7 @@
     try {
       await invoke("sidecar_set_autonomy", { autonomy });
     } catch (e) {
-      chat.items = [...chat.items, { kind: "system", text: `切换自动度失败：${e}` }];
+      chat.items = [...chat.items, { kind: "system", text: $_("footer.autonomy_switch_failed", { values: { err: String(e) } }) }];
     }
   }
 
@@ -70,7 +71,7 @@
 
   async function onDeleteThread(e: MouseEvent, id: string) {
     e.stopPropagation();
-    if (!confirm("删除这个对话？")) return;
+    if (!confirm($_("sidebar.thread_delete_confirm"))) return;
     await deleteThread(id);
   }
 
@@ -91,33 +92,41 @@
 
 <div class="app">
   <header>
-    <button class="toggle" title={sidebarOpen ? "隐藏侧边栏" : "显示侧边栏"}
+    <button class="toggle" title={sidebarOpen ? $_("header.sidebar_hide") : $_("header.sidebar_show")}
             onclick={() => { sidebarOpen = !sidebarOpen; if (sidebarOpen) void refreshThreadList(); }}>
       {sidebarOpen ? "‹" : "›"}
     </button>
-    <div class="title">ctrlapp · 桌面 Agent</div>
+    <div class="title">{$_("app.title")}</div>
     <div class="status" class:on={chat.sidecarReady} class:running={chat.running}>
       {#if chat.running}
-        运行中 · 第 {chat.currentStep}/{chat.totalSteps} 步{#if chat.queuedThreadIds.length} · 队列 {chat.queuedThreadIds.length}{/if}
+        {#if chat.queuedThreadIds.length}
+          {$_("header.status_running_with_queue", { values: { current: chat.currentStep, total: chat.totalSteps, queued: chat.queuedThreadIds.length } })}
+        {:else}
+          {$_("header.status_running", { values: { current: chat.currentStep, total: chat.totalSteps } })}
+        {/if}
       {:else if chat.sidecarReady}
-        就绪{#if chat.queuedThreadIds.length} · 队列 {chat.queuedThreadIds.length}{/if}
+        {#if chat.queuedThreadIds.length}
+          {$_("header.status_ready_with_queue", { values: { queued: chat.queuedThreadIds.length } })}
+        {:else}
+          {$_("header.status_ready")}
+        {/if}
       {:else}
-        sidecar 未连接
+        {$_("header.status_disconnected")}
       {/if}
     </div>
-    <a class="link" href="/templates">模板</a>
-    <a class="link" href="/schedules">定时</a>
-    <a class="link" href="/memory">记忆</a>
-    <a class="link" href="/tools">技巧</a>
-    <a class="link" href="/settings">设置</a>
+    <a class="link" href="/templates">{$_("header.nav_templates")}</a>
+    <a class="link" href="/schedules">{$_("header.nav_schedules")}</a>
+    <a class="link" href="/memory">{$_("header.nav_memory")}</a>
+    <a class="link" href="/tools">{$_("header.nav_tools")}</a>
+    <a class="link" href="/settings">{$_("header.nav_settings")}</a>
   </header>
 
   <div class="body">
     {#if sidebarOpen}
       <aside class="sidebar">
         <div class="side-head">
-          <span>对话</span>
-          <button class="side-new" title="新建对话" onclick={newThread}>+</button>
+          <span>{$_("sidebar.heading")}</span>
+          <button class="side-new" title={$_("sidebar.new_thread_title")} onclick={newThread}>+</button>
         </div>
         <div class="thread-list">
           {#each chat.threads as t (t.id)}
@@ -126,18 +135,18 @@
                  onclick={() => onPickThread(t.id)}
                  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void onPickThread(t.id); } }}>
               <div class="t-title" title={t.title}>
-                {#if chat.runningThreadId === t.id}<span class="t-tag run">▶ 运行中</span>{:else if chat.queuedThreadIds.includes(t.id)}<span class="t-tag queued">⏳ 排队中</span>{/if}
-                {t.title || "(未命名)"}
+                {#if chat.runningThreadId === t.id}<span class="t-tag run">{$_("sidebar.thread_running")}</span>{:else if chat.queuedThreadIds.includes(t.id)}<span class="t-tag queued">{$_("sidebar.thread_queued")}</span>{/if}
+                {t.title || $_("sidebar.thread_unnamed")}
               </div>
               <div class="t-meta">
                 <span>{fmtTime(t.updated_ms)}</span>
-                {#if t.task_count}<span>· {t.task_count} 任务</span>{/if}
+                {#if t.task_count}<span>{$_("sidebar.thread_task_count", { values: { n: t.task_count } })}</span>{/if}
               </div>
-              <button class="t-del" title="删除" onclick={(e) => onDeleteThread(e, t.id)}>✕</button>
+              <button class="t-del" title={$_("sidebar.thread_delete_title")} onclick={(e) => onDeleteThread(e, t.id)}>✕</button>
             </div>
           {/each}
           {#if !chat.threads.length}
-            <div class="empty">还没有对话，点击 + 新建</div>
+            <div class="empty">{$_("sidebar.empty")}</div>
           {/if}
         </div>
       </aside>
@@ -147,9 +156,9 @@
       <div class="chat" bind:this={scrollEl}>
         {#each chat.items as it, i (i)}
           {#if it.kind === "user"}
-            <div class="bubble user"><div class="role">你</div><div class="text">{it.text}</div></div>
+            <div class="bubble user"><div class="role">{$_("chat.role_user")}</div><div class="text">{it.text}</div></div>
           {:else if it.kind === "assistant"}
-            <div class="bubble assistant"><div class="role">Agent · 第{it.step ?? "?"}步</div><div class="text">{it.text}</div></div>
+            <div class="bubble assistant"><div class="role">{$_("chat.role_assistant", { values: { step: it.step ?? $_("chat.step_unknown") } })}</div><div class="text">{it.text}</div></div>
           {:else if it.kind === "tool"}
             <div class="tool">
               <span class="badge">step {it.step}</span>
@@ -167,12 +176,12 @@
             </div>
           {:else if it.kind === "image"}
             <div class="img-card">
-              <div class="img-meta">📷 step {it.step} · {it.level}</div>
+              <div class="img-meta">{$_("chat.image_meta", { values: { step: it.step, level: it.level } })}</div>
               {#if it.dataUrl}
-                <img src={it.dataUrl} alt="step {it.step}"
+                <img src={it.dataUrl} alt={$_("chat.image_alt", { values: { step: it.step } })}
                      onclick={() => (lightbox = it.dataUrl ?? null)} />
               {:else}
-                <div class="img-loading">加载中…</div>
+                <div class="img-loading">{$_("chat.image_loading")}</div>
               {/if}
             </div>
           {:else if it.kind === "system"}
@@ -189,33 +198,33 @@
       <footer>
         <div class="controls">
           <label>
-            自动度
+            {$_("footer.autonomy_label")}
             <select bind:value={autonomy} onchange={setAutonomy}>
-              <option value="full">full（不确认）</option>
-              <option value="confirm_critical">confirm_critical（危险词确认）</option>
-              <option value="confirm_each">confirm_each（每步确认）</option>
+              <option value="full">{$_("footer.autonomy_full")}</option>
+              <option value="confirm_critical">{$_("footer.autonomy_confirm_critical")}</option>
+              <option value="confirm_each">{$_("footer.autonomy_confirm_each")}</option>
             </select>
           </label>
           <label>
-            步数
+            {$_("footer.max_steps_label")}
             <input type="number" min="1" max="200" bind:value={maxSteps} />
           </label>
-          <button class="cancel" onclick={cancel} disabled={!chat.running}>急停 (Ctrl+Alt+Esc)</button>
+          <button class="cancel" onclick={cancel} disabled={!chat.running}>{$_("footer.cancel_button")}</button>
         </div>
         <form onsubmit={(e) => { e.preventDefault(); start(); }}>
-          <button type="button" class="new-thread" title="新建对话（清空当前聊天，运行中会先取消）"
+          <button type="button" class="new-thread" title={$_("footer.new_thread_title")}
                   onclick={newThread}>+</button>
           <textarea
-            placeholder="告诉 Agent 你要做什么……回车发送，Shift+回车换行"
+            placeholder={$_("footer.input_placeholder")}
             rows="2"
             bind:value={instruction}
             onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); start(); } }}
           ></textarea>
-          <button type="submit" disabled={!instruction.trim()}>发送</button>
+          <button type="submit" disabled={!instruction.trim()}>{$_("footer.send_button")}</button>
         </form>
         {#if chat.sidecarStderr.length}
           <details class="stderr">
-            <summary>sidecar 日志（{chat.sidecarStderr.length}）</summary>
+            <summary>{$_("footer.stderr_summary", { values: { n: chat.sidecarStderr.length } })}</summary>
             <pre>{chat.sidecarStderr.join("\n")}</pre>
           </details>
         {/if}
@@ -226,7 +235,7 @@
 
 {#if lightbox}
   <div class="lightbox" onclick={() => (lightbox = null)} role="presentation">
-    <img src={lightbox} alt="screenshot" />
+    <img src={lightbox} alt={$_("chat.lightbox_alt")} />
   </div>
 {/if}
 

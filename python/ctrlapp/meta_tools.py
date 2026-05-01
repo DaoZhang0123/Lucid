@@ -29,17 +29,18 @@ REMEMBER_SCHEMA: dict = {
     "function": {
         "name": "remember",
         "description": (
-            "把一条值得长期保留的事实写入 memory.md（覆盖式追加，下次任务起手会注入到 system prompt）。"
-            "适用：用户明确要求记住的偏好；用户的称呼 / 身份；用户的操作习惯（常用浏览器、编辑器、"
-            "快捷键、保存路径、命名风格、深色模式偏好等）；以及短期内不会变的环境事实（如常用工作目录）。"
-            "**不要**记单次任务的临时事实、过程中间结果、密码 token 等敏感信息。"
-            "写入前先看 system prompt 末尾的『长期记忆』段，避免重复或冲突。"
-            "格式要求：单行、不超过 200 字、陈述句。"
+            "Persist a long-term fact to memory.md (append-only; injected into the system prompt at the start of every future task). "
+            "Use for: preferences the user explicitly asks you to remember; how the user wants to be addressed / their identity; "
+            "operating habits (preferred browser, editor, shortcuts, save paths, naming style, dark-mode preference, etc.); "
+            "environment facts that won't change soon (e.g. usual working directory). "
+            "**Do NOT** record one-shot facts from the current task, intermediate results, or sensitive info like passwords / tokens. "
+            "Before writing, scan the 'Long-term memory' section at the end of the system prompt to avoid duplicates / conflicts. "
+            "Format: single line, <=200 chars, declarative sentence."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "text": {"type": "string", "description": "要写入的一条记忆，单行陈述句。"}
+                "text": {"type": "string", "description": "One memory entry, single declarative line."}
             },
             "required": ["text"],
         },
@@ -51,22 +52,23 @@ LEARN_TIP_SCHEMA: dict = {
     "function": {
         "name": "learn_tip",
         "description": (
-            "把一条**操作技巧**（针对某个 App / 对话框 / 控件 怎么做更稳）追加进 tools.md，"
-            "下次任务起手会注入到 system prompt。\n"
-            "**何时主动调用（满足任一即可）**：\n"
-            "1) 用快捷键 / 命令行 成功打开/操作了某个 App（例：Ctrl+Alt+W 开微信、"
-            "Win+R→outlook 开 Outlook）——这是最高价值的技巧，**只要试过且 work，立刻登记**；\n"
-            "2) 绕过了一个曾经卡住的坑（例：WeChat Enter 是发送、Shift+Enter 才换行）；\n"
-            "3) 发现旧技巧错了/过时了，写一条新的覆盖性条目。\n"
-            "**不要**记单次任务的临时事实（那不是技巧）、也不要记用户偏好（那是 memory.md）。"
-            "写入前先看下方『操作技巧』已有条目避免重复。"
-            "格式：单行陈述句、不超 200 字；带上 App / 场景标签以便检索。"
+            "Append an **operation tip** (the most reliable way to drive a specific App / dialog / control) to tools.md. "
+            "It will be injected into the system prompt at the start of every future task.\n"
+            "**When to call (any one of these is enough)**:\n"
+            "1) You used a shortcut / command line to successfully open or operate an App "
+            "(e.g. Ctrl+Alt+W opens WeChat, Win+R -> outlook opens Outlook) — these are the highest-value tips, "
+            "so **as soon as it works once, log it**;\n"
+            "2) You worked around a pit you previously got stuck on (e.g. WeChat: Enter sends, Shift+Enter inserts a newline);\n"
+            "3) You found an old tip is wrong / outdated — write a new entry that overrides it.\n"
+            "**Do NOT** record one-shot facts (those aren't tips), and don't record user preferences (those go in memory.md). "
+            "Before writing, scan existing entries in the 'Operation tips' section to avoid duplicates. "
+            "Format: single declarative line, <=200 chars; include the App / scenario as a tag for easier search."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "text": {"type": "string", "description": "要写入的技巧。例：「Outlook 用 Ctrl+R 回复比鼠标点回复按钮更稳」"},
-                "kind": {"type": "string", "enum": ["success", "failure", "tip"], "description": "成功经验 / 失败教训 / 一般提示。默认 success。"},
+                "text": {"type": "string", "description": "The tip to record. e.g. 'Outlook: Ctrl+R to reply is more reliable than clicking the Reply button'."},
+                "kind": {"type": "string", "enum": ["success", "failure", "tip"], "description": "Success story / failure lesson / general tip. Defaults to success."},
             },
             "required": ["text"],
         },
@@ -78,25 +80,26 @@ REMEMBER_ICON_SCHEMA: dict = {
     "function": {
         "name": "remember_icon",
         "description": (
-            "把当前截图里的一小块（典型场景：任务栏 / 系统托盘里的小图标）裁剪下来登记到"
-            "**图标记忆库**，下次任务起手会被拼成一张『图标合集』图随 system prompt 注入，"
-            "帮助你（以及未来的自己）识别小尺寸图标。\n"
-            "适用：用户明确教你『这个图标 = XX App』，或你通过上下文确认了某个图标的含义"
-            "且该图标在多个任务里会复现（如微信 / QQ / Steam / 网易云 在系统托盘里的常驻图标）。\n"
-            "**不要**登记：临时弹出的提示气泡、广告横幅、任务相关的一次性截图。\n"
-            "坐标说明：x/y/w/h 是**图片像素坐标**（不是屏幕坐标）；level 指你引用的是哪一层截图："
-            "L1=全屏、L2=活动窗口、L3=鼠标周边。建议直接用 L1 全屏截图框选托盘图标。"
+            "Crop a small region of the most recent screenshot (typical use: a tiny icon in the taskbar or system tray) "
+            "and register it into the **icon memory library**. At the start of every future task all registered icons are "
+            "composed into one 'icon atlas' image and injected with the system prompt, helping you (and your future self) "
+            "recognise small icons.\n"
+            "Use when: the user explicitly tells you 'this icon = App X', or you have confirmed an icon's meaning from context "
+            "AND the icon will recur across tasks (e.g. WeChat / QQ / Steam / NetEase Music persistent tray icons).\n"
+            "**Do NOT** register: transient popup bubbles, ad banners, one-shot task screenshots.\n"
+            "Coordinates: x/y/w/h are **image pixel coordinates** (NOT screen coordinates); `level` selects which screenshot "
+            "layer you reference: L1=fullscreen, L2=active window, L3=cursor-local. Recommend cropping tray icons directly from L1."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "label": {"type": "string", "description": "图标的短标签（≤20 字）。例如 『微信』『QQ 音乐 托盘』。"},
-                "description": {"type": "string", "description": "对该图标含义/位置的简短说明（≤200 字），便于后续检索。"},
-                "x": {"type": "integer", "description": "裁剪区域左上角 x（图片像素）"},
-                "y": {"type": "integer", "description": "裁剪区域左上角 y（图片像素）"},
-                "w": {"type": "integer", "description": "裁剪区域宽度（图片像素）。建议 24~96。"},
-                "h": {"type": "integer", "description": "裁剪区域高度（图片像素）。建议 24~96。"},
-                "level": {"type": "string", "enum": ["L1", "L2", "L3"], "description": "从哪一层最近一张截图裁剪。默认 L1。"},
+                "label": {"type": "string", "description": "Short label for the icon (<=20 chars). e.g. 'WeChat', 'QQ Music tray'."},
+                "description": {"type": "string", "description": "Brief note about meaning / location (<=200 chars) for later search."},
+                "x": {"type": "integer", "description": "Crop top-left x (image pixels)."},
+                "y": {"type": "integer", "description": "Crop top-left y (image pixels)."},
+                "w": {"type": "integer", "description": "Crop width (image pixels). Recommended 24-96."},
+                "h": {"type": "integer", "description": "Crop height (image pixels). Recommended 24-96."},
+                "level": {"type": "string", "enum": ["L1", "L2", "L3"], "description": "Which most-recent screenshot layer to crop from. Default L1."},
             },
             "required": ["label", "x", "y", "w", "h"],
         },
@@ -131,7 +134,7 @@ def dispatch_meta_tool(
         text = (args.get("text") or "").strip()
         ok = memory_mod.append_memory(cfg.memory, text, source="agent")
         return ToolResult(
-            output=f"已写入记忆：{text[:80]}" if ok else "",
+            output=f"memory saved: {text[:80]}" if ok else "",
             error=None if ok else "memory disabled or empty",
         )
 
@@ -140,7 +143,7 @@ def dispatch_meta_tool(
         kind = (args.get("kind") or "success").strip().lower() or "success"
         ok = tooltips_mod.append_tip(cfg.tools, text, kind=kind, source="agent")
         return ToolResult(
-            output=f"已写入技巧({kind})：{text[:80]}" if ok else "",
+            output=f"tip saved ({kind}): {text[:80]}" if ok else "",
             error=None if ok else "tools disabled or empty",
         )
 
@@ -165,8 +168,8 @@ def dispatch_meta_tool(
         entry = icon_mod.crop_and_add(cfg.icons, src_png, x, y, w, h, label, desc)
         if entry:
             return ToolResult(
-                output=(f"已登记图标 #{entry['id']} 『{entry['label']}』 "
-                        f"({w}x{h} from {level} @ {x},{y})。下次任务起手会自动注入合集图。"),
+                output=(f"icon registered #{entry['id']} '{entry['label']}' "
+                        f"({w}x{h} from {level} @ {x},{y}). It will be auto-injected as part of the icon atlas at the start of every future task."),
             )
         return ToolResult(error="failed to crop or save icon (check image bounds)")
 

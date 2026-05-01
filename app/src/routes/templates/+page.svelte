@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
+  import { _ } from "svelte-i18n";
   import { startTask, ensureChatListeners } from "$lib/chatStore.svelte";
 
   type Tpl = { id: string; name: string; instruction: string; autonomy: string; max_steps: number };
@@ -44,7 +45,7 @@
   async function save() {
     err = "";
     try {
-      if (!instruction.trim()) { err = "instruction 不能为空"; return; }
+      if (!instruction.trim()) { err = $_("templates.instruction_required"); return; }
       if (editing) {
         await invoke("template_update", {
           id: editing.id, name, instruction, autonomy, maxSteps,
@@ -62,7 +63,7 @@
   }
 
   async function del(id: string) {
-    if (!confirm("删除这个模板？")) return;
+    if (!confirm($_("templates.delete_confirm"))) return;
     try {
       await invoke("template_delete", { id });
       if (editing?.id === id) reset();
@@ -81,52 +82,56 @@
   onMount(load);
 </script>
 
+<svelte:head>
+  <title>{$_("templates.page_title")}</title>
+</svelte:head>
+
 <div class="page">
   <header>
-    <a class="back" href="/">‹ 返回</a>
-    <h1>任务模板</h1>
+    <a class="back" href="/">{$_("common.back")}</a>
+    <h1>{$_("templates.heading")}</h1>
   </header>
-  <p class="hint">把常用的指令存为模板，一键发送（仍走当前 active thread；运行中会先取消）。</p>
+  <p class="hint">{$_("templates.hint")}</p>
 
   {#if err}<p class="err">{err}</p>{/if}
 
   <section class="editor">
-    <h2>{editing ? "编辑模板" : "新建模板"}</h2>
-    <label>名称 <input bind:value={name} placeholder="例：每日周报草稿" /></label>
-    <label>Instruction
-      <textarea rows="4" bind:value={instruction} placeholder="发给 Agent 的指令…"></textarea>
+    <h2>{editing ? $_("templates.edit_heading") : $_("templates.new_heading")}</h2>
+    <label>{$_("templates.name_label")} <input bind:value={name} placeholder={$_("templates.name_placeholder")} /></label>
+    <label>{$_("templates.instruction_label")}
+      <textarea rows="4" bind:value={instruction} placeholder={$_("templates.instruction_placeholder")}></textarea>
     </label>
-    <label>自动度
+    <label>{$_("templates.autonomy_label")}
       <select bind:value={autonomy}>
         <option value="full">full</option>
         <option value="confirm_critical">confirm_critical</option>
         <option value="confirm_each">confirm_each</option>
       </select>
     </label>
-    <label>步数 <input type="number" min="1" max="200" bind:value={maxSteps} /></label>
+    <label>{$_("templates.max_steps_label")} <input type="number" min="1" max="200" bind:value={maxSteps} /></label>
     <div class="actions">
-      <button onclick={save}>{editing ? "保存修改" : "保存模板"}</button>
-      {#if editing}<button class="ghost" onclick={reset}>取消</button>{/if}
+      <button onclick={save}>{editing ? $_("templates.save_edit_button") : $_("templates.save_new_button")}</button>
+      {#if editing}<button class="ghost" onclick={reset}>{$_("templates.cancel_button")}</button>{/if}
     </div>
   </section>
 
   <section class="list">
-    <h2>已有模板（{items.length}）</h2>
+    <h2>{$_("templates.list_heading", { values: { n: items.length } })}</h2>
     {#each items as t (t.id)}
       <div class="row" class:active={editing?.id === t.id}>
         <div class="info">
           <div class="name">{t.name}</div>
           <div class="instr">{t.instruction}</div>
-          <div class="meta">{t.autonomy} · {t.max_steps} 步</div>
+          <div class="meta">{t.autonomy} · {$_("templates.step_count", { values: { n: t.max_steps } })}</div>
         </div>
         <div class="ops">
-          <button onclick={() => runNow(t)}>▶ 跑</button>
-          <button class="ghost" onclick={() => startEdit(t)}>编辑</button>
-          <button class="danger" onclick={() => del(t.id)}>✕</button>
+          <button onclick={() => runNow(t)}>{$_("templates.run_button")}</button>
+          <button class="ghost" onclick={() => startEdit(t)}>{$_("templates.edit_button")}</button>
+          <button class="danger" onclick={() => del(t.id)}>{$_("templates.delete_button")}</button>
         </div>
       </div>
     {/each}
-    {#if !items.length}<p class="empty">还没有模板，先在上面新建。</p>{/if}
+    {#if !items.length}<p class="empty">{$_("templates.empty")}</p>{/if}
   </section>
 </div>
 

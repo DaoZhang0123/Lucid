@@ -1,8 +1,20 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onDestroy, onMount } from "svelte";
+  import { _, locale } from "svelte-i18n";
+  import { SUPPORTED_LOCALES, LOCALE_LABELS, saveLocale, type SupportedLocale } from "$lib/i18n";
 
   type Provider = "anthropic" | "copilot" | "proxy";
+
+  // Mirror current i18n locale into a local $state so <select bind:value> works.
+  // The store is also read directly in the change handler to persist + apply.
+  let uiLocale = $state<string>($locale ?? "en");
+  $effect(() => { uiLocale = $locale ?? uiLocale; });
+
+  function onLocaleChange() {
+    void locale.set(uiLocale);
+    saveLocale(uiLocale);
+  }
 
   let path = $state("");
   let provider = $state<Provider>("anthropic");
@@ -159,7 +171,7 @@
             await save();
           } else if (r.status === "error") {
             if (copPollTimer) { clearInterval(copPollTimer); copPollTimer = null; }
-            copError = r.error || "登录失败";
+            copError = r.error || $_("settings.copilot_login_failed_default");
             copDevice = null;
             copBusy = false;
           }
@@ -200,87 +212,96 @@
 </script>
 
 <svelte:head>
-  <title>ctrlapp · 设置</title>
+  <title>{$_("settings.page_title")}</title>
 </svelte:head>
 
 <main>
   <header>
-    <a href="/">← 返回聊天</a>
-    <a href="/history">历史回放</a>
-    <h1>设置</h1>
+    <a href="/">{$_("settings.back_to_chat")}</a>
+    <a href="/history">{$_("settings.history_link")}</a>
+    <h1>{$_("settings.heading")}</h1>
   </header>
 
   <section class="card">
-    <h2>LLM 提供方</h2>
-    <p class="path">配置文件: <code>{path || "(未加载)"}</code></p>
+    <h2>{$_("settings.llm_section_title")}</h2>
+    <p class="path">{$_("settings.config_path_label")} <code>{path || $_("settings.config_path_unloaded")}</code></p>
     <label>
-      Provider
+      {$_("settings.provider_label")}
       <select bind:value={provider}>
-        <option value="anthropic">anthropic（直连 Anthropic API · 推荐）</option>
-        <option value="copilot">copilot（GitHub Copilot 订阅）</option>
-        <option value="proxy">proxy（OpenAI 兼容代理 / LiteLLM / OpenClaw）</option>
+        <option value="anthropic">{$_("settings.provider_anthropic")}</option>
+        <option value="copilot">{$_("settings.provider_copilot")}</option>
+        <option value="proxy">{$_("settings.provider_proxy")}</option>
       </select>
     </label>
 
     {#if provider === "proxy"}
-      <h3>Proxy 设置</h3>
+      <h3>{$_("settings.proxy_section_title")}</h3>
       <label>
         base_url
-        <input type="text" bind:value={baseUrl} placeholder="http://localhost:4000" />
+        <input type="text" bind:value={baseUrl} placeholder={$_("settings.proxy_base_url_placeholder")} />
       </label>
       <label>
         model
-        <input type="text" bind:value={model} placeholder="claude-opus-4.6" />
+        <input type="text" bind:value={model} placeholder={$_("settings.proxy_model_placeholder")} />
       </label>
       <label>
         api_key
-        <input type="password" bind:value={apiKey} placeholder="留空走 LITELLM_MASTER_KEY 环境变量" />
+        <input type="password" bind:value={apiKey} placeholder={$_("settings.proxy_api_key_placeholder")} />
       </label>
     {:else if provider === "anthropic"}
-      <h3>Anthropic 设置</h3>
+      <h3>{$_("settings.anthropic_section_title")}</h3>
       <label>
         api_key
-        <input type="password" bind:value={anthApiKey} placeholder="sk-ant-..." />
+        <input type="password" bind:value={anthApiKey} placeholder={$_("settings.anthropic_api_key_placeholder")} />
       </label>
       <label>
         model
-        <input type="text" bind:value={anthModel} placeholder="claude-opus-4-5-20250929" />
+        <input type="text" bind:value={anthModel} placeholder={$_("settings.anthropic_model_placeholder")} />
       </label>
       <label>
         base_url
-        <input type="text" bind:value={anthBaseUrl} placeholder="https://api.anthropic.com" />
+        <input type="text" bind:value={anthBaseUrl} placeholder={$_("settings.anthropic_base_url_placeholder")} />
       </label>
     {:else if provider === "copilot"}
-      <h3>GitHub Copilot 设置</h3>
+      <h3>{$_("settings.copilot_section_title")}</h3>
       <label>
         model
-        <input type="text" bind:value={copModel} placeholder="claude-opus-4-6" />
+        <input type="text" bind:value={copModel} placeholder={$_("settings.copilot_model_placeholder")} />
       </label>
       <div class="copilot-status">
         {#if copStatus.logged_in}
-          <p class="ok">✓ 已登录：<b>{copStatus.github_user || "(unknown)"}</b></p>
+          <p class="ok">{$_("settings.copilot_logged_in_as")} <b>{copStatus.github_user || $_("settings.copilot_user_unknown")}</b></p>
           {#if copStatus.copilot_expires_at}
-            <p class="hint">Copilot token 过期：{fmtExpiry(copStatus.copilot_expires_at)}</p>
+            <p class="hint">{$_("settings.copilot_token_expires")} {fmtExpiry(copStatus.copilot_expires_at)}</p>
           {/if}
-          <button onclick={copilotLogout}>登出</button>
+          <button onclick={copilotLogout}>{$_("settings.copilot_logout_button")}</button>
         {:else if copDevice}
-          <p>请在浏览器打开
+          <p>{$_("settings.copilot_device_step_open")}
             <a href={copDevice.verification_uri} target="_blank" rel="noreferrer">{copDevice.verification_uri}</a>
-            ，输入设备码：</p>
+            {$_("settings.copilot_device_step_enter_code")}</p>
           <pre class="usercode">{copDevice.user_code}</pre>
-          <p class="hint">轮询中…（每 {copDevice.interval}s 一次，{Math.round(copDevice.expires_in / 60)} 分钟内有效）</p>
-          <button onclick={copilotCancel}>取消</button>
+          <p class="hint">{$_("settings.copilot_device_polling_hint", { values: { interval: copDevice.interval, minutes: Math.round(copDevice.expires_in / 60) } })}</p>
+          <button onclick={copilotCancel}>{$_("settings.copilot_device_cancel_button")}</button>
         {:else}
-          <p>尚未登录 GitHub。</p>
-          <button onclick={copilotLogin} disabled={copBusy}>{copBusy ? "请稍候…" : "登录 GitHub Copilot"}</button>
+          <p>{$_("settings.copilot_not_logged_in")}</p>
+          <button onclick={copilotLogin} disabled={copBusy}>{copBusy ? $_("settings.copilot_login_busy") : $_("settings.copilot_login_button")}</button>
         {/if}
         {#if copError}<p class="err">{copError}</p>{/if}
       </div>
     {/if}
 
-    <h3>通用</h3>
+    <h3>{$_("settings.general_section_title")}</h3>
     <label>
-      默认自动度
+      {$_("lang.picker_label")}
+      <select bind:value={uiLocale} onchange={onLocaleChange}>
+        {#each SUPPORTED_LOCALES as code (code)}
+          <option value={code}>{LOCALE_LABELS[code as SupportedLocale]}</option>
+        {/each}
+      </select>
+    </label>
+    <p class="hint">{$_("settings.language_hint")}</p>
+    <label>
+      {$_("settings.default_autonomy_label")}
       <select bind:value={autonomy}>
         <option value="full">full</option>
         <option value="confirm_critical">confirm_critical</option>
@@ -288,34 +309,34 @@
       </select>
     </label>
     <label>
-      最大步数
+      {$_("settings.max_steps_label")}
       <input type="number" min="1" max="200" bind:value={maxSteps} />
     </label>
     <div class="row">
-      <button onclick={save} disabled={saving}>{saving ? "保存中..." : "保存"}</button>
-      {#if savedAt}<span class="ok">已保存 @ {savedAt}</span>{/if}
+      <button onclick={save} disabled={saving}>{saving ? $_("settings.saving_button") : $_("settings.save_button")}</button>
+      {#if savedAt}<span class="ok">{$_("settings.saved_at", { values: { at: savedAt } })}</span>{/if}
       {#if error}<span class="err">{error}</span>{/if}
     </div>
-    <p class="hint">保存后会尝试热重载 sidecar；若有任务运行中需稍后再试或重启 ctrlapp。</p>
+    <p class="hint">{$_("settings.hot_reload_hint")}</p>
   </section>
 
   <section class="card">
-    <h2>连通性</h2>
-    <button onclick={ping}>ping sidecar</button>
+    <h2>{$_("settings.ping_section_title")}</h2>
+    <button onclick={ping}>{$_("settings.ping_button")}</button>
     {#if pingMs !== null}<span class="ok">{pingMs}ms</span>{/if}
     {#if pingErr}<span class="err">{pingErr}</span>{/if}
   </section>
 
   <section class="card">
-    <h2>适配自检 (Phase 1.5)</h2>
+    <h2>{$_("settings.selfcheck_section_title")}</h2>
     <div class="row">
-      <button onclick={() => runSelfcheck("monitors")} disabled={selfcheckRunning}>多屏 + DPI</button>
-      <button onclick={() => runSelfcheck("winr")} disabled={selfcheckRunning}>Win+R 别名</button>
-      <button onclick={() => runSelfcheck("click")} disabled={selfcheckRunning}>点击坐标偏差</button>
-      <button onclick={() => runSelfcheck("all")} disabled={selfcheckRunning}>全部</button>
+      <button onclick={() => runSelfcheck("monitors")} disabled={selfcheckRunning}>{$_("settings.selfcheck_monitors_button")}</button>
+      <button onclick={() => runSelfcheck("winr")} disabled={selfcheckRunning}>{$_("settings.selfcheck_winr_button")}</button>
+      <button onclick={() => runSelfcheck("click")} disabled={selfcheckRunning}>{$_("settings.selfcheck_click_button")}</button>
+      <button onclick={() => runSelfcheck("all")} disabled={selfcheckRunning}>{$_("settings.selfcheck_all_button")}</button>
     </div>
     {#if selfcheckRunning}
-      <p>正在运行...（winr / click 会真按键，请别在前台干别的）</p>
+      <p>{$_("settings.selfcheck_running_hint")}</p>
     {/if}
     {#if selfcheckOut}
       <pre>{JSON.stringify(selfcheckOut, null, 2)}</pre>

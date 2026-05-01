@@ -27,7 +27,7 @@ from pathlib import Path
 
 from .config import MemoryConfig
 
-_HEADER = "# ctrlapp 长期记忆\n"
+_HEADER = "# ctrlapp Long-term Memory\n"
 _ENTRY_RE = re.compile(r"^- \[", re.MULTILINE)
 
 
@@ -74,7 +74,7 @@ def memory_for_prompt(cfg: MemoryConfig) -> str:
             body = body[nl + 1:]
     if not body.strip():
         return ""
-    return "\n## 长期记忆（用户偏好 / 历史共识，请遵守）\n" + body.strip() + "\n"
+    return "\n## Long-term memory (user preferences / agreed conventions, please respect)\n" + body.strip() + "\n"
 
 
 def append_memory(cfg: MemoryConfig, text: str, source: str = "agent") -> bool:

@@ -228,7 +228,7 @@ def build_atlas(cfg: IconMemoryConfig) -> IconAtlas | None:
     title_font = _try_load_font(16)
     label_font = _try_load_font(14)
 
-    draw.text((pad, pad), "[图标合集] 编号 [N] 对应下方文字索引",
+    draw.text((pad, pad), "[Icon atlas] each numbered cell [N] maps to the text index below",
               fill=(60, 60, 60), font=title_font)
 
     captions: list[str] = []
