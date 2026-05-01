@@ -57,8 +57,6 @@
 - [x] 左侧可折叠 thread 列表（点击切换、悬停 ✕ 删除、顶部 + 新建）替换独立 `/history` 页
 - [x] 主聊天窗嵌入截图缩略图（点击 lightbox 放大），包含起手 init 图
 - [x] 切换路由不丢失聊天状态（模块级 `$state` 单例 store）
-- [ ] "重放此任务"按钮（仅文本重放，不重新驱动鼠键）
-- [ ] 历史搜索（任务 instruction 全文）
 
 ### 1.5 适配与体验细节
 - [x] 多屏布局变化时重新探测 `[screenshot].l1_max_long_edge`（`ctrlapp.selfcheck monitors` + 设置页一键自检）
@@ -107,6 +105,7 @@
   - 持久化：`schedules.json`（`%LOCALAPPDATA%\dev.ctrlapp\`），含 `next_ms` / `last_run_ms` / `enabled`
   - `/schedules` 页面 CRUD + 暂停/启用；触发时自动 `thread_new + start_task`，运行中冲突自动跳过（`schedule_skipped` 事件）
   - 仍未做：cron 表达式语法（5 字段）、heartbeat 反思、桌面通知联动
+- [x] **同 thread 多轮 run 的 context 持久化（F3）**：每次 `_run` 结束把 messages 去掉 prelude 后落盘到 `thread/messages.json`；下次同 thread 起新 run 时载入 tail 拼到新 instruction 之前。prelude（system + atlas）每次重建以反映 memory.md / tools.md / icons 的更新。
 
 ---
 
@@ -120,6 +119,8 @@
 
 ## 横向 / 工程债
 
+- [ ] **首次运行引导：把 Windows 任务栏按钮"从不合并"**：在欢迎页 / 设置自检里加一项检测和一键引导——打开「设置 → 个性化 → 任务栏 → 任务栏行为 → 合并任务栏按钮并隐藏标签」改为「从不」。这样任务栏每个窗口都带文字标签，模型靠 OCR 就能知道哪些 App / 窗口已开，不必再依赖图标识别。可在引导里直接 `start ms-settings:taskbar` 跳到对应页面，并给出截图示意。
+- [ ] **Context Manager / 自适应压缩**：当本次发给 LLM 的 messages 估算 token 数（或字节数）逼近模型 context window 阈值（如 70%）时，自动触发"摘要压缩"——把最早的若干 user/assistant/tool 段（除 prelude 外）调用一次廉价模型生成"## 上文摘要"段塞回去，丢掉原始消息（只保留最近 N 步原文 + 最近若干截图）。并入 F3 持久化（saved tail 也走压缩）。配置：`[context] auto_compress_enabled / target_ratio / summary_model / keep_recent_steps`。
 - [ ] 单元测试：`_prune_old_images` / `_split_segments` / `_norm_key` / `RunLogger` 轮转 / `_parse_level`
 - [ ] CI：Windows runner 跑 lint + 单测（不动鼠键的部分）
 - [ ] L3 鼠标近屏幕边缘时区域裁剪到虚拟屏幕边界（防 mss 越界问题）

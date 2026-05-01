@@ -61,6 +61,7 @@ function handleEvent(v: any) {
   const k = v.event;
   if (k === "ready") {
     chat.sidecarReady = true;
+    if (typeof v.max_steps === "number" && v.max_steps > 0) chat.totalSteps = v.max_steps;
     push({ kind: "system", text: `sidecar ready · provider=${v.provider ?? "?"} · model=${v.model} · autonomy=${v.autonomy} · max_steps=${v.max_steps}` });
     void refreshThreadList();
   } else if (k === "thread_changed") {

@@ -13,9 +13,52 @@ import pyautogui
 import pyperclip
 
 from .config import InputConfig
+from .dpi import virtual_screen_rect
 
-pyautogui.FAILSAFE = True   # 鼠标移到左上角触发 abort
+pyautogui.FAILSAFE = True   # 鼠标移到屏幕角触发 abort（用户级急停）；
+                            # 我们额外把目标坐标 clamp 到角内 2px，避免 agent 自己点死。
 pyautogui.PAUSE = 0.0       # 我们自己控制延迟
+
+
+def _safe_xy(x: int, y: int) -> tuple[int, int]:
+    """把目标坐标 clamp 到虚拟桌面内、且离每个角 ≥ FAILSAFE_MARGIN 像素，
+    避免 PyAutoGUI 的 fail-safe 因为我们自己 moveTo 到角而误触发。"""
+    margin = 2
+    vx, vy, vw, vh = virtual_screen_rect()
+    cx = max(vx + margin, min(int(x), vx + vw - 1 - margin))
+    cy = max(vy + margin, min(int(y), vy + vh - 1 - margin))
+    return cx, cy
+
+
+def _nudge_off_corner_if_needed() -> None:
+    """PyAutoGUI 的 fail-safe 会在每次调用时检查**当前**鼠标位置；如果鼠标
+    已经在 FAILSAFE_POINTS（默认 [(0,0)]）上，下一次任何调用都会抛
+    FailSafeException。这里直接用 Windows SetCursorPos 把鼠标从角上挪开
+    （绕过 pyautogui 自己的 wrapper 检查），让后续动作能继续。"""
+    try:
+        import sys
+        if sys.platform != "win32":
+            return
+        import ctypes
+        pt = ctypes.wintypes.POINT() if hasattr(ctypes, "wintypes") else None
+        if pt is None:
+            from ctypes import wintypes  # noqa: WPS433
+            pt = wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        for fx, fy in pyautogui.FAILSAFE_POINTS:
+            if abs(pt.x - fx) <= 1 and abs(pt.y - fy) <= 1:
+                vx, vy, vw, vh = virtual_screen_rect()
+                # 挪到虚拟桌面中心
+                ctypes.windll.user32.SetCursorPos(vx + vw // 2, vy + vh // 2)
+                return
+    except Exception:
+        pass
+
+
+def _move_to(x: int, y: int, duration: float = 0.0) -> None:
+    _nudge_off_corner_if_needed()
+    cx, cy = _safe_xy(x, y)
+    pyautogui.moveTo(cx, cy, duration=duration)
 
 
 # Claude computer_use 用的按键名 → pyautogui 名字（差别不多，这里仅做必要映射）。
@@ -50,52 +93,68 @@ class InputDriver:
 
     # ---------- 鼠标 ----------
     def mouse_move(self, x: int, y: int) -> None:
-        pyautogui.moveTo(x, y, duration=0.0)
+        _move_to(x, y)
         self._delay()
 
     def left_click(self, x: int | None = None, y: int | None = None) -> None:
         if x is not None:
-            pyautogui.moveTo(x, y, duration=0.0)
+            _move_to(x, y)
+        else:
+            _nudge_off_corner_if_needed()
         pyautogui.click()
         self._delay()
 
     def double_click(self, x: int | None = None, y: int | None = None) -> None:
         if x is not None:
-            pyautogui.moveTo(x, y, duration=0.0)
+            _move_to(x, y)
+        else:
+            _nudge_off_corner_if_needed()
         pyautogui.doubleClick()
         self._delay()
 
     def right_click(self, x: int | None = None, y: int | None = None) -> None:
         if x is not None:
-            pyautogui.moveTo(x, y, duration=0.0)
+            _move_to(x, y)
+        else:
+            _nudge_off_corner_if_needed()
         pyautogui.rightClick()
         self._delay()
 
     def middle_click(self, x: int | None = None, y: int | None = None) -> None:
         if x is not None:
-            pyautogui.moveTo(x, y, duration=0.0)
+            _move_to(x, y)
+        else:
+            _nudge_off_corner_if_needed()
         pyautogui.middleClick()
         self._delay()
 
     def left_mouse_down(self, x: int | None = None, y: int | None = None) -> None:
         if x is not None:
-            pyautogui.moveTo(x, y, duration=0.0)
+            _move_to(x, y)
+        else:
+            _nudge_off_corner_if_needed()
         pyautogui.mouseDown()
         self._delay()
 
     def left_mouse_up(self, x: int | None = None, y: int | None = None) -> None:
         if x is not None:
-            pyautogui.moveTo(x, y, duration=0.0)
+            _move_to(x, y)
+        else:
+            _nudge_off_corner_if_needed()
         pyautogui.mouseUp()
         self._delay()
 
     def left_click_drag(self, x: int, y: int) -> None:
-        pyautogui.dragTo(x, y, duration=0.3, button="left")
+        _nudge_off_corner_if_needed()
+        cx, cy = _safe_xy(x, y)
+        pyautogui.dragTo(cx, cy, duration=0.3, button="left")
         self._delay()
 
     def scroll(self, x: int | None, y: int | None, direction: str, amount: int) -> None:
         if x is not None:
-            pyautogui.moveTo(x, y, duration=0.0)
+            _move_to(x, y)
+        else:
+            _nudge_off_corner_if_needed()
         ticks = max(1, int(amount)) * 100
         if direction == "up":
             pyautogui.scroll(ticks)
@@ -122,6 +181,7 @@ class InputDriver:
         """
         if not text:
             return
+        _nudge_off_corner_if_needed()
         if self.cfg.chinese_input == "clipboard":
             self._paste_text(text)
         else:
@@ -187,6 +247,7 @@ class InputDriver:
         keys = [_norm_key(k) for k in combo.replace(" ", "").split("+") if k]
         if not keys:
             return
+        _nudge_off_corner_if_needed()
         if len(keys) == 1:
             pyautogui.press(keys[0])
         else:

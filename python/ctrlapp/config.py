@@ -57,7 +57,7 @@ class LLMConfig:
     enable_prompt_cache: bool = True
     # 发往模型的对话历史里最多保留多少张截图（含起始图）。
     # 超出后旧图被替换成一段占位文字，避免 413 Request Entity Too Large。
-    keep_recent_screenshots: int = 4
+    keep_recent_screenshots: int = 0
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
     copilot: CopilotConfig = field(default_factory=CopilotConfig)
@@ -72,9 +72,11 @@ class ScreenshotConfig:
     l1_max_long_edge: int = 1568
     l2_max_long_edge: int = 1568
     l3_max_long_edge: int = 0
-    keep_recent_l1: int = 2
-    keep_recent_l2: int = 4
-    keep_recent_l3: int = 6
+    # 对话历史里每个 level 保留最近 K 张截图（装入发给 LLM 的 prompt 里）。
+    # 超出部分会被替换为占位文本（携带本地文件名/路径，需要时可反查）。
+    keep_recent_l1: int = 1
+    keep_recent_l2: int = 1
+    keep_recent_l3: int = 2
     skip_if_similarity_above: float = 0.985
 
 
@@ -131,6 +133,19 @@ class ToolsConfig:
 
 
 @dataclass
+class IconMemoryConfig:
+    """图标记忆 icons/ 的配置。每个图标 = PNG 文件 + 标签描述，
+    任务起手时拼成一张合集图注入 prompt，让模型能识别小图标。"""
+    enabled: bool = True
+    path: str = "icons"           # 相对路径 → LOCALAPPDATA/dev.ctrlapp/icons/
+    max_icons: int = 60           # 超过则丢最早的
+    max_label_chars: int = 40
+    max_desc_chars: int = 200
+    tile_size: int = 96           # 单图标在合集图里的最大渲染边长（像素）
+    atlas_cols: int = 4           # 合集图每行多少个图标
+
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     screenshot: ScreenshotConfig = field(default_factory=ScreenshotConfig)
@@ -139,6 +154,7 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
+    icons: IconMemoryConfig = field(default_factory=IconMemoryConfig)
 
 
 def _apply(dc: Any, raw: dict[str, Any] | None) -> Any:
@@ -185,4 +201,5 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.logging, raw.get("logging"))
     _apply(cfg.memory, raw.get("memory"))
     _apply(cfg.tools, raw.get("tools"))
+    _apply(cfg.icons, raw.get("icons"))
     return cfg

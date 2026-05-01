@@ -14,7 +14,7 @@
 provider = "copilot"
 
 # 单次任务最多 ReAct 步数（硬上限，防失控）
-max_steps = 25
+max_steps = 50
 
 # 模型最长输出 token（Claude Opus 4.x 上限 32768；agent 场景中庸 16384 平衡延迟与不被截断）
 max_tokens = 16384
@@ -22,10 +22,10 @@ max_tokens = 16384
 # 是否启用 prompt caching（系统 prompt 与早期截图）
 enable_prompt_cache = true
 
-# 对话历史里最多保留多少张截图（含任务起始那张）。
-# 超出后旧图会被替换成占位文字，防止上游 413 Request Entity Too Large。
-# 设 0 表示不裁剪（仅在确认上游能扛大请求体时使用）。
-keep_recent_screenshots = 4
+# 对话历史里最多额外保留多少张截图（L1/L2/L3 各保留最近 1 张为默认主要保留策略）。
+# 超出后旧图会被替换成占位文本（带本地文件名/路径），防止上游 413 Request Entity Too Large。
+# 设 0 表示只靠每级保留 1 张的规则（实际 ≤3 张）；>0 时额外保留全局最近 N 张。
+keep_recent_screenshots = 0
 
 # === provider = "anthropic" 时使用 ===
 [llm.anthropic]
@@ -37,7 +37,7 @@ anthropic_version = "2023-06-01"
 
 # === provider = "copilot" 时使用 ===
 [llm.copilot]
-model = "claude-opus-4-6"
+model = "claude-opus-4.6"
 # 留空走默认路径 %LOCALAPPDATA%\dev.ctrlapp\copilot.json
 state_file = ""
 
@@ -84,10 +84,11 @@ l1_max_long_edge = 1568
 l2_max_long_edge = 1568
 l3_max_long_edge = 0
 
-# 历史滑窗：每级别保留最近 K 张
-keep_recent_l1 = 2
-keep_recent_l2 = 4
-keep_recent_l3 = 6
+# 对话历史里每个 level 保留最近 K 张截图（装入发给 LLM 的 prompt 里）。
+# 超出部分被替换为带路径的占位文本，需要时可反查。
+keep_recent_l1 = 1
+keep_recent_l2 = 1
+keep_recent_l3 = 2
 
 # 变化检测：相似度 > 阈值时跳过本次 LLM 调用（dHash 距离换算）
 skip_if_similarity_above = 0.985
@@ -111,3 +112,11 @@ save_dialog_sidebar_guard = true
 chinese_input = "clipboard"
 # 每个动作之间的最小间隔（秒），给 UI 留响应时间
 action_delay = 0.15
+
+[icons]
+# 图标记忆库：把"小图标 ↔ App"映射成 LOCALAPPDATA/dev.ctrlapp/icons/，
+# 任务起手时拼成一张合集图注入 prompt，帮模型识别托盘/任务栏小图标。
+enabled = true
+max_icons = 60          # 超过则丢最早的
+tile_size = 96          # 单图标在合集图里的最大渲染边长
+atlas_cols = 4          # 合集图每行多少个图标

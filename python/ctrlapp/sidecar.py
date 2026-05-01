@@ -64,6 +64,7 @@ from .loop import Agent
 from .runlog import ThreadLog
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
+from . import icon_memory as icon_mod
 from . import templates as templates_mod
 from . import scheduler as scheduler_mod
 
@@ -333,6 +334,63 @@ class Sidecar:
     def _rpc_tools_reset(self, _params: dict[str, Any]) -> dict[str, Any]:
         tooltips_mod.reset_to_seed(self.cfg.tools)
         return {"ok": True}
+
+    # ---- icons/ （图标记忆库）----
+
+    def _rpc_icons_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "enabled": self.cfg.icons.enabled,
+            "dir": str(icon_mod.icons_dir(self.cfg.icons)),
+            "items": icon_mod.list_icons(self.cfg.icons),
+        }
+
+    def _rpc_icons_add(self, params: dict[str, Any]) -> dict[str, Any]:
+        """从 base64 PNG 直接登记一张图标。"""
+        import base64
+        b64 = params.get("png_b64") or ""
+        label = params.get("label") or ""
+        desc = params.get("description") or ""
+        try:
+            png = base64.b64decode(b64)
+        except Exception as exc:
+            raise ValueError(f"invalid png_b64: {exc}") from exc
+        entry = icon_mod.add_icon(self.cfg.icons, png, label, desc)
+        return {"ok": entry is not None, "entry": entry}
+
+    def _rpc_icons_remove(self, params: dict[str, Any]) -> dict[str, Any]:
+        iid = params.get("id")
+        if not iid:
+            raise ValueError("id required")
+        return {"ok": icon_mod.remove_icon(self.cfg.icons, iid)}
+
+    def _rpc_icons_clear(self, _params: dict[str, Any]) -> dict[str, Any]:
+        icon_mod.clear_icons(self.cfg.icons)
+        return {"ok": True}
+
+    def _rpc_icons_get_png(self, params: dict[str, Any]) -> dict[str, Any]:
+        """返回某图标的 base64 PNG（供 UI 预览）。"""
+        import base64
+        iid = params.get("id")
+        if not iid:
+            raise ValueError("id required")
+        png = icon_mod.read_icon_png(self.cfg.icons, iid)
+        if png is None:
+            return {"ok": False}
+        return {"ok": True, "png_b64": base64.b64encode(png).decode("ascii")}
+
+    def _rpc_icons_atlas(self, _params: dict[str, Any]) -> dict[str, Any]:
+        """返回当前合集图（base64 PNG + 文字索引），用于 UI 预览。"""
+        import base64
+        atlas = icon_mod.build_atlas(self.cfg.icons)
+        if atlas is None:
+            return {"ok": False}
+        return {
+            "ok": True,
+            "png_b64": base64.b64encode(atlas.png_bytes).decode("ascii"),
+            "width": atlas.width,
+            "height": atlas.height,
+            "captions": atlas.captions,
+        }
 
     # ---- 任务模板 ----
 

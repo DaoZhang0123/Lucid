@@ -32,6 +32,7 @@ from .screen import ScreenLevel, ScreenSensor
 from .tools import ComputerTool, ToolResult
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
+from . import icon_memory as icon_mod
 
 _console = Console()
 
@@ -82,6 +83,23 @@ SYSTEM_PROMPT = """\
   对屏幕一次性观察、密码 / token / 银行账号 / 验证码等隐私敏感信息。
 - 形式要求：每条记忆**单行、不超过 200 字**、写陈述句而非命令式；可以一次任务里
   写 0~多条，但不要把同一意思拆成多条。
+
+图标记忆（视觉知识库）：
+- 你天然不擅长辨认 16~32 像素的小图标（任务栏 / 系统托盘 / 收藏夹 / 标签页 favicon）。
+  为此提供 `remember_icon(label, description, x, y, w, h, level)` 工具：从最近一张
+  level 截图（默认 L1）按**图片像素坐标**裁出一小块（典型 24~96 像素）登记。
+  下次任务起手会把所有已登记图标拼成『图标合集』图（标 [level=L0]，永不丢弃）随
+  prompt 注入，让你能"对照编号识别"。
+- **何时应该主动登记**（满足任一）：
+  1) 用户明确教你"这个图标 = XX App"；
+  2) 你**点中托盘 / 任务栏图标且确认成功**（弹出了对应 App 主窗口），且该图标在合集图里
+     **还没有**对应条目——此时把它登记下来，下次直接对照即可，不必再试探。
+  3) 你通过周边文字 / hover tooltip / 任务管理器 等上下文**确认**了某个常驻图标的含义。
+- **不要**登记：临时弹窗、任务相关的一次性截图、广告横幅、与 App 无关的纯装饰图。
+- **避免重复**：登记前先看 system prompt 之后注入的『图标合集』里的文字索引；如果同一个
+  App 已经有编号，**不要**再登记一遍（哪怕分辨率略有不同）。如果你发现旧条目描述
+  错误，可以登记一条新的并在 description 里注明"替代旧的 #N"，由用户决定是否删除旧的。
+- 调用示例：`remember_icon(label="微信", description="Windows 系统托盘里的绿色聊天气泡常驻图标", x=1620, y=1410, w=28, h=28, level="L1")`
 """
 
 
@@ -89,26 +107,24 @@ def _data_url(png: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
 
 
-def _prune_old_images(messages: list[dict[str, Any]], keep_n: int) -> int:
+def _prune_old_images_dispatch(messages: list[dict[str, Any]], keep_n: int,
+                               name_lookup: Callable[[bytes], str | None] | None = None,
+                               run_dir: Any = None,
+                               keep_per_level: dict[str, int] | None = None) -> int:
     """按级别 + 全局最近 N 张做滑窗裁剪。
 
     规则（保留集 = 下面两者的并集）：
-      A) **每级最近一张**：L1/L2/L3 各自最近的一张图都保留，确保模型能拿到任一
-         级别上最新的视觉证据；
-      B) **全局最近 keep_n 张**：再额外保留出现顺序最末的 keep_n 张。
+      A) **每级最近 K 张**：L1/L2/L3 各自按 keep_per_level 给的 K 值保留最近 K 张
+         （未指定时默认每级 1 张）；
+      B) **全局最近 keep_n 张**：再额外保留出现顺序最末的 keep_n 张（keep_n<=0 时跳过 B）。
 
-    其余图片在 content list 里被原地替换成占位文字（保留位置，避免破坏多模态结构）。
-    keep_n <= 0 时不做裁剪。识别级别的方式：同一条 message 的 content list 里
-    紧邻 image_url 之前的 text 片段（loop 在生成 user 多模态消息时会注入
-    "[level=Lx] ..." 标记）；找不到时按 L1 处理。
-
-    返回被裁掉的图片数量。
+    其余图片在 content list 里被原地替换成占位文字，文字里携带本地文件名/路径，
+    模型/调试者按需引用。返回被裁掉的图片数量。
     """
-    if keep_n <= 0:
-        return 0
-
-    # 收集所有 image_url 块及其级别标签，按消息出现顺序。
-    entries: list[tuple[int, int, str]] = []  # (msg_idx, content_idx, level_tag)
+    if keep_per_level is None:
+        keep_per_level = {"L1": 1, "L2": 1, "L3": 1}
+    # 收集所有 image_url 块及其级别标签 + base64 字节，按消息出现顺序。
+    entries: list[tuple[int, int, str, bytes | None]] = []
     for mi, m in enumerate(messages):
         c = m.get("content")
         if not isinstance(c, list):
@@ -122,36 +138,68 @@ def _prune_old_images(messages: list[dict[str, Any]], keep_n: int) -> int:
                 last_text = part.get("text", "") or ""
             elif ptype == "image_url":
                 tag = "L1"
-                if "[level=L2]" in last_text:
+                if "[level=L0]" in last_text:
+                    tag = "L0"
+                elif "[level=L2]" in last_text:
                     tag = "L2"
                 elif "[level=L3]" in last_text:
                     tag = "L3"
-                entries.append((mi, ci, tag))
+                png: bytes | None = None
+                url = (part.get("image_url") or {}).get("url", "")
+                if isinstance(url, str) and url.startswith("data:image"):
+                    try:
+                        png = base64.b64decode(url.split(",", 1)[1])
+                    except Exception:
+                        png = None
+                entries.append((mi, ci, tag, png))
 
     if not entries:
         return 0
 
     keep_idx: set[int] = set()
-    # 规则 A：每级最新一张
+    # L0 = 永不丢弃（图标合集等"教学"图）
+    for i, e in enumerate(entries):
+        if e[2] == "L0":
+            keep_idx.add(i)
+    # 规则 A：每级最新 K 张
     for level in ("L1", "L2", "L3"):
+        k = max(0, int(keep_per_level.get(level, 1)))
+        if k <= 0:
+            continue
+        seen = 0
         for i in range(len(entries) - 1, -1, -1):
             if entries[i][2] == level:
                 keep_idx.add(i)
-                break
-    # 规则 B：全局最近 keep_n 张
-    for i in range(max(0, len(entries) - keep_n), len(entries)):
-        keep_idx.add(i)
+                seen += 1
+                if seen >= k:
+                    break
+    # 规则 B：全局最近 keep_n 张（keep_n<=0 跳过）
+    if keep_n > 0:
+        for i in range(max(0, len(entries) - keep_n), len(entries)):
+            keep_idx.add(i)
 
     dropped = 0
-    for i, (mi, ci, _) in enumerate(entries):
+    for i, (mi, ci, tag, png) in enumerate(entries):
         if i in keep_idx:
             continue
-        messages[mi]["content"][ci] = {
-            "type": "text",
-            "text": "[旧截图已省略以控制请求大小]",
-        }
+        name = name_lookup(png) if (name_lookup and png is not None) else None
+        if name and run_dir is not None:
+            placeholder = (
+                f"[旧截图已省略以控制请求大小; level={tag}; file={name}; "
+                f"path={run_dir}\\{name}]"
+            )
+        elif name:
+            placeholder = f"[旧截图已省略; level={tag}; file={name}]"
+        else:
+            placeholder = f"[旧截图已省略; level={tag}]"
+        messages[mi]["content"][ci] = {"type": "text", "text": placeholder}
         dropped += 1
     return dropped
+
+
+def _prune_old_images(messages: list[dict[str, Any]], keep_n: int) -> int:
+    """向后兼容旧签名（无文件名查询）。"""
+    return _prune_old_images_dispatch(messages, keep_n)
 
 
 def _resolve_proxy_key(api_key_in_cfg: str) -> str:
@@ -284,6 +332,9 @@ class Agent:
         # md5(png) -> 代表该截图的文件名，用于 context.log 里用文件名替换 base64 图。
         self._image_names: dict[str, str] = {}
         self._current_step: int = 0
+        # 最近一次发给模型的 L1 / L2 / L3 截图原始 PNG 字节，
+        # 供 remember_icon 工具按图片像素坐标裁剪图标用。
+        self._last_png_by_level: dict[str, bytes] = {}
 
     # 事件上报：sidecar 模式下避免使用 rich 控制台（会污染 stdout JSONRPC 通道）
     def _emit(self, kind: str, **payload: Any) -> None:
@@ -375,6 +426,48 @@ class Agent:
         if self.event_sink is None:
             _console.rule(*args, **kw)
 
+    # ---- F3: 同 thread 多轮 run 的 messages 持久化 ----
+    def _messages_path(self, log: ThreadLog) -> Any:
+        if log is None or log.run_dir is None:
+            return None
+        return log.run_dir / "messages.json"
+
+    def _load_messages_tail(self, log: ThreadLog) -> list[dict[str, Any]]:
+        """读取上次保存的 tail（不含 prelude；新 instruction 会追加在它之后）。"""
+        p = self._messages_path(log)
+        if p is None or not p.is_file():
+            return []
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if not isinstance(data, dict):
+            return []
+        tail = data.get("tail")
+        if not isinstance(tail, list):
+            return []
+        # 简单合法性检查：每个元素必须是 dict 且含 role
+        return [m for m in tail if isinstance(m, dict) and "role" in m]
+
+    def _save_messages_tail(self, log: ThreadLog) -> None:
+        """把当前 messages 去掉 prelude 后落盘。"""
+        if not getattr(self, "_current_messages", None):
+            return
+        p = self._messages_path(log)
+        if p is None:
+            return
+        try:
+            tail = list(self._current_messages[self._current_prelude_len:])
+            payload = {
+                "saved_ms": int(time.time() * 1000),
+                "model": self.model,
+                "prelude_len_when_saved": self._current_prelude_len,
+                "tail": tail,
+            }
+            p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
     def _check_cancel(self) -> None:
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise CancelledError("cancelled by user")
@@ -390,6 +483,10 @@ class Agent:
         self._emit("run_start", instruction=instruction, run_dir=run_dir,
                    model=self.model, max_steps=self.cfg.llm.max_steps,
                    autonomy=self.cfg.safety.autonomy, thread_id=thread_id)
+        # 用于 F3 续接：_run 里会在每次 prune / 步末更新 self._current_messages，
+        # 这里在 finally 落盘到 thread 目录的 messages.json。
+        self._current_messages = []
+        self._current_prelude_len = 0
         try:
             return self._run(instruction, log)
         except CancelledError:
@@ -402,13 +499,17 @@ class Agent:
             log.close(status="error")
             self._emit("error", message=f"{type(e).__name__}: {e}")
             raise
+        finally:
+            self._save_messages_tail(log)
 
-    def _build_tool_schemas(self, tool_schema: dict, remember_schema: dict, learn_tip_schema: dict) -> list[dict]:
+    def _build_tool_schemas(self, tool_schema: dict, remember_schema: dict, learn_tip_schema: dict, remember_icon_schema: dict) -> list[dict]:
         schemas = [tool_schema]
         if self.cfg.memory.enabled:
             schemas.append(remember_schema)
         if self.cfg.tools.enabled:
             schemas.append(learn_tip_schema)
+        if self.cfg.icons.enabled:
+            schemas.append(remember_icon_schema)
         return schemas
 
     def _chat_with_retry(self, messages, raw_tools, log) -> Any:
@@ -497,6 +598,35 @@ class Agent:
                 },
             },
         }
+        remember_icon_schema = {
+            "type": "function",
+            "function": {
+                "name": "remember_icon",
+                "description": (
+                    "把当前截图里的一小块（典型场景：任务栏 / 系统托盘里的小图标）裁剪下来登记到"
+                    "**图标记忆库**，下次任务起手会被拼成一张『图标合集』图随 system prompt 注入，"
+                    "帮助你（以及未来的自己）识别小尺寸图标。\n"
+                    "适用：用户明确教你『这个图标 = XX App』，或你通过上下文确认了某个图标的含义"
+                    "且该图标在多个任务里会复现（如微信 / QQ / Steam / 网易云 在系统托盘里的常驻图标）。\n"
+                    "**不要**登记：临时弹出的提示气泡、广告横幅、任务相关的一次性截图。\n"
+                    "坐标说明：x/y/w/h 是**图片像素坐标**（不是屏幕坐标）；level 指你引用的是哪一层截图："
+                    "L1=全屏、L2=活动窗口、L3=鼠标周边。建议直接用 L1 全屏截图框选托盘图标。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string", "description": "图标的短标签（≤20 字）。例如 『微信』『QQ 音乐 托盘』。"},
+                        "description": {"type": "string", "description": "对该图标含义/位置的简短说明（≤200 字），便于后续检索。"},
+                        "x": {"type": "integer", "description": "裁剪区域左上角 x（图片像素）"},
+                        "y": {"type": "integer", "description": "裁剪区域左上角 y（图片像素）"},
+                        "w": {"type": "integer", "description": "裁剪区域宽度（图片像素）。建议 24~96。"},
+                        "h": {"type": "integer", "description": "裁剪区域高度（图片像素）。建议 24~96。"},
+                        "level": {"type": "string", "enum": ["L1", "L2", "L3"], "description": "从哪一层最近一张截图裁剪。默认 L1。"},
+                    },
+                    "required": ["label", "x", "y", "w", "h"],
+                },
+            },
+        }
         log.info(f"initial screenshot {screen_w}x{screen_h}")
         init_name = log.save_image(first.png_bytes(), "step-000-init", level="INFO")
         self._record_img(first.png_bytes(), init_name)
@@ -510,21 +640,80 @@ class Agent:
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT + memory_mod.memory_for_prompt(self.cfg.memory) + tooltips_mod.tools_for_prompt(self.cfg.tools)},
-            {
+        ]
+        # 图标合集图（如果有的话）以一对 user/assistant 伪对话的形式注入到 system 之后、
+        # 真正的 instruction 之前。这样跨各家模型都能稳定接住图。
+        atlas = icon_mod.build_atlas(self.cfg.icons) if self.cfg.icons.enabled else None
+        if atlas is not None:
+            atlas_name = log.save_image(atlas.png_bytes, "icon-atlas", level="INFO")
+            self._record_img(atlas.png_bytes, atlas_name or "icon-atlas")
+            existing_labels = ", ".join(
+                f"#{i + 1} {it.get('label', '?')}"
+                for i, it in enumerate(icon_mod.list_icons(self.cfg.icons))
+            )
+            messages.append({
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
                         "text": (
-                            f"任务：{instruction}\n\n"
-                            f"[level=L1] 以下是当前桌面截图（已缩放到 {screen_w}x{screen_h}，"
-                            f"`computer` 工具的 coordinate 用这个坐标系）。"
+                            "[level=L0] [图标记忆库] 下面是用户教过我的图标合集（按编号排列）。"
+                            "今后看到屏幕上的小图标，可以**对照这张合集图**判断它是哪个 App。\n"
+                            f"已收录条目（**不要重复登记**）：{existing_labels}\n"
+                            f"文字索引：\n{atlas.captions}"
                         ),
                     },
-                    {"type": "image_url", "image_url": {"url": _data_url(first.png_bytes())}},
+                    {"type": "image_url", "image_url": {"url": _data_url(atlas.png_bytes)}},
                 ],
-            },
-        ]
+            })
+            messages.append({"role": "assistant", "content": "收到，已记住这些图标，遇到时会按编号对照识别；遇到合集里没有的新图标，会用 remember_icon 登记。"})
+        elif self.cfg.icons.enabled:
+            # 还没登记任何图标：明确告诉模型"图标库为空，遇到合适的就主动登记"
+            messages.append({
+                "role": "user",
+                "content": (
+                    "[图标记忆库] 当前为空。如果你点中托盘/任务栏图标并确认成功（弹出对应 App），"
+                    "请用 `remember_icon` 把它登记下来，下次任务起手就能对照识别了。"
+                ),
+            })
+            messages.append({"role": "assistant", "content": "明白，遇到合适的图标会主动调用 remember_icon 登记。"})
+        # 真正的 instruction + 起手 L1 截图
+        messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"任务：{instruction}\n\n"
+                        f"[level=L1] 以下是当前桌面截图：发送尺寸 {screen_w}x{screen_h}，"
+                        f"原始 {first.raw_size[0]}x{first.raw_size[1]}；"
+                        f"在屏幕坐标系中位于 (left={first.offset[0]}, top={first.offset[1]}, "
+                        f"right={first.offset[0] + first.raw_size[0]}, bottom={first.offset[1] + first.raw_size[1]})。"
+                        f" `computer` 工具的 coordinate 用 {screen_w}x{screen_h} 这个发送坐标系。"
+                    ),
+                },
+                {"type": "image_url", "image_url": {"url": _data_url(first.png_bytes())}},
+            ],
+        })
+        # 缓存"最近一张 L1"，供 remember_icon 工具裁剪用
+        self._last_png_by_level["L1"] = first.png_bytes()
+
+        # ---- F3 持久化续接 ----
+        # 如果 thread 目录里有 messages.json（同 thread 上一次任务结尾保存的快照），
+        # 就把它当成上文：保留 prelude（system + atlas）不变，把上次的"任务历史段"
+        # （即上次起手到结尾）插到当前 instruction **之前**，让模型看到完整对话。
+        # 注意：上次保存的 messages 已经在保存前过了 prune（旧 image 都变成占位文字了），
+        # 所以体积可控。
+        prelude_len = len(messages) - 1  # 不含本次刚 append 的 instruction
+        history_tail = self._load_messages_tail(log)
+        if history_tail:
+            # messages = [prelude..., <history_tail...>, <new instruction>]
+            new_instruction = messages[-1]
+            messages = messages[:prelude_len] + history_tail + [new_instruction]
+            log.info(f"loaded {len(history_tail)} message(s) from previous run(s)")
+        # 暴露给 run() finally 用于落盘
+        self._current_messages = messages
+        self._current_prelude_len = prelude_len
 
         nudges_left = 1  # 模型只输文本不调工具时的最多推一把次数
         # 行为兜底：保存/打开对话框激活态。看到 ctrl+s / ctrl+shift+s / F12 / ctrl+o 触发；
@@ -544,11 +733,21 @@ class Agent:
             self._rule(f"[cyan]Step {step + 1}/{self.cfg.llm.max_steps}")
             log.info(f"--- step {step + 1}/{self.cfg.llm.max_steps} ---")
             self._emit("step_start", step=step + 1, max_steps=self.cfg.llm.max_steps)
-            dropped = _prune_old_images(messages, self.cfg.llm.keep_recent_screenshots)
+            dropped = _prune_old_images_dispatch(
+                messages,
+                self.cfg.llm.keep_recent_screenshots,
+                name_lookup=lambda png: self._image_names.get(hashlib.md5(png).hexdigest()),
+                run_dir=(log.run_dir if log else None),
+                keep_per_level={
+                    "L1": self.cfg.screenshot.keep_recent_l1,
+                    "L2": self.cfg.screenshot.keep_recent_l2,
+                    "L3": self.cfg.screenshot.keep_recent_l3,
+                },
+            )
             if dropped:
                 log.debug(f"pruned {dropped} old screenshot(s) from prompt")
             try:
-                resp = self._chat_with_retry(messages, [tool_schema, remember_schema, learn_tip_schema], log)
+                resp = self._chat_with_retry(messages, [tool_schema, remember_schema, learn_tip_schema, remember_icon_schema], log)
             except APIError as e:
                 self._print(f"[red]API 错误：{e}[/red]")
                 log.error(f"API error: {e}")
@@ -642,6 +841,33 @@ class Agent:
                             output=f"已写入技巧({kind})：{text[:80]}" if ok else "",
                             error=None if ok else "tools disabled or empty",
                         )
+                    elif fn_name == "remember_icon" and self.cfg.icons.enabled:
+                        label = (args.get("label") or "").strip()
+                        desc = (args.get("description") or "").strip()
+                        level = (args.get("level") or "L1").strip().upper() or "L1"
+                        try:
+                            x = int(args.get("x", 0))
+                            y = int(args.get("y", 0))
+                            w = int(args.get("w", 0))
+                            h = int(args.get("h", 0))
+                        except (TypeError, ValueError):
+                            x = y = w = h = 0
+                        src_png = self._last_png_by_level.get(level)
+                        if not src_png:
+                            tr = ToolResult(error=f"no recent {level} screenshot to crop from")
+                        elif not label:
+                            tr = ToolResult(error="label required")
+                        elif w <= 0 or h <= 0:
+                            tr = ToolResult(error="w/h must be > 0 (image pixels)")
+                        else:
+                            entry = icon_mod.crop_and_add(self.cfg.icons, src_png, x, y, w, h, label, desc)
+                            if entry:
+                                tr = ToolResult(
+                                    output=(f"已登记图标 #{entry['id']} 『{entry['label']}』 "
+                                            f"({w}x{h} from {level} @ {x},{y})。下次任务起手会自动注入合集图。"),
+                                )
+                            else:
+                                tr = ToolResult(error="failed to crop or save icon (check image bounds)")
                     else:
                         tr = ToolResult(error=f"unknown tool: {fn_name}")
                 elif self.safety.should_confirm(action, args) and not self.safety.confirm(action, args):
@@ -736,6 +962,8 @@ class Agent:
             post_png = post.png_bytes()
             saved_name = log.save_image(post_png, f"step-{step + 1:03d}-post-{post.level.value}", level="INFO")
             self._record_img(post_png, saved_name)
+            # 缓存最近一张该 level 的截图，供 remember_icon 工具按图片像素裁剪用
+            self._last_png_by_level[level_tag] = post_png
             self._emit("step_image", step=step + 1, level=level_tag,
                        width=post.sent_size[0], height=post.sent_size[1],
                        path=str(log.run_dir / saved_name) if (log.run_dir and saved_name) else None,
@@ -752,6 +980,7 @@ class Agent:
                     verify_png = verify_capture.png_bytes()
                     verify_name = log.save_image(verify_png, f"step-{step + 1:03d}-verify-cursor_local", level="INFO")
                     self._record_img(verify_png, verify_name)
+                    self._last_png_by_level["L3"] = verify_png
                 except Exception as e:  # 截边缘可能 mss 越界
                     log.warning(f"L3 verify capture failed: {e}")
                     verify_capture = None
@@ -769,17 +998,28 @@ class Agent:
             )
 
             # 组装回送消息：post 主图（L1/L2/L3）+ 可选 L3 取证图 + 可选纠正提示
+            p_ox, p_oy = post.offset
+            p_rw, p_rh = post.raw_size
+            p_sw, p_sh = post.sent_size
             content: list[dict[str, Any]] = [
-                {"type": "text", "text": f"[level={level_tag}] {tag}（{post.sent_size[0]}x{post.sent_size[1]}）："},
+                {"type": "text", "text": (
+                    f"[level={level_tag}] {tag}：发送尺寸 {p_sw}x{p_sh}（原始 {p_rw}x{p_rh}）；"
+                    f"在屏幕坐标系中位于 (left={p_ox}, top={p_oy}, right={p_ox + p_rw}, bottom={p_oy + p_rh})；"
+                    f"图片内 (px,py) → 屏幕坐标 ({p_ox}+px*{p_rw / p_sw:.3f}, {p_oy}+py*{p_rh / p_sh:.3f})。"
+                )},
                 {"type": "image_url", "image_url": {"url": _data_url(post_png)}},
             ]
             if verify_png and verify_capture is not None:
+                v_ox, v_oy = verify_capture.offset
+                v_rw, v_rh = verify_capture.raw_size
+                v_sw, v_sh = verify_capture.sent_size
                 content.append({
                     "type": "text",
                     "text": (
-                        f"[level=L3] 落点取证（鼠标周边 {verify_capture.sent_size[0]}x{verify_capture.sent_size[1]}）："
+                        f"[level=L3] 落点取证（鼠标周边 {v_sw}x{v_sh}，原始 {v_rw}x{v_rh}）；"
+                        f"在屏幕坐标系中位于 (left={v_ox}, top={v_oy}, right={v_ox + v_rw}, bottom={v_oy + v_rh})。"
                         "用于核对你刚才点击/拖拽到底命中了什么。"
-                        "**坐标系仍以上方主图为准**（这张 L3 仅供视觉验证，不要用它的像素坐标作为下一次 coordinate 的参考）。"
+                        "**下一步 coordinate 仍以上方主图为准**（这张 L3 仅供视觉验证）。"
                     ),
                 })
                 content.append({"type": "image_url", "image_url": {"url": _data_url(verify_png)}})

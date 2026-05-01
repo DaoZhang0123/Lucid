@@ -18,6 +18,15 @@
   let scrollEl: HTMLDivElement | undefined = $state();
   let sidebarOpen = $state(true);
   let lightbox = $state<string | null>(null);
+  // 一次性同步：sidecar ready 事件里带了 config 的 max_steps（chat.totalSteps），
+  // 之后用户在输入框改的值不再被覆盖。
+  let _maxStepsSyncedFromSidecar = false;
+  $effect(() => {
+    if (!_maxStepsSyncedFromSidecar && chat.totalSteps > 0) {
+      maxSteps = chat.totalSteps;
+      _maxStepsSyncedFromSidecar = true;
+    }
+  });
 
   $effect(() => {
     void chat.items.length;
