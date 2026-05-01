@@ -33,6 +33,7 @@ from .tools import ComputerTool, ToolResult
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
 from . import icon_memory as icon_mod
+from . import meta_tools
 
 _console = Console()
 
@@ -58,14 +59,21 @@ SYSTEM_PROMPT = """\
 - 下方"## 操作技巧"段是 tools.md 注入的**动态技巧库**，包含针对各类 App / 对话框 / 控件
   的稳妥操作方式。开始任务前先扫一眼，遇到对应场景照着做；尤其注意"不要覆盖用户正在编辑的
   内容"、"先 alt+tab 看是否已开着"、"保存对话框直接 type 绝对路径"这些通用准则。
-- 当你**总结出一条值得长期保留的经验**（成功路径或失败教训）时，调用独立函数工具
-  `learn_tip(text, kind)` 把它追加进 tools.md：
-  - `kind` 取 `"success"` / `"failure"` / `"tip"` 之一。
-  - 例：`learn_tip(text="Outlook 用 Ctrl+R 回复比鼠标点回复按钮更稳", kind="success")`
-  - 例：`learn_tip(text="WeChat 输入框 Enter 直接发送，需要换行用 Shift+Enter", kind="failure")`
-  - 写入前先看下方"## 操作技巧"已有内容，避免重复。
-- **不要**把单次任务的临时事实（"刚把文件存到 D:\\tmp"）当成技巧；那既不是 tools.md 该收的，
-  也不是 memory.md 该收的——直接在回答里说一下即可。
+- **何时应该主动调用 `learn_tip`**（满足任一即可，不要犹豫）：
+  1) **用快捷键 / 命令行 成功打开/操作了某个 App**（哪怕只试一次就成）——这是最高价值的技巧，
+     因为下次同 App 任务能直接键盘起手，省掉好几步图标识别。例：`Ctrl+Alt+W` 开微信、
+     `Win+R`→`outlook` 开 Outlook、`Win+E` 开资源管理器。**只要你试过且 work，就立刻 learn_tip**。
+  2) **绕过了一个曾经卡住的坑**：例如发现"WeChat 输入框 Enter 是发送、Shift+Enter 才是换行"，
+     或"VS Code 保存对话框里直接粘贴绝对路径比点侧栏快"。
+  3) **发现 tools.md 里某条旧技巧错了 / 过时了**：写一条新的覆盖性条目，description 里
+     注明"修正旧条目 XXX"。
+- **不要**当成临时事实记（"这次任务我把文件存到了 D:\\tmp" 不是技巧）；也不要当成用户偏好记
+  （那是 memory.md）。
+- 调用方式：`learn_tip(text="<App / 场景 / 做法>", kind="success" | "failure" | "tip")`。
+  写入前先看下方"## 操作技巧"已有内容，避免重复（同一快捷键不要登记两次）。
+- 例：`learn_tip(text="微信 PC 版：按 Ctrl+Alt+W 可直接唤起主窗口（无需点托盘图标）", kind="success")`
+- 例：`learn_tip(text="Outlook 用 Ctrl+R 回复比鼠标点回复按钮更稳", kind="success")`
+- 例：`learn_tip(text="WeChat 输入框 Enter 直接发送，需要换行用 Shift+Enter", kind="failure")`
 
 长期记忆：
 - 通过 `remember(text)` 工具把值得长期保留的信息写入 memory.md。**不要**当成 computer 的 action，
@@ -502,24 +510,13 @@ class Agent:
         finally:
             self._save_messages_tail(log)
 
-    def _build_tool_schemas(self, tool_schema: dict, remember_schema: dict, learn_tip_schema: dict, remember_icon_schema: dict) -> list[dict]:
-        schemas = [tool_schema]
-        if self.cfg.memory.enabled:
-            schemas.append(remember_schema)
-        if self.cfg.tools.enabled:
-            schemas.append(learn_tip_schema)
-        if self.cfg.icons.enabled:
-            schemas.append(remember_icon_schema)
-        return schemas
-
-    def _chat_with_retry(self, messages, raw_tools, log) -> Any:
+    def _chat_with_retry(self, messages, tools, log) -> Any:
         """在 SDK 重试之外再加一层应用层重试，专门处理 connection/timeout/5xx。
 
         SDK 默认 max_retries=2，但 multimodal 请求走代理 / Copilot 上游抽风时仍然容易报
         ``APIConnectionError``。上层看到的体验就是“任务到一半突然 connection error”。这里再重
         试 2 轮，退避 1.5s/3s；401/403/4xx 不重试。任一轮成功即返回。
         """
-        tools = self._build_tool_schemas(*raw_tools) if isinstance(raw_tools[0], dict) else raw_tools
         # 在发送前记一笔完整 context（图片用文件名代替）便于 debug
         self._dump_context(messages, tools, self._current_step)
         backoff = [1.5, 3.0]
@@ -556,77 +553,9 @@ class Agent:
         self.tool.last_capture = first
         screen_w, screen_h = first.sent_size
         tool_schema = ComputerTool.openai_tool_schema(screen_w, screen_h)
-        remember_schema = {
-            "type": "function",
-            "function": {
-                "name": "remember",
-                "description": (
-                    "把一条值得长期保留的事实写入 memory.md（覆盖式追加，下次任务起手会注入到 system prompt）。"
-                    "适用：用户明确要求记住的偏好；用户的称呼 / 身份；用户的操作习惯（常用浏览器、编辑器、"
-                    "快捷键、保存路径、命名风格、深色模式偏好等）；以及短期内不会变的环境事实（如常用工作目录）。"
-                    "**不要**记单次任务的临时事实、过程中间结果、密码 token 等敏感信息。"
-                    "写入前先看 system prompt 末尾的『长期记忆』段，避免重复或冲突。"
-                    "格式要求：单行、不超过 200 字、陈述句。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string", "description": "要写入的一条记忆，单行陈述句。"}
-                    },
-                    "required": ["text"],
-                },
-            },
-        }
-        learn_tip_schema = {
-            "type": "function",
-            "function": {
-                "name": "learn_tip",
-                "description": (
-                    "把一条**操作技巧**（针对某个 App / 对话框 / 控件 怎么做更稳）追加进 tools.md，"
-                    "下次任务起手会注入到 system prompt。适用：任务中发现 成功路径 或 失败教训，"
-                    "且该经验在同类场景下可复用。写入前先看下方『操作技巧』已有条目避免重复。"
-                    "**不要**记单次任务的临时事实（那不是技巧）、也不要记用户偏好（那是 memory.md）。"
-                    "格式：单行陈述句、不超 200 字；带上 App / 场景标签以便检索。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string", "description": "要写入的技巧。例：「Outlook 用 Ctrl+R 回复比鼠标点回复按钮更稳」"},
-                        "kind": {"type": "string", "enum": ["success", "failure", "tip"], "description": "成功经验 / 失败教训 / 一般提示。默认 success。"},
-                    },
-                    "required": ["text"],
-                },
-            },
-        }
-        remember_icon_schema = {
-            "type": "function",
-            "function": {
-                "name": "remember_icon",
-                "description": (
-                    "把当前截图里的一小块（典型场景：任务栏 / 系统托盘里的小图标）裁剪下来登记到"
-                    "**图标记忆库**，下次任务起手会被拼成一张『图标合集』图随 system prompt 注入，"
-                    "帮助你（以及未来的自己）识别小尺寸图标。\n"
-                    "适用：用户明确教你『这个图标 = XX App』，或你通过上下文确认了某个图标的含义"
-                    "且该图标在多个任务里会复现（如微信 / QQ / Steam / 网易云 在系统托盘里的常驻图标）。\n"
-                    "**不要**登记：临时弹出的提示气泡、广告横幅、任务相关的一次性截图。\n"
-                    "坐标说明：x/y/w/h 是**图片像素坐标**（不是屏幕坐标）；level 指你引用的是哪一层截图："
-                    "L1=全屏、L2=活动窗口、L3=鼠标周边。建议直接用 L1 全屏截图框选托盘图标。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "label": {"type": "string", "description": "图标的短标签（≤20 字）。例如 『微信』『QQ 音乐 托盘』。"},
-                        "description": {"type": "string", "description": "对该图标含义/位置的简短说明（≤200 字），便于后续检索。"},
-                        "x": {"type": "integer", "description": "裁剪区域左上角 x（图片像素）"},
-                        "y": {"type": "integer", "description": "裁剪区域左上角 y（图片像素）"},
-                        "w": {"type": "integer", "description": "裁剪区域宽度（图片像素）。建议 24~96。"},
-                        "h": {"type": "integer", "description": "裁剪区域高度（图片像素）。建议 24~96。"},
-                        "level": {"type": "string", "enum": ["L1", "L2", "L3"], "description": "从哪一层最近一张截图裁剪。默认 L1。"},
-                    },
-                    "required": ["label", "x", "y", "w", "h"],
-                },
-            },
-        }
+        # 本次 run 要发给 LLM 的 tools 列表（computer + 按 cfg 启用的 meta tools）。
+        # meta tool 的 schema / 派发逻辑都在 ctrlapp.meta_tools 模块里。
+        tools_for_llm = [tool_schema] + meta_tools.build_meta_tool_schemas(self.cfg)
         log.info(f"initial screenshot {screen_w}x{screen_h}")
         init_name = log.save_image(first.png_bytes(), "step-000-init", level="INFO")
         self._record_img(first.png_bytes(), init_name)
@@ -747,7 +676,7 @@ class Agent:
             if dropped:
                 log.debug(f"pruned {dropped} old screenshot(s) from prompt")
             try:
-                resp = self._chat_with_retry(messages, [tool_schema, remember_schema, learn_tip_schema, remember_icon_schema], log)
+                resp = self._chat_with_retry(messages, tools_for_llm, log)
             except APIError as e:
                 self._print(f"[red]API 错误：{e}[/red]")
                 log.error(f"API error: {e}")
@@ -826,49 +755,10 @@ class Agent:
                 self._emit("tool_call", step=step + 1, name=fn_name, action=action, args=args)
 
                 if fn_name != "computer":
-                    if fn_name == "remember" and self.cfg.memory.enabled:
-                        text = (args.get("text") or "").strip()
-                        ok = memory_mod.append_memory(self.cfg.memory, text, source="agent")
-                        tr = ToolResult(
-                            output=f"已写入记忆：{text[:80]}" if ok else "",
-                            error=None if ok else "memory disabled or empty",
-                        )
-                    elif fn_name == "learn_tip" and self.cfg.tools.enabled:
-                        text = (args.get("text") or "").strip()
-                        kind = (args.get("kind") or "success").strip().lower() or "success"
-                        ok = tooltips_mod.append_tip(self.cfg.tools, text, kind=kind, source="agent")
-                        tr = ToolResult(
-                            output=f"已写入技巧({kind})：{text[:80]}" if ok else "",
-                            error=None if ok else "tools disabled or empty",
-                        )
-                    elif fn_name == "remember_icon" and self.cfg.icons.enabled:
-                        label = (args.get("label") or "").strip()
-                        desc = (args.get("description") or "").strip()
-                        level = (args.get("level") or "L1").strip().upper() or "L1"
-                        try:
-                            x = int(args.get("x", 0))
-                            y = int(args.get("y", 0))
-                            w = int(args.get("w", 0))
-                            h = int(args.get("h", 0))
-                        except (TypeError, ValueError):
-                            x = y = w = h = 0
-                        src_png = self._last_png_by_level.get(level)
-                        if not src_png:
-                            tr = ToolResult(error=f"no recent {level} screenshot to crop from")
-                        elif not label:
-                            tr = ToolResult(error="label required")
-                        elif w <= 0 or h <= 0:
-                            tr = ToolResult(error="w/h must be > 0 (image pixels)")
-                        else:
-                            entry = icon_mod.crop_and_add(self.cfg.icons, src_png, x, y, w, h, label, desc)
-                            if entry:
-                                tr = ToolResult(
-                                    output=(f"已登记图标 #{entry['id']} 『{entry['label']}』 "
-                                            f"({w}x{h} from {level} @ {x},{y})。下次任务起手会自动注入合集图。"),
-                                )
-                            else:
-                                tr = ToolResult(error="failed to crop or save icon (check image bounds)")
-                    else:
+                    tr = meta_tools.dispatch_meta_tool(
+                        fn_name, args, self.cfg, self._last_png_by_level
+                    )
+                    if tr is None:
                         tr = ToolResult(error=f"unknown tool: {fn_name}")
                 elif self.safety.should_confirm(action, args) and not self.safety.confirm(action, args):
                     tr = ToolResult(error="user declined this action")
