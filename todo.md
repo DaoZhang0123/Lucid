@@ -39,7 +39,8 @@
 
 ### 1.2 Tauri ↔ Python 守护进程
 - [x] Python 侧：自写 stdio JSON-RPC 暴露 `ping / start_task / cancel / get_status / set_autonomy / shutdown`（NDJSON 帧、stdout 协议 / stderr 日志）
-- [x] 流式事件：`run_start / step_start / assistant_text / tool_call / tool_result / step_image / final / error` 通过 stdout 推到前端
+- [x] 流式事件：`run_start / step_start / assistant_text / tool_call / tool_result / step_image / final / error / thread_changed` 通过 stdout 推到前端
+- [x] Thread 级 RPC：`thread_new / thread_list / thread_read / thread_set_active / thread_delete / thread_read_image`（按对话而非按任务汇总）
 - [x] 任务取消：`cancel_event` 在两步之间生效；CancelledError 收尾
 - [x] Rust 侧：以 sidecar 拉起 `ctrlapp.exe`（PyInstaller 打包），管理生命周期
 - [x] 进程崩溃自动重启 + 错误展示（`supervise()` 1s 重连、`ctrlapp://sidecar` 事件流）
@@ -51,8 +52,11 @@
 - [x] 任务进行中显示当前动作类型 + 即时取消按钮
 - [ ] 隐私白名单：用户可标记某进程/窗口标题为"截图前需告警/最小化"
 
-### 1.4 截图与历史回放
-- [x] 把每次运行的 `logs/<run>/step-*.png` 序列做成时间线视图（点缩略图看大图 + 当步 assistant 文本 + tool_call）
+### 1.4 对话 / Thread / 截图
+- [x] **按 thread 而非按 task 归档**：同一 thread 的多次任务共享 `thread-<ts>-<slug>/` 目录（`meta.json` + `events.jsonl` + `step-*.png`）
+- [x] 左侧可折叠 thread 列表（点击切换、悬停 ✕ 删除、顶部 + 新建）替换独立 `/history` 页
+- [x] 主聊天窗嵌入截图缩略图（点击 lightbox 放大），包含起手 init 图
+- [x] 切换路由不丢失聊天状态（模块级 `$state` 单例 store）
 - [ ] "重放此任务"按钮（仅文本重放，不重新驱动鼠键）
 - [ ] 历史搜索（任务 instruction 全文）
 
@@ -81,20 +85,28 @@
 
 - [ ] Set-of-Mark 增强模式（候选可点击区域编号叠加在截图上）
 - [ ] Speculative multi-action（一次给多步预案，本地按需执行）
-- [ ] 用户可保存的"任务模板"（如"周报流程"）
+- [x] 用户可保存的"任务模板"（如"周报流程"）—— `templates.json` + `/templates` 页面，可一键发送
 - [ ] 隐私沙箱：敏感区域自动模糊（密码框 / 网银 / 私聊）
-- [ ] 模型可插拔（Claude / GPT-4o / Qwen-VL）通过同一 OpenAI 兼容代理切换
-- [ ] **长期记忆 `memory.md` + 心跳 (heartbeat)**：
-  - 仓库根 / 用户目录维护一份 `memory.md`，每次任务启动注入 system prompt 末尾，让模型知道用户偏好、常用路径、习惯动作
-  - 主动写入：用户在聊天里说"记住我喜欢…" → Agent 通过 `memory.write` 工具追加一条带时间戳的记录
-  - 被动写入：心跳定时（如每 N 步 / 每 X 分钟）触发一次"反思"调用，让模型从最近会话里抽取值得长期保留的偏好/约束并去重写入
-  - 心跳同时承担"无任务时的小巡检"：可选地周期截屏 + 触发"发现异常 / 通知 / 长时间无响应"等启发式事件
-  - 配置：`[memory] enabled / path / max_entries / heartbeat_interval_sec`，独立开关
+- [x] 模型可插拔（Claude / GPT-4o / Qwen-VL）通过同一 OpenAI 兼容代理切换 —— 设置页 provider 切换 + `reload_config` 热生效
+- [x] **长期记忆 `memory.md` + 心跳 (heartbeat)**（heartbeat 留接口未启用）：
+  - `python/ctrlapp/memory.py`：`memory_for_prompt` 在每次起手注入 system prompt 末尾
+  - 主动写入：模型用 `remember(text)` 工具调用追加；`/memory` 页面可手编/清空
+  - 路径：`%LOCALAPPDATA%\dev.ctrlapp\memory.md`；`[memory]` 配置 enabled / max_entries / max_chars
+- [x] **操作技巧 `tools.md`（可演化的提示库）**：
+  - `python/ctrlapp/tooltips.py`：`tools_for_prompt` 在每次起手注入 system prompt 末尾
+  - 首次启动 seed：自动写入"键盘优先 / 不覆盖用户内容 / 先 alt+tab 看是否已开 / 保存对话框直接 type 绝对路径"等通用技法（原 SYSTEM_PROMPT 中的"常用技巧"段）
+  - 主动写入：模型用 `learn_tip(text, kind)` 把任务中总结的成功路径或失败教训追加进文件；`/tools` 页面可手编 / 一键追加 / 重置 seed
+  - 路径：`%LOCALAPPDATA%\dev.ctrlapp\tools.md`；`[tools]` 配置 enabled / max_entries / max_chars
 - [ ] **桌面通知监听**：
   - 监听 Windows ToastNotification / Action Center（`Windows.UI.Notifications.Management.UserNotificationListener`，需用户授权）拿到微信、Teams、Outlook、Slack 等推送
   - Agent 主动汇总"过去 X 分钟内你收到了哪些消息、是否需要回复"，避免漏掉
   - 可配置过滤：白名单应用、关键字（如自己名字 / @ mention）才升级到打扰级
   - 配置：`[notify] enabled / poll_interval_sec / app_whitelist / urgent_keywords`
+- [x] **Cron 定时任务**：
+  - `python/ctrlapp/scheduler.py`：minute-tick `Scheduler` 后台线程随 sidecar 启动；支持 interval / daily / weekly 三种触发
+  - 持久化：`schedules.json`（`%LOCALAPPDATA%\dev.ctrlapp\`），含 `next_ms` / `last_run_ms` / `enabled`
+  - `/schedules` 页面 CRUD + 暂停/启用；触发时自动 `thread_new + start_task`，运行中冲突自动跳过（`schedule_skipped` 事件）
+  - 仍未做：cron 表达式语法（5 字段）、heartbeat 反思、桌面通知联动
 
 ---
 

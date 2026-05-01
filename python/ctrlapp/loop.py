@@ -8,12 +8,14 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import threading
+import time
 from typing import Any, Callable
 
-from openai import APIError
+from openai import APIError, APIConnectionError, APIStatusError
 from rich.console import Console
 
 from .config import Config
@@ -28,6 +30,8 @@ from .runlog import ThreadLog
 from .safety import SafetyLayer
 from .screen import ScreenLevel, ScreenSensor
 from .tools import ComputerTool, ToolResult
+from . import memory as memory_mod
+from . import tooltips as tooltips_mod
 
 _console = Console()
 
@@ -49,31 +53,35 @@ SYSTEM_PROMPT = """\
 6. 不要尝试关闭、重启系统或操作高权限窗口。
 7. coordinate 必须是图片像素坐标（左上角原点），不要给百分比或相对坐标。
 
-常用技巧：
-- **优先用键盘快捷键，避免鼠标点击**：截图坐标不一定精确，点击小图标/按钮容易点偏。能用键盘做到的事就别用鼠标：
-  - 切换 / 浏览已开窗口：`alt+tab`（顺序切下一个）、`alt+shift+tab`（反向切）、`win+tab`（任务视图，可看缩略图后再切）。
-    **不要**靠点击任务栏小图标来切窗口。
-  - 浏览器：新建空白页用 `ctrl+n`（**不要**点窗口右上角加号），新标签页 `ctrl+t`，关标签 `ctrl+w`，地址栏 `ctrl+l` / `alt+d`，
-    后退/前进 `alt+左/右`，刷新 `f5`。
-  - 文本编辑：全选 `ctrl+a`、复制/粘贴 `ctrl+c`/`ctrl+v`、撤销 `ctrl+z`、保存 `ctrl+s`、查找 `ctrl+f`。
-  - 系统：运行命令 `win+r`、文件资源管理器 `win+e`、桌面 `win+d`、锁屏 `win+l`（别用）、记事本可 `win+r` 然后 type `notepad` 回车。
-  - 窗口排版：`win+左/右` 半屏吸附、`win+上` 最大化、`win+下` 最小化或还原、`win+m` 最小化全部。
-  - 仅当确实没有快捷键、或快捷键不生效时，才退回到鼠标点击；点击前先用 L2/L3 截图看清目标。
-- **不要覆盖用户正在编辑的内容**：执行任何"打开/新建/保存"类操作前都要假设当前已经有用户的工作内容，宁可新开一个也别覆盖：
-  - 写文档：用 `win+r` → `notepad` 回车开**新的**记事本实例；**不要**直接往已经打开的记事本里 type，因为里面可能是用户的稿子。
-    要写在 Word/WPS 里就用 `ctrl+n` 新建文档，**不要**在已打开的文档里直接覆盖写。
-  - 浏览器：开新页面一律 `ctrl+n` 或 `ctrl+t`，**不要**复用当前 tab 的地址栏跳转，会丢掉用户当前在看的页面。
-  - 保存文件时若对话框默认文件名指向已存在文件，先全选删掉再 type 一个**新的、明确的文件名**（带时间戳更稳，例如
-    `C:\\Users\\xxx\\Desktop\\note-20260430.txt`），避免静默覆盖。
-  - 关闭任何窗口/标签前必须确认这是你自己刚开的；不能随手关用户原来的窗口。
-- **打开应用前先看是否已经开着**：要使用某个 App（浏览器/编辑器/聊天工具等）前，先按 `alt+tab` 截图查看已打开的窗口列表。
-  如果目标 App 已经在运行，**新建窗口**（如 `ctrl+n`）继续工作，**不要**直接占用用户原有窗口；只有完全没开时，才通过
-  `win+r` / 开始菜单搜索启动它。
-- **保存/打开对话框定位文件**：优先在**文件名输入框**里直接 type 完整绝对路径（如 `C:\\Users\\xxx\\Desktop\\a.txt`）后按 Enter，
-  或者点击对话框顶部的**地址栏**（路径面包屑）然后 type 目标路径回车——**不要**去左侧的"快速访问/此电脑"树里一层层点击导航，
-  既慢又容易点错。
-- 桌面路径：`%USERPROFILE%\\Desktop` 或 `C:\\Users\\<用户名>\\Desktop`，可以直接当成绝对路径 type 进去。
-- 对话框里若文件名框已有默认值（如 `*.txt`），先 Ctrl+A 全选再 type 新路径，避免拼接出错。
+操作技巧库（动态学习）：
+- 下方"## 操作技巧"段是 tools.md 注入的**动态技巧库**，包含针对各类 App / 对话框 / 控件
+  的稳妥操作方式。开始任务前先扫一眼，遇到对应场景照着做；尤其注意"不要覆盖用户正在编辑的
+  内容"、"先 alt+tab 看是否已开着"、"保存对话框直接 type 绝对路径"这些通用准则。
+- 当你**总结出一条值得长期保留的经验**（成功路径或失败教训）时，调用独立函数工具
+  `learn_tip(text, kind)` 把它追加进 tools.md：
+  - `kind` 取 `"success"` / `"failure"` / `"tip"` 之一。
+  - 例：`learn_tip(text="Outlook 用 Ctrl+R 回复比鼠标点回复按钮更稳", kind="success")`
+  - 例：`learn_tip(text="WeChat 输入框 Enter 直接发送，需要换行用 Shift+Enter", kind="failure")`
+  - 写入前先看下方"## 操作技巧"已有内容，避免重复。
+- **不要**把单次任务的临时事实（"刚把文件存到 D:\\tmp"）当成技巧；那既不是 tools.md 该收的，
+  也不是 memory.md 该收的——直接在回答里说一下即可。
+
+长期记忆：
+- 通过 `remember(text)` 工具把值得长期保留的信息写入 memory.md。**不要**当成 computer 的 action，
+  这是独立的一个 function，参数为单一字符串 `text`。
+- 应当记下的内容（满足任一即可）：
+  1) 用户**明确**要求："记住…/以后都…/我喜欢…/我的 X 是 Y"。
+  2) 用户的**称呼/身份**：自报姓名、昵称、希望被怎么叫（"叫我老张"、"我是 zhang"）、职业 / 角色。
+  3) 用户的**操作习惯/偏好**：常用浏览器、常用编辑器、常用快捷键、惯用语言（中文/英文）、
+     默认保存路径、常用文件命名风格、惯用搜索引擎、是否喜欢深色模式等。
+  4) 用户的**环境事实**且短期内不会变：常用的工作目录、常驻开着的 App、双屏 / 主屏分辨率
+     的特殊点、桌面快捷方式排布约定，等等。
+  写入前**先检索一下当前 memory.md 已有内容**（已注入在 system prompt 末尾），避免重复或冲突；
+  若发现冲突（用户改变偏好），写一条新的覆盖性记录而不要保留旧的。
+- 不应当记的：单次任务的临时事实（"刚刚把文件存到了 D:\\tmp"）、过程性中间结果、
+  对屏幕一次性观察、密码 / token / 银行账号 / 验证码等隐私敏感信息。
+- 形式要求：每条记忆**单行、不超过 200 字**、写陈述句而非命令式；可以一次任务里
+  写 0~多条，但不要把同一意思拆成多条。
 """
 
 
@@ -273,6 +281,9 @@ class Agent:
         self.event_sink = event_sink
         self.cancel_event = cancel_event
         self.thread_log = thread_log
+        # md5(png) -> 代表该截图的文件名，用于 context.log 里用文件名替换 base64 图。
+        self._image_names: dict[str, str] = {}
+        self._current_step: int = 0
 
     # 事件上报：sidecar 模式下避免使用 rich 控制台（会污染 stdout JSONRPC 通道）
     def _emit(self, kind: str, **payload: Any) -> None:
@@ -290,6 +301,76 @@ class Agent:
         if self.event_sink is None:
             _console.print(*args, **kw)
 
+    # ---- 图片名记账 + 调试用 context.log ----
+
+    def _record_img(self, png: bytes, name: str | None) -> None:
+        if name:
+            self._image_names[hashlib.md5(png).hexdigest()] = name
+
+    def _img_block(self, png: bytes, name: str | None = None) -> dict[str, Any]:
+        """返回发送给 LLM 的 image_url 块，并顺带把 png→文件名 记入 mapping。"""
+        self._record_img(png, name)
+        return {"type": "image_url", "image_url": {"url": _data_url(png)}}
+
+    def _sanitize_for_log(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """复制一份 messages，把所有 image_url 的 base64 数据替换成 [image: <文件名>]。"""
+        out: list[dict[str, Any]] = []
+        for m in messages:
+            c = m.get("content")
+            if isinstance(c, list):
+                new_c: list[Any] = []
+                for part in c:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        url = (part.get("image_url") or {}).get("url", "")
+                        name = "(unknown)"
+                        if isinstance(url, str) and url.startswith("data:image"):
+                            try:
+                                b64 = url.split(",", 1)[1]
+                                png = base64.b64decode(b64)
+                                name = self._image_names.get(
+                                    hashlib.md5(png).hexdigest(),
+                                    f"sha1:{hashlib.sha1(png).hexdigest()[:10]}.png",
+                                )
+                            except Exception:
+                                name = "(unparsable data url)"
+                        new_c.append({"type": "image_ref", "file": name})
+                    else:
+                        new_c.append(part)
+                out.append({**m, "content": new_c})
+            else:
+                out.append(m)
+        return out
+
+    def _dump_context(self, messages: list[dict[str, Any]], tools: Any, step: int) -> None:
+        """把每次发给 LLM 的完整 context（图片用文件名替换）追加到 thread 目录下的 context.log。"""
+        if self.thread_log is None or self.thread_log.run_dir is None:
+            return
+        try:
+            path = self.thread_log.run_dir / "context.log"
+            sanitized = self._sanitize_for_log(messages)
+            tool_names = []
+            try:
+                for t in (tools or []):
+                    if isinstance(t, dict):
+                        fn = t.get("function") or {}
+                        tool_names.append(fn.get("name") or t.get("name") or "?")
+            except Exception:
+                tool_names = ["<unavailable>"]
+            header = {
+                "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "step": step,
+                "model": self.model,
+                "provider": (self.cfg.llm.provider or "proxy").lower(),
+                "tools": tool_names,
+                "messages_count": len(sanitized),
+            }
+            with path.open("a", encoding="utf-8") as f:
+                f.write(f"\n===== step {step} @ {header['ts']} =====\n")
+                f.write(json.dumps(header, ensure_ascii=False) + "\n")
+                f.write(json.dumps(sanitized, ensure_ascii=False, indent=2) + "\n")
+        except Exception:
+            pass
+
     def _rule(self, *args: Any, **kw: Any) -> None:
         if self.event_sink is None:
             _console.rule(*args, **kw)
@@ -305,9 +386,10 @@ class Agent:
             f"max_steps={self.cfg.llm.max_steps} autonomy={self.cfg.safety.autonomy}"
         )
         run_dir = str(log.run_dir) if log.run_dir is not None else None
+        thread_id = self.thread_log.id if self.thread_log is not None else None
         self._emit("run_start", instruction=instruction, run_dir=run_dir,
                    model=self.model, max_steps=self.cfg.llm.max_steps,
-                   autonomy=self.cfg.safety.autonomy)
+                   autonomy=self.cfg.safety.autonomy, thread_id=thread_id)
         try:
             return self._run(instruction, log)
         except CancelledError:
@@ -321,14 +403,103 @@ class Agent:
             self._emit("error", message=f"{type(e).__name__}: {e}")
             raise
 
-    def _run(self, instruction: str, log: RunLogger) -> str:
+    def _build_tool_schemas(self, tool_schema: dict, remember_schema: dict, learn_tip_schema: dict) -> list[dict]:
+        schemas = [tool_schema]
+        if self.cfg.memory.enabled:
+            schemas.append(remember_schema)
+        if self.cfg.tools.enabled:
+            schemas.append(learn_tip_schema)
+        return schemas
+
+    def _chat_with_retry(self, messages, raw_tools, log) -> Any:
+        """在 SDK 重试之外再加一层应用层重试，专门处理 connection/timeout/5xx。
+
+        SDK 默认 max_retries=2，但 multimodal 请求走代理 / Copilot 上游抽风时仍然容易报
+        ``APIConnectionError``。上层看到的体验就是“任务到一半突然 connection error”。这里再重
+        试 2 轮，退避 1.5s/3s；401/403/4xx 不重试。任一轮成功即返回。
+        """
+        tools = self._build_tool_schemas(*raw_tools) if isinstance(raw_tools[0], dict) else raw_tools
+        # 在发送前记一笔完整 context（图片用文件名代替）便于 debug
+        self._dump_context(messages, tools, self._current_step)
+        backoff = [1.5, 3.0]
+        last_exc: Exception | None = None
+        for attempt in range(len(backoff) + 1):
+            try:
+                return self.client.chat(
+                    messages=messages,
+                    tools=tools,
+                    max_tokens=self.cfg.llm.max_tokens,
+                )
+            except APIConnectionError as e:
+                last_exc = e
+                kind = "connection"
+            except APIStatusError as e:
+                # 仅重试 5xx（8xx 不存在但以防万一）
+                status = getattr(e, "status_code", 0) or 0
+                if status < 500:
+                    raise
+                last_exc = e
+                kind = f"http{status}"
+            if attempt >= len(backoff):
+                break
+            wait = backoff[attempt]
+            log.warning(f"chat retry due to {kind}: {last_exc!r}; sleeping {wait}s")
+            self._emit("warning", message=f"连接抖动，{wait}s 后第 {attempt + 2} 次重试…")
+            time.sleep(wait)
+        assert last_exc is not None
+        raise last_exc
+
+    def _run(self, instruction: str, log: ThreadLog) -> str:
         # 起手一张 L1 截图
         first = self.sensor.capture(ScreenLevel.L1)
         self.tool.last_capture = first
         screen_w, screen_h = first.sent_size
         tool_schema = ComputerTool.openai_tool_schema(screen_w, screen_h)
+        remember_schema = {
+            "type": "function",
+            "function": {
+                "name": "remember",
+                "description": (
+                    "把一条值得长期保留的事实写入 memory.md（覆盖式追加，下次任务起手会注入到 system prompt）。"
+                    "适用：用户明确要求记住的偏好；用户的称呼 / 身份；用户的操作习惯（常用浏览器、编辑器、"
+                    "快捷键、保存路径、命名风格、深色模式偏好等）；以及短期内不会变的环境事实（如常用工作目录）。"
+                    "**不要**记单次任务的临时事实、过程中间结果、密码 token 等敏感信息。"
+                    "写入前先看 system prompt 末尾的『长期记忆』段，避免重复或冲突。"
+                    "格式要求：单行、不超过 200 字、陈述句。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "要写入的一条记忆，单行陈述句。"}
+                    },
+                    "required": ["text"],
+                },
+            },
+        }
+        learn_tip_schema = {
+            "type": "function",
+            "function": {
+                "name": "learn_tip",
+                "description": (
+                    "把一条**操作技巧**（针对某个 App / 对话框 / 控件 怎么做更稳）追加进 tools.md，"
+                    "下次任务起手会注入到 system prompt。适用：任务中发现 成功路径 或 失败教训，"
+                    "且该经验在同类场景下可复用。写入前先看下方『操作技巧』已有条目避免重复。"
+                    "**不要**记单次任务的临时事实（那不是技巧）、也不要记用户偏好（那是 memory.md）。"
+                    "格式：单行陈述句、不超 200 字；带上 App / 场景标签以便检索。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "要写入的技巧。例：「Outlook 用 Ctrl+R 回复比鼠标点回复按钮更稳」"},
+                        "kind": {"type": "string", "enum": ["success", "failure", "tip"], "description": "成功经验 / 失败教训 / 一般提示。默认 success。"},
+                    },
+                    "required": ["text"],
+                },
+            },
+        }
         log.info(f"initial screenshot {screen_w}x{screen_h}")
         init_name = log.save_image(first.png_bytes(), "step-000-init", level="INFO")
+        self._record_img(first.png_bytes(), init_name)
         if init_name:
             self._emit("step_image", step=0, level=first.level.value,
                        width=screen_w, height=screen_h,
@@ -338,7 +509,7 @@ class Agent:
                        phase="init")
 
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": SYSTEM_PROMPT + memory_mod.memory_for_prompt(self.cfg.memory) + tooltips_mod.tools_for_prompt(self.cfg.tools)},
             {
                 "role": "user",
                 "content": [
@@ -369,6 +540,7 @@ class Agent:
 
         for step in range(self.cfg.llm.max_steps):
             self._check_cancel()
+            self._current_step = step + 1
             self._rule(f"[cyan]Step {step + 1}/{self.cfg.llm.max_steps}")
             log.info(f"--- step {step + 1}/{self.cfg.llm.max_steps} ---")
             self._emit("step_start", step=step + 1, max_steps=self.cfg.llm.max_steps)
@@ -376,11 +548,7 @@ class Agent:
             if dropped:
                 log.debug(f"pruned {dropped} old screenshot(s) from prompt")
             try:
-                resp = self.client.chat(
-                    messages=messages,
-                    tools=[tool_schema],
-                    max_tokens=self.cfg.llm.max_tokens,
-                )
+                resp = self._chat_with_retry(messages, [tool_schema, remember_schema, learn_tip_schema], log)
             except APIError as e:
                 self._print(f"[red]API 错误：{e}[/red]")
                 log.error(f"API error: {e}")
@@ -459,7 +627,23 @@ class Agent:
                 self._emit("tool_call", step=step + 1, name=fn_name, action=action, args=args)
 
                 if fn_name != "computer":
-                    tr = ToolResult(error=f"unknown tool: {fn_name}")
+                    if fn_name == "remember" and self.cfg.memory.enabled:
+                        text = (args.get("text") or "").strip()
+                        ok = memory_mod.append_memory(self.cfg.memory, text, source="agent")
+                        tr = ToolResult(
+                            output=f"已写入记忆：{text[:80]}" if ok else "",
+                            error=None if ok else "memory disabled or empty",
+                        )
+                    elif fn_name == "learn_tip" and self.cfg.tools.enabled:
+                        text = (args.get("text") or "").strip()
+                        kind = (args.get("kind") or "success").strip().lower() or "success"
+                        ok = tooltips_mod.append_tip(self.cfg.tools, text, kind=kind, source="agent")
+                        tr = ToolResult(
+                            output=f"已写入技巧({kind})：{text[:80]}" if ok else "",
+                            error=None if ok else "tools disabled or empty",
+                        )
+                    else:
+                        tr = ToolResult(error=f"unknown tool: {fn_name}")
                 elif self.safety.should_confirm(action, args) and not self.safety.confirm(action, args):
                     tr = ToolResult(error="user declined this action")
                     log.warning(f"user declined {action} {args}")
@@ -551,6 +735,7 @@ class Agent:
             }[post.level]
             post_png = post.png_bytes()
             saved_name = log.save_image(post_png, f"step-{step + 1:03d}-post-{post.level.value}", level="INFO")
+            self._record_img(post_png, saved_name)
             self._emit("step_image", step=step + 1, level=level_tag,
                        width=post.sent_size[0], height=post.sent_size[1],
                        path=str(log.run_dir / saved_name) if (log.run_dir and saved_name) else None,
@@ -565,7 +750,8 @@ class Agent:
                 try:
                     verify_capture = self.sensor.capture(ScreenLevel.L3)
                     verify_png = verify_capture.png_bytes()
-                    log.save_image(verify_png, f"step-{step + 1:03d}-verify-cursor_local", level="INFO")
+                    verify_name = log.save_image(verify_png, f"step-{step + 1:03d}-verify-cursor_local", level="INFO")
+                    self._record_img(verify_png, verify_name)
                 except Exception as e:  # 截边缘可能 mss 越界
                     log.warning(f"L3 verify capture failed: {e}")
                     verify_capture = None

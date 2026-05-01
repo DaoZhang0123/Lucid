@@ -52,6 +52,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import time
 import traceback
 from typing import Any
 
@@ -61,6 +62,10 @@ from .config import Config, load_config
 from .dpi import set_dpi_aware
 from .loop import Agent
 from .runlog import ThreadLog
+from . import memory as memory_mod
+from . import tooltips as tooltips_mod
+from . import templates as templates_mod
+from . import scheduler as scheduler_mod
 
 # rich 默认会写 stdout，会污染协议——sidecar 模式必须把 console 重定向到 stderr。
 _err_console = Console(file=sys.stderr)
@@ -80,8 +85,13 @@ class Sidecar:
         self._worker: threading.Thread | None = None
         self._cancel = threading.Event()
         self._current_instruction: str | None = None
+        self._current_thread_id: str | None = None
         self._shutdown = threading.Event()
         self._active_thread: ThreadLog | None = None
+        # 任务队列：当 worker 在跑时，后续 start_task 会被排在这里，上一个任务结束
+        # 后自动堆出跳起下一个。每项包含独立的 ThreadLog，让侧边栏能看到“排队中”。
+        self._queue: list[dict[str, Any]] = []
+        self._scheduler = scheduler_mod.Scheduler(self._on_schedule_fire)
 
     # ------------------------------------------------------------------
     # 主循环
@@ -91,6 +101,7 @@ class Sidecar:
                   "provider": (self.cfg.llm.provider or "proxy").lower(),
                   "autonomy": self.cfg.safety.autonomy,
                   "max_steps": self.cfg.llm.max_steps})
+        self._scheduler.start()
         for raw in sys.stdin:
             raw = raw.strip()
             if not raw:
@@ -107,6 +118,7 @@ class Sidecar:
         if self._worker and self._worker.is_alive():
             self._cancel.set()
             self._worker.join(timeout=10)
+        self._scheduler.stop()
         return 0
 
     # ------------------------------------------------------------------
@@ -142,11 +154,24 @@ class Sidecar:
         return {
             "running": bool(self._worker and self._worker.is_alive()),
             "instruction": self._current_instruction,
+            "current_thread_id": self._current_thread_id,
+            "queue": self._queue_snapshot(),
             "autonomy": self.cfg.safety.autonomy,
             "max_steps": self.cfg.llm.max_steps,
             "model": self._active_model(),
             "provider": (self.cfg.llm.provider or "proxy").lower(),
         }
+
+    def _queue_snapshot(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "thread_id": it["thread"].id,
+                "title": it["thread"].title,
+                "instruction": it["instruction"],
+                "queued_ms": it["queued_ms"],
+            }
+            for it in self._queue
+        ]
 
     def _active_model(self) -> str:
         provider = (self.cfg.llm.provider or "proxy").lower()
@@ -213,8 +238,7 @@ class Sidecar:
 
     def _rpc_thread_new(self, params: dict[str, Any]) -> dict[str, Any]:
         title = (params.get("title") or "").strip() or "新对话"
-        if self._worker and self._worker.is_alive():
-            self._cancel.set()
+        # 不再取消当前任务——后续 start_task 会自动排队。
         self._active_thread = ThreadLog.create(self.cfg.logging, title)
         _writeln({"event": "thread_changed", "id": self._active_thread.id,
                   "title": self._active_thread.title})
@@ -232,8 +256,8 @@ class Sidecar:
 
     def _rpc_thread_set_active(self, params: dict[str, Any]) -> dict[str, Any]:
         tid = params.get("id")
-        if self._worker and self._worker.is_alive():
-            raise RuntimeError("task running; cancel first")
+        # 允许在任务跑时切换 active thread（UI 看哪个）——运行中的 Agent 自带 thread_log 引用，
+        # 不受 _active_thread 影响。
         if not tid:
             self._active_thread = None
             return {"active": None}
@@ -246,43 +270,266 @@ class Sidecar:
         tid = params.get("id")
         if not tid:
             raise ValueError("id required")
+        # 如果在队列里，先从队列移除。
+        with self._lock:
+            self._queue = [it for it in self._queue if it["thread"].id != tid]
         if self._active_thread and self._active_thread.id == tid:
-            if self._worker and self._worker.is_alive():
-                raise RuntimeError("task running; cancel first")
+            if self._worker and self._worker.is_alive() and self._current_thread_id == tid:
+                raise RuntimeError("该对话正在运行，先急停再删除")
             self._active_thread = None
         ok = ThreadLog.delete_thread(self.cfg.logging, tid)
+        _writeln({"event": "queue_changed", "queue": self._queue_snapshot()})
         return {"deleted": ok}
+
+    # ---- memory.md ----
+
+    def _rpc_memory_read(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "enabled": self.cfg.memory.enabled,
+            "path": str(memory_mod.memory_path(self.cfg.memory)),
+            "text": memory_mod.read_memory(self.cfg.memory),
+        }
+
+    def _rpc_memory_write(self, params: dict[str, Any]) -> dict[str, Any]:
+        text = params.get("text")
+        if text is None:
+            raise ValueError("text required")
+        memory_mod.write_memory_raw(self.cfg.memory, text)
+        return {"ok": True}
+
+    def _rpc_memory_append(self, params: dict[str, Any]) -> dict[str, Any]:
+        text = (params.get("text") or "").strip()
+        source = params.get("source") or "user"
+        ok = memory_mod.append_memory(self.cfg.memory, text, source=source)
+        return {"ok": ok}
+
+    def _rpc_memory_clear(self, _params: dict[str, Any]) -> dict[str, Any]:
+        memory_mod.clear_memory(self.cfg.memory)
+        return {"ok": True}
+
+    # ---- tools.md （操作技巧）----
+
+    def _rpc_tools_read(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "enabled": self.cfg.tools.enabled,
+            "path": str(tooltips_mod.tools_path(self.cfg.tools)),
+            "text": tooltips_mod.read_tools(self.cfg.tools),
+        }
+
+    def _rpc_tools_write(self, params: dict[str, Any]) -> dict[str, Any]:
+        text = params.get("text")
+        if text is None:
+            raise ValueError("text required")
+        tooltips_mod.write_tools_raw(self.cfg.tools, text)
+        return {"ok": True}
+
+    def _rpc_tools_append(self, params: dict[str, Any]) -> dict[str, Any]:
+        text = (params.get("text") or "").strip()
+        source = params.get("source") or "user"
+        kind = params.get("kind") or "tip"
+        ok = tooltips_mod.append_tip(self.cfg.tools, text, kind=kind, source=source)
+        return {"ok": ok}
+
+    def _rpc_tools_reset(self, _params: dict[str, Any]) -> dict[str, Any]:
+        tooltips_mod.reset_to_seed(self.cfg.tools)
+        return {"ok": True}
+
+    # ---- 任务模板 ----
+
+    def _rpc_template_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {"templates": templates_mod.list_templates()}
+
+    def _rpc_template_add(self, params: dict[str, Any]) -> dict[str, Any]:
+        return templates_mod.add_template(
+            name=params.get("name", ""),
+            instruction=params.get("instruction", ""),
+            autonomy=params.get("autonomy") or "confirm_critical",
+            max_steps=int(params.get("max_steps") or 25),
+        )
+
+    def _rpc_template_update(self, params: dict[str, Any]) -> dict[str, Any]:
+        tid = params.get("id")
+        if not tid:
+            raise ValueError("id required")
+        item = templates_mod.update_template(
+            tid,
+            name=params.get("name"),
+            instruction=params.get("instruction"),
+            autonomy=params.get("autonomy"),
+            max_steps=params.get("max_steps"),
+        )
+        if item is None:
+            raise ValueError(f"template {tid!r} not found")
+        return item
+
+    def _rpc_template_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        tid = params.get("id")
+        if not tid:
+            raise ValueError("id required")
+        return {"deleted": templates_mod.delete_template(tid)}
+
+    # ---- 定时任务 ----
+
+    def _rpc_schedule_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {"schedules": scheduler_mod.list_schedules()}
+
+    def _rpc_schedule_add(self, params: dict[str, Any]) -> dict[str, Any]:
+        spec = params.get("spec") or {}
+        return scheduler_mod.add_schedule(
+            name=params.get("name", ""),
+            instruction=params.get("instruction", ""),
+            spec=spec,
+            autonomy=params.get("autonomy") or "confirm_critical",
+            max_steps=int(params.get("max_steps") or 25),
+            enabled=bool(params.get("enabled", True)),
+        )
+
+    def _rpc_schedule_update(self, params: dict[str, Any]) -> dict[str, Any]:
+        sid = params.get("id")
+        if not sid:
+            raise ValueError("id required")
+        item = scheduler_mod.update_schedule(
+            sid,
+            name=params.get("name"),
+            instruction=params.get("instruction"),
+            spec=params.get("spec"),
+            autonomy=params.get("autonomy"),
+            max_steps=params.get("max_steps"),
+            enabled=params.get("enabled"),
+        )
+        if item is None:
+            raise ValueError(f"schedule {sid!r} not found")
+        return item
+
+    def _rpc_schedule_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        sid = params.get("id")
+        if not sid:
+            raise ValueError("id required")
+        return {"deleted": scheduler_mod.delete_schedule(sid)}
+
+    def _on_schedule_fire(self, item: dict[str, Any]) -> None:
+        """调度器在子线程里调用。忙碌时排队，不抢占人工任务。"""
+        try:
+            instruction = item.get("instruction", "")
+            sched_thread = ThreadLog.create(
+                self.cfg.logging, f"⏰ {item.get('name', '定时任务')}"
+            )
+            res = self._rpc_start_task({
+                "instruction": instruction,
+                "autonomy": item.get("autonomy"),
+                "max_steps": item.get("max_steps"),
+                "_thread": sched_thread,
+            })
+            if res.get("queued"):
+                _writeln({"event": "schedule_queued", "id": item.get("id"),
+                          "name": item.get("name"),
+                          "thread_id": res.get("thread_id"),
+                          "position": res.get("position")})
+            else:
+                _writeln({"event": "schedule_fired", "id": item.get("id"),
+                          "name": item.get("name"),
+                          "thread_id": res.get("thread_id")})
+        except Exception as e:
+            _writeln({"event": "schedule_error", "id": item.get("id"),
+                      "message": f"{type(e).__name__}: {e}"})
+            if res.get("queued"):
+                _writeln({"event": "schedule_queued", "id": item.get("id"),
+                          "name": item.get("name"),
+                          "thread_id": res.get("thread_id"),
+                          "position": res.get("position")})
+            else:
+                _writeln({"event": "schedule_fired", "id": item.get("id"),
+                          "name": item.get("name"),
+                          "thread_id": res.get("thread_id")})
+        except Exception as e:
+            _writeln({"event": "schedule_error", "id": item.get("id"),
+                      "message": f"{type(e).__name__}: {e}"})
 
     def _rpc_start_task(self, params: dict[str, Any]) -> dict[str, Any]:
         instruction = (params.get("instruction") or "").strip()
         if not instruction:
             raise ValueError("instruction is required")
+        autonomy = params.get("autonomy")
+        max_steps = params.get("max_steps")
+        if autonomy and autonomy not in ("full", "confirm_critical", "confirm_each"):
+            raise ValueError(f"invalid autonomy: {autonomy!r}")
+        # 可选：调用方（如 scheduler）已经为本任务建好了独立 thread。
+        preset_thread = params.get("_thread")
+        if not isinstance(preset_thread, ThreadLog):
+            preset_thread = None
         with self._lock:
-            if self._worker and self._worker.is_alive():
-                raise RuntimeError("a task is already running; cancel it first")
+            running = bool(self._worker and self._worker.is_alive())
+            if running:
+                # 入队：为这个排队任务创建独立 thread，在侧边栏马上可见。
+                qthread = preset_thread or ThreadLog.create(self.cfg.logging, instruction)
+                qthread.append_user_input(instruction)
+                self._queue.append({
+                    "instruction": instruction,
+                    "thread": qthread,
+                    "autonomy": autonomy,
+                    "max_steps": max_steps,
+                    "queued_ms": int(time.time() * 1000),
+                })
+                _writeln({"event": "task_queued",
+                          "thread_id": qthread.id,
+                          "title": qthread.title,
+                          "instruction": instruction,
+                          "position": len(self._queue),
+                          "queue": self._queue_snapshot()})
+                return {"queued": True, "position": len(self._queue),
+                        "thread_id": qthread.id}
 
-            # 临时覆盖（不写回 cfg 全局，下一次任务恢复默认）
-            autonomy = params.get("autonomy")
-            max_steps = params.get("max_steps")
+            # 立刻跑：覆盖静态配置，使用 preset_thread / active thread / 新建 thread。
             if autonomy:
-                if autonomy not in ("full", "confirm_critical", "confirm_each"):
-                    raise ValueError(f"invalid autonomy: {autonomy!r}")
                 self.cfg.safety.autonomy = autonomy
             if max_steps:
                 self.cfg.llm.max_steps = int(max_steps)
-
-            # 确保有 active thread（没有则以当前 instruction 为标题新建）
-            thread = self._ensure_active_thread(instruction)
+            if preset_thread is not None:
+                thread = preset_thread
+                self._active_thread = preset_thread
+                _writeln({"event": "thread_changed", "id": thread.id,
+                          "title": thread.title})
+            else:
+                thread = self._ensure_active_thread(instruction)
             thread.append_user_input(instruction)
-
             self._cancel.clear()
             self._current_instruction = instruction
+            self._current_thread_id = thread.id
             t = threading.Thread(
                 target=self._run_task, args=(instruction, thread), daemon=True
             )
             self._worker = t
             t.start()
         return {"started": True, "instruction": instruction, "thread_id": thread.id}
+
+    def _rpc_queue_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {"queue": self._queue_snapshot(),
+                "current_thread_id": self._current_thread_id}
+
+    def _rpc_queue_remove(self, params: dict[str, Any]) -> dict[str, Any]:
+        tid = params.get("thread_id") or params.get("id")
+        if not tid:
+            raise ValueError("thread_id required")
+        removed = False
+        with self._lock:
+            new_q: list[dict[str, Any]] = []
+            for it in self._queue:
+                if not removed and it["thread"].id == tid:
+                    removed = True
+                    continue
+                new_q.append(it)
+            self._queue = new_q
+        if removed:
+            _writeln({"event": "queue_changed", "queue": self._queue_snapshot()})
+        return {"removed": removed}
+
+    def _rpc_queue_clear(self, _params: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            n = len(self._queue)
+            self._queue = []
+        if n:
+            _writeln({"event": "queue_changed", "queue": []})
+        return {"cleared": n}
 
     def _rpc_cancel(self, _params: dict[str, Any]) -> dict[str, Any]:
         if self._worker and self._worker.is_alive():
@@ -317,6 +564,39 @@ class Sidecar:
             sink({"event": "error", "message": f"{type(e).__name__}: {e}"})
         finally:
             self._current_instruction = None
+            self._current_thread_id = None
+            # 堆出下一个排队任务（如有）。
+            self._drain_queue()
+
+    def _drain_queue(self) -> None:
+        if self._shutdown.is_set():
+            return
+        with self._lock:
+            if not self._queue:
+                _writeln({"event": "queue_changed", "queue": []})
+                return
+            nxt = self._queue.pop(0)
+            instruction = nxt["instruction"]
+            thread = nxt["thread"]
+            autonomy = nxt.get("autonomy")
+            max_steps = nxt.get("max_steps")
+            if autonomy:
+                self.cfg.safety.autonomy = autonomy
+            if max_steps:
+                self.cfg.llm.max_steps = int(max_steps)
+            self._cancel.clear()
+            self._current_instruction = instruction
+            self._current_thread_id = thread.id
+            t = threading.Thread(
+                target=self._run_task, args=(instruction, thread), daemon=True
+            )
+            self._worker = t
+            t.start()
+        _writeln({"event": "task_dequeued",
+                  "thread_id": thread.id,
+                  "title": thread.title,
+                  "instruction": instruction,
+                  "queue": self._queue_snapshot()})
 
 
 def run_sidecar(cfg: Config) -> int:

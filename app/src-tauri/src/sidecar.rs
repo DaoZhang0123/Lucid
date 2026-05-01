@@ -377,6 +377,23 @@ pub async fn thread_delete(id: String) -> Result<Value, String> {
     instance().request("thread_delete", json!({"id": id})).await
 }
 
+// ---- Task queue ----
+
+#[tauri::command]
+pub async fn task_queue_list() -> Result<Value, String> {
+    instance().request("queue_list", json!({})).await
+}
+
+#[tauri::command]
+pub async fn task_queue_remove(thread_id: String) -> Result<Value, String> {
+    instance().request("queue_remove", json!({"thread_id": thread_id})).await
+}
+
+#[tauri::command]
+pub async fn task_queue_clear() -> Result<Value, String> {
+    instance().request("queue_clear", json!({})).await
+}
+
 /// Read an image file inside a thread directory, return as data URL.
 #[tauri::command]
 pub async fn thread_read_image(app: AppHandle, thread_id: String, file_name: String) -> Result<String, String> {
@@ -388,6 +405,107 @@ pub async fn thread_read_image(app: AppHandle, thread_id: String, file_name: Str
         "image/jpeg"
     } else { "image/png" };
     Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+// ---- memory.md ----
+#[tauri::command]
+pub async fn memory_read() -> Result<Value, String> {
+    instance().request("memory_read", json!({})).await
+}
+
+#[tauri::command]
+pub async fn memory_write(text: String) -> Result<Value, String> {
+    instance().request("memory_write", json!({"text": text})).await
+}
+
+#[tauri::command]
+pub async fn memory_append(text: String, source: Option<String>) -> Result<Value, String> {
+    instance().request("memory_append", json!({"text": text, "source": source.unwrap_or_else(|| "user".into())})).await
+}
+
+#[tauri::command]
+pub async fn memory_clear() -> Result<Value, String> {
+    instance().request("memory_clear", json!({})).await
+}
+
+// ---- tools.md (操作技巧) ----
+#[tauri::command]
+pub async fn tools_read() -> Result<Value, String> {
+    instance().request("tools_read", json!({})).await
+}
+
+#[tauri::command]
+pub async fn tools_write(text: String) -> Result<Value, String> {
+    instance().request("tools_write", json!({"text": text})).await
+}
+
+#[tauri::command]
+pub async fn tools_append(text: String, kind: Option<String>, source: Option<String>) -> Result<Value, String> {
+    instance().request("tools_append", json!({
+        "text": text,
+        "kind": kind.unwrap_or_else(|| "tip".into()),
+        "source": source.unwrap_or_else(|| "user".into()),
+    })).await
+}
+
+#[tauri::command]
+pub async fn tools_reset() -> Result<Value, String> {
+    instance().request("tools_reset", json!({})).await
+}
+
+// ---- 任务模板 ----
+#[tauri::command]
+pub async fn template_list() -> Result<Value, String> {
+    instance().request("template_list", json!({})).await
+}
+
+#[tauri::command]
+pub async fn template_add(name: String, instruction: String, autonomy: Option<String>, max_steps: Option<i64>) -> Result<Value, String> {
+    instance().request("template_add", json!({
+        "name": name, "instruction": instruction,
+        "autonomy": autonomy, "max_steps": max_steps,
+    })).await
+}
+
+#[tauri::command]
+pub async fn template_update(id: String, name: Option<String>, instruction: Option<String>, autonomy: Option<String>, max_steps: Option<i64>) -> Result<Value, String> {
+    instance().request("template_update", json!({
+        "id": id, "name": name, "instruction": instruction,
+        "autonomy": autonomy, "max_steps": max_steps,
+    })).await
+}
+
+#[tauri::command]
+pub async fn template_delete(id: String) -> Result<Value, String> {
+    instance().request("template_delete", json!({"id": id})).await
+}
+
+// ---- 定时任务 ----
+#[tauri::command]
+pub async fn schedule_list() -> Result<Value, String> {
+    instance().request("schedule_list", json!({})).await
+}
+
+#[tauri::command]
+pub async fn schedule_add(name: String, instruction: String, spec: Value, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>) -> Result<Value, String> {
+    instance().request("schedule_add", json!({
+        "name": name, "instruction": instruction, "spec": spec,
+        "autonomy": autonomy, "max_steps": max_steps,
+        "enabled": enabled.unwrap_or(true),
+    })).await
+}
+
+#[tauri::command]
+pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>) -> Result<Value, String> {
+    instance().request("schedule_update", json!({
+        "id": id, "name": name, "instruction": instruction, "spec": spec,
+        "autonomy": autonomy, "max_steps": max_steps, "enabled": enabled,
+    })).await
+}
+
+#[tauri::command]
+pub async fn schedule_delete(id: String) -> Result<Value, String> {
+    instance().request("schedule_delete", json!({"id": id})).await
 }
 
 /// Tell the sidecar to re-read the user-config so settings changes take effect

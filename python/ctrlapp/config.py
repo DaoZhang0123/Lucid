@@ -110,12 +110,35 @@ class LoggingConfig:
 
 
 @dataclass
+class MemoryConfig:
+    """长期记忆 memory.md 的配置。"""
+    enabled: bool = True
+    path: str = "memory.md"            # 相对路径会落到 LOCALAPPDATA/dev.ctrlapp/
+    max_entries: int = 200             # 超过则丢最早
+    max_entry_chars: int = 500         # 单条最大字符数
+    max_chars: int = 8000              # 注入 prompt 时的总裁剪上限
+    heartbeat_interval_sec: int = 0    # 0=禁用心跳反思（占位）
+
+
+@dataclass
+class ToolsConfig:
+    """操作技巧 tools.md 的配置。表结构与 MemoryConfig 一致，但语义差异。"""
+    enabled: bool = True
+    path: str = "tools.md"
+    max_entries: int = 300
+    max_entry_chars: int = 500
+    max_chars: int = 12000
+
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     screenshot: ScreenshotConfig = field(default_factory=ScreenshotConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     input: InputConfig = field(default_factory=InputConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    tools: ToolsConfig = field(default_factory=ToolsConfig)
 
 
 def _apply(dc: Any, raw: dict[str, Any] | None) -> Any:
@@ -160,4 +183,6 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.safety, raw.get("safety"))
     _apply(cfg.input, raw.get("input"))
     _apply(cfg.logging, raw.get("logging"))
+    _apply(cfg.memory, raw.get("memory"))
+    _apply(cfg.tools, raw.get("tools"))
     return cfg

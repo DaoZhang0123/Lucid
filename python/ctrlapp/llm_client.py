@@ -20,9 +20,47 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+# 复用 auth.copilot 里探测出来的 Windows 系统代理（注册表 / 环境变量）。如果
+# 不可用就退回 None，让 SDK 自己走 trust_env。
+try:
+    from .auth.copilot import _SYSTEM_PROXY as _SYS_PROXY  # type: ignore
+except Exception:  # pragma: no cover
+    _SYS_PROXY = None
+
+# chat 调用的默认超时与 SDK 层重试。Copilot 多模态请求慢，给宽一点。
+_CHAT_TIMEOUT_SEC = 90.0
+_SDK_MAX_RETRIES = 4
+
+
+def _build_openai_http_client():
+    """返回一个 httpx.Client，带上系统代理 + truststore（如果可用）。
+
+    OpenAI SDK 允许传 ``http_client=`` 参数；不传的话它只看 HTTPS_PROXY 环境变量，
+    拿不到注册表里的系统代理（Clash/V2Ray 默认就是写注册表），造成 chat 调用走直连、中
+    国大陆 connection reset。"""
+    try:
+        import httpx
+    except ImportError:  # pragma: no cover
+        return None
+    kwargs: dict[str, Any] = {
+        "timeout": _CHAT_TIMEOUT_SEC,
+        "trust_env": True,
+    }
+    if _SYS_PROXY:
+        kwargs["proxy"] = _SYS_PROXY
+    try:
+        import ssl
+        import truststore
+        kwargs["verify"] = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:
+        pass
+    return httpx.Client(**kwargs)
 
 
 # ------------------------------ 归一化结果 ------------------------------
@@ -71,6 +109,9 @@ class OpenAIChatClient:
             base_url=base_url.rstrip("/"),
             api_key=api_key,
             default_headers=dict(extra_headers) if extra_headers else None,
+            timeout=_CHAT_TIMEOUT_SEC,
+            max_retries=_SDK_MAX_RETRIES,
+            http_client=_build_openai_http_client(),
         )
 
     def chat(
@@ -349,6 +390,9 @@ class CopilotClient:
             base_url=base_url.rstrip("/"),
             api_key=token,
             default_headers=headers,
+            timeout=_CHAT_TIMEOUT_SEC,
+            max_retries=_SDK_MAX_RETRIES,
+            http_client=_build_openai_http_client(),
         )
         resp = client.chat.completions.create(
             model=self.model,

@@ -27,6 +27,10 @@ export const chat = $state({
   sidecarStderr: [] as string[],
   threads: [] as ThreadMeta[],
   activeThreadId: null as string | null,
+  // 任务队列中的 thread id 集合，用于侧边栏“⏳ 排队中”标记
+  queuedThreadIds: [] as string[],
+  // 当前正在运行的 thread id
+  runningThreadId: null as string | null,
 });
 
 let started = false;
@@ -66,6 +70,7 @@ function handleEvent(v: any) {
     chat.running = true;
     chat.currentStep = 0;
     chat.totalSteps = v.max_steps ?? 0;
+    if (v.thread_id) chat.runningThreadId = v.thread_id;
     push({ kind: "system", text: `开始任务` });
   } else if (k === "step_start") {
     chat.currentStep = v.step;
@@ -95,12 +100,32 @@ function handleEvent(v: any) {
     }
   } else if (k === "final") {
     chat.running = false;
+    chat.runningThreadId = null;
     push({ kind: "final", status: v.status, text: v.text });
   } else if (k === "error") {
     chat.running = false;
+    chat.runningThreadId = null;
     push({ kind: "system", text: `错误：${v.message}` });
   } else if (k === "user_input") {
     // 这个事件只在重放老 thread 时使用；实时 user 消息已经在 startTask 里 push
+  } else if (k === "task_queued") {
+    if (v.thread_id && !chat.queuedThreadIds.includes(v.thread_id)) {
+      chat.queuedThreadIds = [...chat.queuedThreadIds, v.thread_id];
+    }
+    void refreshThreadList();
+  } else if (k === "task_dequeued") {
+    if (v.thread_id) {
+      chat.queuedThreadIds = chat.queuedThreadIds.filter((x) => x !== v.thread_id);
+      chat.runningThreadId = v.thread_id;
+    }
+    if (Array.isArray(v.queue)) {
+      chat.queuedThreadIds = v.queue.map((it: any) => it.thread_id);
+    }
+    void refreshThreadList();
+  } else if (k === "queue_changed") {
+    if (Array.isArray(v.queue)) {
+      chat.queuedThreadIds = v.queue.map((it: any) => it.thread_id);
+    }
   }
 }
 
@@ -147,17 +172,17 @@ export async function refreshThreadList(): Promise<void> {
 
 export async function startTask(text: string, autonomy: string, maxSteps: number): Promise<void> {
   if (!text) return;
-  if (chat.running) {
-    try { await invoke("sidecar_cancel"); } catch {}
-    push({ kind: "system", text: "已取消上一任务，准备发送新任务…" });
-    const t0 = Date.now();
-    while (chat.running && Date.now() - t0 < 1500) {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-  }
   push({ kind: "user", text });
   try {
-    await invoke("sidecar_start_task", { args: { instruction: text, autonomy, maxSteps } });
+    const res: any = await invoke("sidecar_start_task", { args: { instruction: text, autonomy, maxSteps } });
+    if (res && res.queued) {
+      const pos = res.position ?? "?";
+      push({ kind: "system", text: `⏳ 已加入队列（第 ${pos} 位），当前任务完成后自动执行` });
+      if (res.thread_id && !chat.queuedThreadIds.includes(res.thread_id)) {
+        chat.queuedThreadIds = [...chat.queuedThreadIds, res.thread_id];
+      }
+      void refreshThreadList();
+    }
   } catch (e) {
     push({ kind: "system", text: `启动失败：${e}` });
   }
@@ -175,9 +200,7 @@ export async function cancelTask(): Promise<void> {
 /** 新建 thread：清空 UI 和 active 标记，但不真的创建目录；
  *  等用户首次发送任务时，后端会自动以 instruction 作为标题创建 thread。 */
 export async function newThread(): Promise<void> {
-  if (chat.running) {
-    try { await invoke("sidecar_cancel"); } catch {}
-  }
+  // 不再取消当前任务 —— 后续发送会自动排队。
   chat.items = [];
   chat.currentStep = 0;
   chat.totalSteps = 0;
@@ -193,9 +216,7 @@ export async function newThread(): Promise<void> {
 
 /** 把某个历史 thread 加载进聊天窗口，并设为 active（后续输入会续写到它里面）。 */
 export async function openThread(id: string): Promise<void> {
-  if (chat.running) {
-    try { await invoke("sidecar_cancel"); } catch {}
-  }
+  // 不再取消当前任务；它会在后台继续写到原来的 thread。
   try {
     await invoke("thread_set_active", { id });
   } catch (e) {

@@ -17,7 +17,7 @@
 
 # -*- mode: python ; coding: utf-8 -*-
 import os
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 
@@ -27,6 +27,7 @@ hidden += collect_submodules("pyautogui")
 hidden += collect_submodules("pyperclip")
 hidden += collect_submodules("rich")
 hidden += collect_submodules("PIL")
+hidden += collect_submodules("tzdata")  # zoneinfo on Windows needs the tzdata pkg
 # NOTE: do NOT collect_submodules("openai") — it transitively drags in
 # torch / transformers / tiktoken (>5GB), blowing past WiX / NSIS limits.
 # We only need the OpenAI HTTP client; the chat.completions surface is enough.
@@ -64,6 +65,7 @@ hidden += [
 datas = [
     (os.path.join(ROOT, "config.toml"), "."),
 ]
+datas += collect_data_files("tzdata")  # IANA 时区原始文件
 
 a = Analysis(
     [os.path.join(ROOT, "packaging", "ctrlapp_entry.py")],

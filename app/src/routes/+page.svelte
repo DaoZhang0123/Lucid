@@ -89,13 +89,17 @@
     <div class="title">ctrlapp · 桌面 Agent</div>
     <div class="status" class:on={chat.sidecarReady} class:running={chat.running}>
       {#if chat.running}
-        运行中 · 第 {chat.currentStep}/{chat.totalSteps} 步
+        运行中 · 第 {chat.currentStep}/{chat.totalSteps} 步{#if chat.queuedThreadIds.length} · 队列 {chat.queuedThreadIds.length}{/if}
       {:else if chat.sidecarReady}
-        就绪
+        就绪{#if chat.queuedThreadIds.length} · 队列 {chat.queuedThreadIds.length}{/if}
       {:else}
         sidecar 未连接
       {/if}
     </div>
+    <a class="link" href="/templates">模板</a>
+    <a class="link" href="/schedules">定时</a>
+    <a class="link" href="/memory">记忆</a>
+    <a class="link" href="/tools">技巧</a>
     <a class="link" href="/settings">设置</a>
   </header>
 
@@ -112,7 +116,10 @@
                  role="button" tabindex="0"
                  onclick={() => onPickThread(t.id)}
                  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void onPickThread(t.id); } }}>
-              <div class="t-title" title={t.title}>{t.title || "(未命名)"}</div>
+              <div class="t-title" title={t.title}>
+                {#if chat.runningThreadId === t.id}<span class="t-tag run">▶ 运行中</span>{:else if chat.queuedThreadIds.includes(t.id)}<span class="t-tag queued">⏳ 排队中</span>{/if}
+                {t.title || "(未命名)"}
+              </div>
               <div class="t-meta">
                 <span>{fmtTime(t.updated_ms)}</span>
                 {#if t.task_count}<span>· {t.task_count} 任务</span>{/if}
@@ -227,7 +234,8 @@
   .status { font-size: 0.85rem; opacity: 0.8; }
   .status.on { color: #6ee7b7; opacity: 1; }
   .status.running { color: #fbbf24; opacity: 1; }
-  .link { margin-left: auto; color: #93c5fd; text-decoration: none; font-size: 0.9rem; }
+  .link { color: #93c5fd; text-decoration: none; font-size: 0.9rem; margin-left: 0.8rem; }
+  .link:first-of-type { margin-left: auto; }
 
   .body { flex: 1; display: flex; min-height: 0; }
   .sidebar { width: 16rem; background: #111827; color: #e5e7eb;
@@ -246,6 +254,10 @@
   .t-title { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
              padding-right: 1.2rem; }
   .t-meta { font-size: 0.7rem; opacity: 0.65; margin-top: 0.15rem; display: flex; gap: 0.3rem; }
+  .t-tag { display: inline-block; font-size: 0.65rem; padding: 0.05rem 0.3rem; border-radius: 3px;
+           margin-right: 0.3rem; vertical-align: middle; opacity: 0.95; }
+  .t-tag.run { background: rgba(34,197,94,0.25); color: #22c55e; }
+  .t-tag.queued { background: rgba(234,179,8,0.25); color: #eab308; }
   .t-del { position: absolute; right: 0.3rem; top: 0.4rem; background: transparent; color: inherit;
            border: 0; width: 1.2rem; height: 1.2rem; cursor: pointer; opacity: 0; border-radius: 3px;
            font-size: 0.75rem; }
