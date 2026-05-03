@@ -54,6 +54,23 @@ class Capture:
         self.image.save(buf, format="PNG", optimize=True)
         return buf.getvalue()
 
+    def jpeg_bytes(self, quality: int = 80) -> bytes:
+        """JPEG-encoded version (RGB), used to keep request body small for L1/L2."""
+        buf = io.BytesIO()
+        img = self.image
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.save(buf, format="JPEG", quality=int(quality), optimize=True, progressive=False)
+        return buf.getvalue()
+
+    def encoded_for_send(self, prefer_jpeg: bool, jpeg_quality: int = 80) -> tuple[bytes, str]:
+        """Return (bytes, mime) suitable for an image_url data URL.
+        prefer_jpeg=True → JPEG (good for big L1/L2 screenshots);
+        prefer_jpeg=False → PNG (lossless, used for tiny L3 tiles & icon atlas)."""
+        if prefer_jpeg:
+            return self.jpeg_bytes(jpeg_quality), "image/jpeg"
+        return self.png_bytes(), "image/png"
+
 
 def _shrink(img: Image.Image, max_long_edge: int) -> Image.Image:
     if max_long_edge <= 0:
@@ -120,6 +137,20 @@ class ScreenSensor:
         cx, cy = cursor_pos()
         r = self.cfg.l3_radius_px
         region = {"left": cx - r, "top": cy - r, "width": r * 2, "height": r * 2}
+        img = self._grab(region)
+        raw = img.size
+        sent = _shrink(img, self.cfg.l3_max_long_edge)
+        return Capture(
+            level=ScreenLevel.L3, image=sent, raw_size=raw, sent_size=sent.size,
+            offset=(region["left"], region["top"]), phash=_phash(sent),
+        )
+
+    def capture_around(self, sx: int, sy: int, radius: int) -> Capture:
+        """Grab a square tile around an arbitrary virtual-screen coordinate.
+        Used for pre-click target verification (no LLM); returns an L3-style
+        Capture that is independent of the cursor position."""
+        r = max(8, int(radius))
+        region = {"left": sx - r, "top": sy - r, "width": r * 2, "height": r * 2}
         img = self._grab(region)
         raw = img.size
         sent = _shrink(img, self.cfg.l3_max_long_edge)

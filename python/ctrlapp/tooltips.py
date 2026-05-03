@@ -1,19 +1,18 @@
-"""操作技巧 tools.md（与 memory.md 平行）。
+"""操作技巧 tools.md（全局） + tips/<app>.md（按需加载）。
 
-设计：把"如何操作各类 App 的提示"抽离成一份**可演化的 markdown**，每次任务起手
-注入到 system prompt 末尾。与 memory.md 的差异：
+设计思想：
+* 老的 tools.md 把所有 App 的提示都堆在一起，每次任务起手全量注入到 system prompt，
+  既污染 context 又把不相关 App 的信息塞给模型。
+* 现在拆成两层：
+    - **全局** ``tools.md`` —— 只放跨 App 的通用原则（键盘优先、不覆盖用户工作、
+      保存对话框输入路径、截图技巧），起手时自动注入。
+    - **App 局部** ``apps/<slug>/tips.md`` —— 每个 App 一个子文件夹，方便后续在同一
+      子文件夹下放更多 per-app 工件（regions.json / launcher.json / 截图样本等）。
+      仅在模型主动调 ``load_app_tips(app=...)`` 或 ``launch_app(name=...)`` 时才注入。
+* 模型用 ``learn_tip(text=..., kind=..., app=?)`` 写入；不传 ``app`` 默认入全局，
+  传了就路由到 ``tips/<app>.md`` 并按需创建。
 
-* memory.md 记**用户事实**（称呼 / 偏好 / 环境）；
-* tools.md 记**操作技法**（针对某个 App / 对话框 / 控件该怎么做最稳妥）。
-
-写入路径有两条：
-
-* 主动：用户说"以后开浏览器都用 Edge / 处理 Excel 时先 Ctrl+End 再…" 时模型可调
-  ``learn_tip``；
-* 被动：模型在任务中**总结成功/失败经验**（如"Outlook 用 Ctrl+R 回复比点回复按钮稳"）
-  时调用 ``learn_tip(text, kind='success' | 'failure')``。
-
-文件首次缺失时会用一份初始 seed（从 loop.SYSTEM_PROMPT 里"常用技巧"段抽出来）写入。
+文件首次缺失会用 seed 写入；与 ``memory.md`` 同放在 ``%LOCALAPPDATA%\\dev.ctrlapp\\`` 下。
 """
 from __future__ import annotations
 
@@ -23,60 +22,96 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import ToolsConfig
+from . import apps as apps_pkg
 
 _HEADER = "# ctrlapp Operation Tips Library\n"
 
-# Initial seed — mirrors the original "common tips" section that used to live in
-# loop.SYSTEM_PROMPT. Each line is one tip, prefixed with a tag for grep-ability.
+# Global seed —— 跨 App 都用得上的原则。
+# 与原来的 _SEED_BODY 相比：移走了 wechat / save-dialog / launch-app 几条到独立文件。
 _SEED_BODY = """\
 - [seed · keyboard] Prefer keyboard shortcuts over mouse clicks; screenshot coordinates aren't always exact, so anything you can do via the keyboard, do via the keyboard.
 - [seed · keyboard] Switch / browse open windows with alt+tab / alt+shift+tab / win+tab; do NOT switch windows by clicking taskbar icons.
-- [seed · browser] Browser: new window ctrl+n, new tab ctrl+t, close tab ctrl+w, address bar ctrl+l or alt+d, back/forward alt+left/right, refresh f5.
-- [seed · browser] Don't click the '+' in the top-right corner to open a new tab — use ctrl+t, it's more reliable.
-- [seed · search] Default search engine is bing.com. Fastest path: win+r to open Run, type `https://bing.com/search?q=keywords` and Enter —
-  Windows opens the result page in the default browser (no need to launch the browser first, no impact on the user's existing tabs).
-  Alternative: in the browser ctrl+t for a new tab, type `bing.com` Enter, then type the keywords.
-  Only switch to Google / Baidu / etc. when the user explicitly asks.
+- [seed · search] Default search engine is bing.com. Fastest path: win+r to open Run, type `https://bing.com/search?q=keywords` and Enter — Windows opens the result page in the default browser. Only switch to Google / Baidu / etc. when the user explicitly asks.
 - [seed · text-edit] Select all ctrl+a, copy ctrl+c, paste ctrl+v, undo ctrl+z, save ctrl+s, find ctrl+f.
 - [seed · system] Run dialog win+r, File Explorer win+e, show desktop win+d; for Notepad use win+r then type notepad and Enter.
 - [seed · window] Window layout: win+left/right snap to half, win+up maximise, win+down minimise / restore, win+m minimise all.
-- [seed · type-text] Use action="type" + text="..." for text input; the local driver pastes via clipboard, works for CJK / paths / English alike.
+- [seed · type-text] Use action="type" + text="..." for text input; the local driver pastes via clipboard, works for CJK / paths / English alike. `\\n` inside text becomes a soft line break inside the focused widget, NOT an Enter — chat apps (WeChat, Telegram, ...) will keep the whole multi-line block as a single message; press Return separately to send.
 - [seed · don't-overwrite] Before any 'open / new / save', assume the user already has work in progress; opening a fresh instance is always safer than overwriting.
-- [seed · don't-overwrite] Writing a doc: win+r -> notepad Enter to open a **new** Notepad; do NOT type into an already-open Notepad.
-- [seed · don't-overwrite] Word/WPS: ctrl+n for a new document, do NOT overwrite an already-open document.
-- [seed · don't-overwrite] Browser: open a new page with ctrl+n or ctrl+t; do NOT navigate the current tab via the address bar, it loses the user's current page.
 - [seed · don't-overwrite] When saving, if the dialog's default filename points at an existing file, ctrl+a select-all and type a new explicit name (a timestamp helps).
 - [seed · don't-overwrite] Before closing any window/tab, confirm it's one you opened yourself; never close the user's pre-existing windows.
-- [seed · launch-app] Before using an App, alt+tab and screenshot to see what's already open; if it's running, ctrl+n a new window to continue work — don't take over the user's existing window;
-  only launch via win+r / start menu when it's not open at all.
-- [seed · launch-app] **Reliable order to decide 'is it already running'**: (1) check the **taskbar at the bottom of the screen** (the horizontal bar with icons of open windows; the system tray on the right has the small icons of resident background Apps);
-  (2) when unsure, alt+tab once and look at the thumbnail list; (3) **only when both above show nothing**, double-click the desktop icon / win+r to launch.
-  Never blindly double-click a desktop icon — that often relaunches or focuses the wrong window. Resident apps like WeChat, QQ, Steam, NetEase Cloud Music are almost always running in the system tray on the right side of the taskbar.
-- [seed · launch-app · wechat] WeChat lives in the system tray (the green chat-bubble icon among the small icons on the **right of the bottom taskbar**). To open the main window: right-click the tray icon -> "Show main panel",
-  or just left-click the tray icon. **Do NOT** double-click the desktop WeChat.exe icon — that just spawns a duplicate which is usually rejected by the running instance.
-- [seed · save-dialog] Prefer typing a full absolute path into the filename field and pressing Enter; or click the address bar (path breadcrumb) at the top of the dialog and type a path then Enter;
-  do NOT navigate by clicking through the 'Quick access / This PC' tree on the left.
+- [seed · launch-app] Prefer the new `launch_app(name)` meta tool over manually clicking taskbar/tray icons or double-clicking desktop shortcuts. Call `list_apps()` to see what's pre-registered. If `launch_app` returns "not found" then fall back to `win+r` + exe alias, the start menu, or visual icon-clicking — and remember to `learn_tip(app="<name>", text="works on this machine")` so next time `launch_app` succeeds.
 - [seed · paths] Desktop path: %USERPROFILE%\\Desktop or C:\\Users\\<user>\\Desktop, can be typed directly as an absolute path.
-- [seed · dialog] When a filename field already has a default value (e.g. *.txt), ctrl+a select-all first then type the new path, to avoid concatenation errors.
 - [seed · screenshot] Before clicking small buttons / icons, take an L2 active_window or L3 cursor_local screenshot to see clearly and avoid misclicks.
 """
+
+# Per-app seed bodies are no longer hardcoded here — each App lives in its own
+# ``ctrlapp.apps.<slug>`` module exporting ``SLUG`` / ``TITLE`` / ``TIPS`` /
+# ``LAUNCHER``. Drop a new file in that package to add a new App.
+def _app_seeds() -> dict[str, tuple[str, str]]:
+    """``{slug: (title, body)}`` — built fresh from the apps registry every call
+    so reloading a module during dev is reflected.
+    """
+    return {slug: (title, body) for slug, (title, body) in apps_pkg.all_tips_seeds().items() if body.strip()}
+
+
+# ---------------------------------------------------------------------------
+# Path helpers
+# ---------------------------------------------------------------------------
+
+
+def _user_data_dir() -> Path:
+    if os.name == "nt":
+        local_app = os.environ.get("LOCALAPPDATA")
+        if local_app:
+            return Path(local_app) / "dev.ctrlapp"
+    home = os.environ.get("HOME")
+    if home:
+        return Path(home) / ".ctrlapp"
+    return Path.cwd()
 
 
 def tools_path(cfg: ToolsConfig) -> Path:
     p = Path(cfg.path)
     if p.is_absolute():
         return p
-    if os.name == "nt":
-        local_app = os.environ.get("LOCALAPPDATA")
-        if local_app:
-            return Path(local_app) / "dev.ctrlapp" / cfg.path
-    home = os.environ.get("HOME")
-    if home:
-        return Path(home) / ".ctrlapp" / cfg.path
-    return Path.cwd() / cfg.path
+    return _user_data_dir() / cfg.path
 
 
-def _ensure_seeded(cfg: ToolsConfig) -> Path:
+def apps_dir(cfg: ToolsConfig) -> Path:
+    """Root folder holding one subfolder per app (``apps/<slug>/``).
+
+    Each subfolder owns the per-app artefacts: ``tips.md`` (this module),
+    later ``regions.json`` / ``launcher.json`` etc. Adding a new app == dropping
+    a new ``apps/<slug>/`` folder.
+    """
+    sub = getattr(cfg, "apps_dir", "apps") or "apps"
+    p = Path(sub)
+    if p.is_absolute():
+        return p
+    return _user_data_dir() / sub
+
+
+def _slugify(name: str) -> str:
+    s = (name or "").strip().lower()
+    s = re.sub(r"[^a-z0-9_-]+", "-", s)
+    s = s.strip("-")
+    return s
+
+
+def app_dir(cfg: ToolsConfig, app: str) -> Path:
+    return apps_dir(cfg) / _slugify(app)
+
+
+def app_tips_path(cfg: ToolsConfig, app: str) -> Path:
+    return app_dir(cfg, app) / "tips.md"
+
+
+# ---------------------------------------------------------------------------
+# Seed / read / write
+# ---------------------------------------------------------------------------
+
+
+def _ensure_global_seeded(cfg: ToolsConfig) -> Path:
     p = tools_path(cfg)
     if p.is_file():
         return p
@@ -85,33 +120,194 @@ def _ensure_seeded(cfg: ToolsConfig) -> Path:
     return p
 
 
+def _ensure_app_seeded(cfg: ToolsConfig, app_slug: str) -> Path | None:
+    """If we have a seed for this app and the file is missing, write it.
+
+    Returns the path if a file exists (after possibly seeding), else None.
+    """
+    p = app_tips_path(cfg, app_slug)
+    if p.is_file():
+        return p
+    seed = _app_seeds().get(app_slug)
+    if seed is None:
+        return p if p.is_file() else None
+    title, body = seed
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(f"# {title}\n\n{body}", encoding="utf-8")
+    return p
+
+
+def seed_all_apps(cfg: ToolsConfig) -> list[str]:
+    """Make sure every known app seed file exists. Returns slugs touched."""
+    out: list[str] = []
+    for slug in _app_seeds().keys():
+        if _ensure_app_seeded(cfg, slug) is not None:
+            out.append(slug)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Read for prompt
+# ---------------------------------------------------------------------------
+
+
 def read_tools(cfg: ToolsConfig) -> str:
+    """Read the global tools.md raw text (with header)."""
     if not cfg.enabled:
         return ""
-    p = _ensure_seeded(cfg)
+    p = _ensure_global_seeded(cfg)
     try:
         return p.read_text(encoding="utf-8")
     except OSError:
         return ""
 
 
+def read_app_tips(cfg: ToolsConfig, app: str) -> str:
+    """Read one app's tips file. Empty string if not present and no seed available."""
+    if not cfg.enabled:
+        return ""
+    slug = _slugify(app)
+    if not slug:
+        return ""
+    p = _ensure_app_seeded(cfg, slug)
+    if p is None or not p.is_file():
+        return ""
+    try:
+        return p.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def list_app_tips(cfg: ToolsConfig) -> list[dict]:
+    """List available per-app tip files (existing on disk + known seeds).
+
+    Each entry: ``{slug, title, file, has_user_entries, lines}``. Used by
+    ``list_apps``-style meta tools so the model knows what app names it can
+    pass to ``load_app_tips``.
+    """
+    seed_all_apps(cfg)
+    d = apps_dir(cfg)
+    out: list[dict] = []
+    seen: set[str] = set()
+    if d.is_dir():
+        # New layout: each app is a subfolder with tips.md inside.
+        candidates = sorted(
+            (sub / "tips.md" for sub in d.iterdir() if sub.is_dir()),
+            key=lambda p: p.parent.name,
+        )
+        for f in candidates:
+            if not f.is_file():
+                continue
+            slug = f.parent.name
+            seen.add(slug)
+            try:
+                txt = f.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            title = ""
+            for line in txt.splitlines():
+                if line.startswith("# "):
+                    title = line[2:].strip()
+                    break
+            entry_lines = [ln for ln in txt.splitlines() if ln.startswith("- [")]
+            user_entries = sum(1 for ln in entry_lines if "[seed " not in ln and "· seed " not in ln)
+            out.append({
+                "slug": slug,
+                "title": title or slug,
+                "file": str(f),
+                "lines": len(entry_lines),
+                "has_user_entries": user_entries > 0,
+            })
+    # also surface seed-only slugs that haven't been written yet
+    for slug, (title, _body) in _app_seeds().items():
+        if slug in seen:
+            continue
+        out.append({
+            "slug": slug,
+            "title": title,
+            "file": str(app_tips_path(cfg, slug)),
+            "lines": 0,
+            "has_user_entries": False,
+        })
+    return out
+
+
+def _strip_header(raw: str) -> str:
+    raw = raw.strip()
+    if not raw:
+        return ""
+    if raw.startswith("#"):
+        nl = raw.find("\n")
+        if nl > 0:
+            return raw[nl + 1 :].strip()
+        return ""
+    return raw
+
+
 def tools_for_prompt(cfg: ToolsConfig) -> str:
+    """Global tips section, injected into system prompt at task start."""
     raw = read_tools(cfg).strip()
     if not raw:
         return ""
-    body = raw.split("\n", 1)[1].strip() if raw.startswith("#") else raw
+    body = _strip_header(raw)
     if cfg.max_chars > 0 and len(body) > cfg.max_chars:
-        body = body[-cfg.max_chars:]
+        body = body[-cfg.max_chars :]
         nl = body.find("\n")
         if nl > 0:
-            body = body[nl + 1:]
+            body = body[nl + 1 :]
     if not body.strip():
         return ""
-    return "\n## Operation tips (dynamically learned; use learn_tip to add new ones when you discover them)\n" + body.strip() + "\n"
+    apps = [it for it in list_app_tips(cfg) if it.get("lines", 0) > 0]
+    catalog = ""
+    if apps:
+        bullets = "\n".join(f"  - `{it['slug']}` — {it['title']}" for it in apps)
+        catalog = (
+            "\nApp-specific tips are stored separately and are NOT loaded by default. "
+            "Call `load_app_tips(app=\"<slug>\")` to pull a specific App's tips into the conversation, "
+            "or `launch_app(name=\"<slug>\")` (which auto-loads them on success). Available app tip files:\n"
+            + bullets
+            + "\n"
+        )
+    return (
+        "\n## Operation tips (dynamically learned; use learn_tip to add new ones when you discover them)\n"
+        + body.strip()
+        + "\n"
+        + catalog
+    )
 
 
-def append_tip(cfg: ToolsConfig, text: str, kind: str = "tip", source: str = "agent") -> bool:
-    """追加一条技巧。``kind`` 可选 ``tip``/``success``/``failure``，作为前缀展示。"""
+def app_tips_for_prompt(cfg: ToolsConfig, app: str) -> str:
+    """Format one app's tips file as an injectable user message body."""
+    raw = read_app_tips(cfg, app).strip()
+    if not raw:
+        return ""
+    body = _strip_header(raw)
+    title = ""
+    for line in raw.splitlines():
+        if line.startswith("# "):
+            title = line[2:].strip()
+            break
+    head = f"## App tips for `{_slugify(app)}`"
+    if title:
+        head += f" ({title})"
+    return head + "\n" + body.strip() + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Append / write
+# ---------------------------------------------------------------------------
+
+
+def append_tip(
+    cfg: ToolsConfig,
+    text: str,
+    kind: str = "tip",
+    source: str = "agent",
+    app: str | None = None,
+) -> bool:
+    """Append a tip. ``app`` empty / None → global tools.md. Otherwise routed
+    to ``tips/<slug>.md`` (created from seed if known, blank-with-header otherwise).
+    """
     if not cfg.enabled:
         return False
     text = (text or "").strip()
@@ -123,9 +319,20 @@ def append_tip(cfg: ToolsConfig, text: str, kind: str = "tip", source: str = "ag
     kind = (kind or "tip").lower()
     if kind not in ("tip", "success", "failure"):
         kind = "tip"
-    p = _ensure_seeded(cfg)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     entry = f"- [{ts} · {source} · {kind}] {text}\n"
+    if app:
+        slug = _slugify(app)
+        p = app_tips_path(cfg, slug)
+        if not p.is_file():
+            seed = _app_seeds().get(slug)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if seed:
+                p.write_text(f"# {seed[0]}\n\n{seed[1]}", encoding="utf-8")
+            else:
+                p.write_text(f"# Tips for {slug}\n\n", encoding="utf-8")
+    else:
+        p = _ensure_global_seeded(cfg)
     with p.open("a", encoding="utf-8") as f:
         f.write(entry)
     _rotate(cfg, p)
@@ -142,11 +349,36 @@ def write_tools_raw(cfg: ToolsConfig, text: str) -> bool:
     return True
 
 
+def write_app_tips_raw(cfg: ToolsConfig, app: str, text: str) -> bool:
+    slug = _slugify(app)
+    if not slug:
+        return False
+    p = app_tips_path(cfg, slug)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if not text.startswith("#"):
+        seed = _app_seeds().get(slug)
+        title = seed[0] if seed else f"Tips for {slug}"
+        text = f"# {title}\n\n" + text
+    p.write_text(text, encoding="utf-8")
+    return True
+
+
 def reset_to_seed(cfg: ToolsConfig) -> bool:
-    """把 tools.md 重置为初始 seed（清掉所有学习到的条目）。"""
+    """Reset global tools.md to its seed (per-app files untouched)."""
     p = tools_path(cfg)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(_HEADER + "\n" + _SEED_BODY, encoding="utf-8")
+    return True
+
+
+def reset_app_to_seed(cfg: ToolsConfig, app: str) -> bool:
+    slug = _slugify(app)
+    seed = _app_seeds().get(slug)
+    if not seed:
+        return False
+    p = app_tips_path(cfg, slug)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(f"# {seed[0]}\n\n{seed[1]}", encoding="utf-8")
     return True
 
 
@@ -161,7 +393,6 @@ def _rotate(cfg: ToolsConfig, p: Path) -> None:
     entry_idxs = [i for i, ln in enumerate(lines) if ln.startswith("- [")]
     if len(entry_idxs) <= cfg.max_entries:
         return
-    # 优先保留 [seed · ...] 条目，再按时间顺序丢早期非 seed 条目。
     seed_idxs = [i for i in entry_idxs if "· seed " in lines[i] or "[seed " in lines[i]]
     learned_idxs = [i for i in entry_idxs if i not in seed_idxs]
     keep = max(0, cfg.max_entries - len(seed_idxs))

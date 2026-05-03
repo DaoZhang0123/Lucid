@@ -224,6 +224,18 @@ class InputDriver:
         except Exception:
             pass
         try:
+            if not getattr(self.cfg, "type_split_newlines", False):
+                # Paste the whole string in one go. Most modern widgets
+                # (WeChat / browsers / VS Code / Office) preserve embedded
+                # newlines as soft breaks; splitting on \n and pressing Enter
+                # would prematurely send messages in chat apps.
+                payload = text.replace("\r", "")
+                if payload:
+                    pyperclip.copy(payload)
+                    time.sleep(0.03)
+                    pyautogui.hotkey("ctrl", "v")
+                    time.sleep(0.05)
+                return
             for kind, payload in self._split_segments(text):
                 if kind == "text":
                     if not payload:

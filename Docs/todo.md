@@ -105,6 +105,46 @@
   - `/schedules` 页面 CRUD + 暂停/启用；触发时自动 `thread_new + start_task`，运行中冲突自动跳过（`schedule_skipped` 事件）
   - 仍未做：cron 表达式语法（5 字段）、heartbeat 反思、桌面通知联动
 - [x] **同 thread 多轮 run 的 context 持久化（F3）**：每次 `_run` 结束把 messages 去掉 prelude 后落盘到 `thread/messages.json`；下次同 thread 起新 run 时载入 tail 拼到新 instruction 之前。prelude（system + atlas）每次重建以反映 memory.md / tools.md / icons 的更新。
+- [x] Image 压缩放到 context manager 里（`python/ctrlapp/context_manager.py` `compress_old_images`：未命中“最近 K 张/级 + 全局最近 N 张”保留集的旧截图，先尝试解码 → 等比缩放到 `[context].image_recompress_max_long_edge` → JPEG @ `image_recompress_quality` 重编码；若新字节反而更大或重压关闭则回落到原 `[old screenshot omitted]` 文本占位）
+- [x] **Context Manager / 自适应压缩**：`python/ctrlapp/context_manager.py` `ContextManager.maybe_summarize`：在每次发往 LLM 前 `estimate_tokens(messages)` 估算请求体规模（文本按 chars/4，单图按 base64 长度/4 上限 2400），超过 `[context].target_ratio * model_context_tokens` 即触发摘要——把 prelude 之外、最近 `keep_recent_messages` 之前的旧消息剥掉图片后丢给 `Agent._summarize_segment`（复用当前 LLMClient 但 tools=[] 且只跑一次），把返回文本塞回成单条 `## Conversation summary so far` 的 user message。配置：`[context] auto_compress_enabled / target_ratio / model_context_tokens / keep_recent_messages / summary_max_tokens / summary_model`（summary_model 字段已预留，目前复用主 client）。F3 持久化天然吃下结果（saved tail 已经是压缩后的 messages）。
+- [x] **`launch_app(name)` meta tool —— 用 Windows 原生接口启动 / 切换 App，绕开视觉**：详见 [Docs/screenshot.md §12](screenshot.md#12-视觉之外用-windows-原生接口启动--切换-app)。已落地，外加每个 App 的 tips / launcher spec 都搬到了 `python/ctrlapp/apps/<slug>.py` 单文件（hot-plug 注册表，drop-a-file = add an app），并暴露 `update_launcher` meta tool 让 Agent 把"shortcut 改了 / exe 路径变了"等学习结果持久化到 `<user data>/launchers.json`。
+- [ ] **截图链路重构：函数化 + 启动差分捕获 L2 + 点击前后 L3 校验**（详见 [Docs/screenshot.md §13](screenshot.md#13-截图链路重构函数化--启动差分捕获-l2--点击前后-l3-校验)）：
+  - **目标**：把"何时拍 / 拍什么 / 怎么校验"从模型决策里拿走一部分，用确定性算法 + 时序 hook 补位，进一步压缩 round-trip。
+  - **R1. screenshot 拆成独立函数（不再藏在 `computer` action 里）**：新建独立 `screenshot` tool（参数 `level` / `region` / `max_long_edge` / `quality`），与 `computer`（鼠键）解耦；坐标系仍统一在 `tool.last_capture` 里维护。同时保留 `computer.action=screenshot` 作为兼容别名，方便回滚。
+  - **R2. 起手只 L1 一次，之后 launch_app 用 diff 算 L2**：首张 L1 后，`launch_app` 内部在调用前后各拍一张 L1，用 dHash / 像素差（`PIL.ImageChops.difference` + 连通域 bbox）算出"最大变化矩形"，断定为新 App 主窗口；把该矩形 + 截图直接以 `## launch_app result (visual)` 的 user message 主动推给模型，**不消耗一次 LLM round-trip 来"看 L1 找 App 在哪"**。返回给模型的 metadata：`{app, hwnd, region:[x,y,w,h], confidence}`。差分失败 / 多个候选区域时回退到 `_grab(window_rect_of_hwnd(hwnd))` —— 用 Windows API 拿 hwnd 的客户区作为 L2。
+  - **R3. 点击前后 L3 + L2 双图校验（取代两阶段 preview）**：在 `_dispatch` 点击类动作时，**自动**前后各抓一张 L3（鼠标 ±100px），并在 post 阶段补一张 L2（活动窗口）；用 dHash 比对前后 L3，若相似度过高（>0.97）→ 直接报 `[click verify] no visual change near cursor` 让模型立刻重试 / 改坐标，**不必等模型自己看图发现**。两阶段 preview 改为兜底（仅 L1 直接点小图标时触发），由 §11 I 那条触发条件控制。
+  - **R4. 坐标系强校验**：`computer` 里所有带 `coordinate` 的 action，对照 `tool.last_capture.sent_size` 做越界检查，越界直接 `ToolResult(error=...)` 让模型重新截图。
+  - **配置**：`[screenshot] launch_diff_enabled / launch_diff_min_area_ratio=0.05 / click_verify_dhash_threshold=0.97 / first_l1_only=true`。
+  - **与已落地的 `launch_app` 关系**：本条是"launch_app 之后视觉怎么接管"的下一步——launch_app 给出 hwnd / region，screenshot 模块把 region 翻译成 L2，模型完全跳过"找 App 在屏幕哪儿"。
+- [ ] **语音输入 / Push-to-Talk 建任务**：注册一个全局快捷键（默认 `Ctrl+Alt+Space`，`[ui].voice_hotkey` 可改），按住录音、松开停止，把录到的音频送给 ASR（首选本地 `faster-whisper` small/medium，`[voice].engine = whisper-local | azure | openai`，`[voice].model_size`、`[voice].language="auto"`），转出文本后：
+  - 如果当前没有 active thread 或用户配置 `[voice].always_new_thread = true` → 自动 `thread_new` + `start_task`（前端 chat 视图自动滚到新 thread）；
+  - 否则把文本作为 user message 续到当前 thread。
+  - 录音/识别时托盘图标变红或主窗口 footer 显示波形 + 倒计时上限（`[voice].max_seconds=30`）；识别失败给出错音 + 前端 toast。
+  - 注意权限：Tauri 需声明 `microphone` capability；Windows 隐私设置里需开过麦克风。
+- [ ] **Skills 系统（可复用动作蓝图）**：在 templates 之上做一层"参数化、可由 Agent 自己挑用"的 skill：
+  - 数据：`%LOCALAPPDATA%\dev.ctrlapp\skills\<slug>.json`（含 `name` / `description` / `params: [{name,type,desc}]` / `steps: [<instruction template>...]` / `requires: [tool names]` / `examples`）；可由用户在 `/skills` 页面 CRUD，也可由模型用新 meta tool `learn_skill(name, description, params, steps)` 写入。
+  - 调用：模型用 `run_skill(name, params)` 触发；sidecar 把 steps 渲染成 instruction（Jinja2 风格的 `{{var}}` 替换）后逐条 inject 进 messages，相当于"批量 user nudges"。也允许用户在前端 `/skills` 列表里点"运行"直接发起。
+  - 注入：起手 prompt 里只列 skill 的 `name + description + params`（紧凑摘要），避免 prompt 膨胀；模型决定调用某 skill 时再把 steps 完整展开。
+  - 配置：`[skills] enabled / max_skills / max_steps_per_skill`。
+  - 与 templates 的区别：templates 是"一句固定 instruction"，skills 是"参数化的多步剧本 + 可被 Agent 主动调度"。
+- [ ] **多 Agent 设计：planner / checker / executor 三角**：把现在单 Agent 的 ReAct 拆三个角色，三者共享 thread messages 与截图，但各有 system prompt：
+  - **Planner**：拿到 user instruction + 当前屏幕，输出"高层步骤计划 + 验收标准"（不调 `computer`），写入 thread。
+  - **Executor**：现有 ReAct，按 plan 调 `computer` 推进。
+  - **Checker**：每 N 步（`[multiagent].check_every_steps=5`，可关）或 executor 自报"我以为我做完了"时，单独跑一轮：拿最新截图 + plan + 已执行 tool_calls 列表，判定"是否完成 / 偏离 / 需回滚"，结果以 `[checker]` system message 注回 messages，executor 下一步要把它当指令对待。
+  - 触发模式：`[multiagent].mode = off | check_only | plan_check_execute`；前两种省 token，最后一种最贵但最稳。
+  - 实现：复用现有 `LLMClient`，每个角色有独立 prompt 文件（`python/ctrlapp/prompts/{planner,checker}.md`），共享 `thread.messages.json` 持久化。
+  - UI：聊天流里给三种角色不同色块前缀（planner=蓝、checker=橙、executor=绿）。
+- [ ] **App 区域化坐标库（initialization-time region calibration）**：避免每次都靠视觉找按钮，针对常用 App（VS Code / 微信 / Outlook / Excel / Chrome / 资源管理器）在首次运行/设置页一键自检里跑一遍"区域校准"：
+  - 把每个 App 主窗口划分成固定区域（如 VS Code: `activity_bar / sidebar / editor_tabs / editor_body / status_bar / panel`；微信: `nav_bar / chat_list / chat_header / chat_body / input_area / send_button`），每区域记录"相对窗口左上角的归一化矩形 (x%, y%, w%, h%) + 该区域内若干锚点元素的描述"。
+  - 校准方式：① 让 Agent 用 `Win+E` / `ctrl+alt+w` 等启动 App，截 L1 + L2，用 LLM 一次性识别六七个区域并落盘；② 用户也可在前端区域校准面板手动框选/拖动调整。
+  - 数据：`%LOCALAPPDATA%\dev.ctrlapp\regions\<app_id>.json`（`window_signature` 用于 startup 时验证窗口尺寸/版本是否变化、变化则提示重校准）。
+  - Runtime：模型可用新 meta tool `region(app, region_name)` 拿到"屏幕坐标 + 描述"，省掉一次截图+识别+点击的 3 步。
+  - 配置：`[regions] enabled / auto_recalibrate_on_resolution_change`。
+- [ ] **Query-augmented user message**：在每次 LLM call 前，根据当前 user instruction 与最近若干 assistant 文本做轻量检索（BM25 + 可选 sentence-transformers embedding，`[rag] backend = bm25 | embed`），从 `memory.md` / `tools.md` / 历史 thread 摘要里召回 Top-K 相关条目，**只把相关的**那几条以 `## Relevant memory / tools (auto-retrieved)` 块拼进当前 user message——不再在 system prompt 里全量倾注 memory.md / tools.md（现在的做法）。
+  - 触发：每次 `_run` 起手 + 每隔 `[rag].refresh_every_steps` 步重新检索（捕获任务中途话题漂移）。
+  - 索引：sidecar 启动时把 memory/tools 切成单条 → 倒排索引；条目变更时增量更新（监听 `/memory` `/tools` 页面写盘事件）。
+  - 配置：`[rag] enabled / top_k=5 / backend / refresh_every_steps=10 / max_chars_per_entry=300`。
+  - 收益：(1) 大幅减少每步发给 LLM 的 prompt 体积；(2) 给模型的 memory/tools 信噪比变高（不会被无关条目干扰）；(3) 为后面 Phase 3 的"用户多人 / 多角色记忆隔离"留接口。
 
 ---
 
@@ -118,17 +158,23 @@
 
 ## 横向 / 工程债
 
-- [ ] **国际化（i18n）：仓库 + App 主语言切英文，附中文 / 法语 / 阿拉伯语 / 俄语 翻译**：
-  - **仓库层**：`README.md` / `design.md` / `todo.md` / 代码注释 / SYSTEM_PROMPT 主版本改写为英文，原中文文档移到 `docs/zh-CN/`、新增 `docs/fr-FR/`，README 顶部加 `[English | 中文 | Français]` 切换链接。
-  - **App UI 层**：SvelteKit 引入 i18n 框架（推荐 `svelte-i18n` 或 `@inlang/paraglide-js`），把 `+page.svelte` / `/settings` / `/templates` / `/schedules` / `/memory` / `/tools` / `/icons` 里所有中文硬编码（按钮、标签、占位符、提示）抽到 `messages/{en,zh-CN,fr-FR}.json`；默认 `en`，设置页加"语言"下拉框，写入 `[ui].locale`。
-  - **Sidecar 层**：SYSTEM_PROMPT、所有 `_emit` 推到前端的中文文案、危险词确认提示按 `cfg.ui.locale` 切换；tooltips.py 的 seed 内容也准备 en/zh-CN/fr-FR 三套。
-  - **翻译流水线**：用 `gh ai translate` 或挂个一次性脚本调 LLM 把 zh-CN 批量过一遍生成 en / fr-FR 草稿，人工校 UI 字符串（路径 / 快捷键名等专有名词保持原样）。
+- [~] **国际化（i18n）：仓库 + App 主语言切英文，附中文 / 法语 / 阿拉伯语 / 俄语 翻译**：
+  - **App UI 层**：✅ 已落地。`app/src/lib/i18n/` 用 `svelte-i18n` 注册 `en` / `zh-CN` / `fr-FR` 三语，`SUPPORTED_LOCALES` + `LOCALE_LABELS` 从 `index.ts` 集中导出；语言选择器在 `/settings`，写入 `localStorage["ctrlapp.locale"]` 并在 `setupI18n()` 启动时复用，避免冷启动闪烁。`+page.svelte` / `chatStore` / `/settings` / `/templates` / `/schedules` / `/memory` / `/tools` 全部硬编码已抽到 `messages/{en,zh-CN,fr-FR}.json`（含 28 个 tz 城市标签 `tz_utc_m12..p14`，`TZS` 数组用 `$derived` 重算以便切换语言后即时刷新）。
+  - **Sidecar 层**：⚠️ 部分。`SYSTEM_PROMPT` / `meta_tools.py` schema 描述 / `tooltips.py` seed / `memory.py` header / `icon_memory.py` atlas 标题 / `loop.py` 的 atlas 注入与 nudge 文案已全部翻成英文（默认面向国际用户）；尚未实现按 `cfg.ui.locale` 在 sidecar 内切换语言（也就是说目前是“英文 only 给 LLM”，不会按用户 UI locale 给中/法版 prompt）。
+  - **仓库层**：❌ 未做。`README.md` / `design.md` / `todo.md` / 代码注释主版本仍是中文，未拆 `docs/zh-CN/` `docs/fr-FR/` 目录，README 顶部也没加语言切换链接。
+  - **后续**：仓库层文档英化 + 多语切换，sidecar 文案按 `[ui].locale` 切换（需要 `tooltips.py` 准备 zh-CN/fr-FR 三套 seed），可选追加 `ar-SA` / `ru-RU`。
   - **验收**：英文环境装一遍 NSIS 默认 UI 全英；切到中文 / 法语后整窗刷新无残留中文 / 英文。
 - [ ] **README star 数对标 OpenAdapt**：在 README 顶部加一个 "Stargazers" 小节，挂自己仓库的 shields.io star badge（`https://img.shields.io/github/stars/<owner>/<repo>?style=social`），并在脚注里记一组对标基线 —— 参考 [OpenAdaptAI/OpenAdapt](https://github.com/OpenAdaptAI/OpenAdapt)（2026-05-01 抓取：约 1566 stars、233 forks，定位 "Generative RPA / computer-use agent"，与本项目同赛道）。每月人工或脚本（`gh api repos/OpenAdaptAI/OpenAdapt --jq .stargazers_count`）刷一次写进 README 末尾的"对标"表，方便看自己的增长曲线相对位置。
 - [ ] **首次运行引导：把 Windows 任务栏按钮"从不合并"**：在欢迎页 / 设置自检里加一项检测和一键引导——打开「设置 → 个性化 → 任务栏 → 任务栏行为 → 合并任务栏按钮并隐藏标签」改为「从不」。这样任务栏每个窗口都带文字标签，模型靠 OCR 就能知道哪些 App / 窗口已开，不必再依赖图标识别。可在引导里直接 `start ms-settings:taskbar` 跳到对应页面，并给出截图示意。
-- [ ] Image压缩放到context manager里
-- [ ] **Context Manager / 自适应压缩**：当本次发给 LLM 的 messages 估算 token 数（或字节数）逼近模型 context window 阈值（如 70%）时，自动触发"摘要压缩"——把最早的若干 user/assistant/tool 段（除 prelude 外）调用一次廉价模型生成"## 上文摘要"段塞回去，丢掉原始消息（只保留最近 N 步原文 + 最近若干截图）。并入 F3 持久化（saved tail 也走压缩）。配置：`[context] auto_compress_enabled / target_ratio / summary_model / keep_recent_steps`。
+- [ ] **首次运行引导：禁用锁屏 + 睡眠 + 屏保（防 BitBlt 拒绝访问）**：锁屏后 Windows 切到 Winlogon 安全桌面，BitBlt 直接返回 “拒绝访    问”（前端会看到 `ScreenShotError: Windows graphics function failed: BitBlt: 拒绝访问`），睡眠 / 休眠则会冻住 sidecar 的定时任务和长跑任务。在欢迎页 / 设置自检里加一组检测 + 一键修复（含“恢复默认”按钮记住原值再回写）：
+  - 屏保关闭：`reg add "HKCU\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d 0 /f`
+  - 屏幕熄灭 / 睡眠永不（AC 与电池都设 0）：`powercfg /change monitor-timeout-ac 0; powercfg /change monitor-timeout-dc 0; powercfg /change standby-timeout-ac 0; powercfg /change standby-timeout-dc 0`
+  - 控制台 / 锁屏超时：`powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOCONLOCK 0; powercfg /setactive SCHEME_CURRENT`
+  - 替代锁屏建议：用 `nircmd monitor off` 或调 `SendMessage(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)` 仅熄屏不切安全桌面；屏幕黑了但 BitBlt 仍可工作。
+  - 兜底：跑任务时若仍检测到 BitBlt Access Denied，前端弹 “屏幕已锁，无法截图，请解锁或改用熄屏”，并暂停当前 run 而不是反复把锁屏期间的截图错误喂给模型。
 - [ ] 单元测试：`_prune_old_images` / `_split_segments` / `_norm_key` / `RunLogger` 轮转 / `_parse_level`
 - [ ] CI：Windows runner 跑 lint + 单测（不动鼠键的部分）
 - [ ] L3 鼠标近屏幕边缘时区域裁剪到虚拟屏幕边界（防 mss 越界问题）
 - [ ] OSWorld / WindowsAgentArena 子集跑分（design.md §3.2）
+- [ ] 增加自动化测试
+- [ ] 打榜

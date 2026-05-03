@@ -453,6 +453,37 @@ pub async fn tools_reset() -> Result<Value, String> {
     instance().request("tools_reset", json!({})).await
 }
 
+// ---- per-app tips/<app>.md ----
+#[tauri::command]
+pub async fn app_tips_list() -> Result<Value, String> {
+    instance().request("app_tips_list", json!({})).await
+}
+
+#[tauri::command]
+pub async fn app_tips_read(app: String) -> Result<Value, String> {
+    instance().request("app_tips_read", json!({"app": app})).await
+}
+
+#[tauri::command]
+pub async fn app_tips_write(app: String, text: String) -> Result<Value, String> {
+    instance().request("app_tips_write", json!({"app": app, "text": text})).await
+}
+
+#[tauri::command]
+pub async fn app_tips_append(app: String, text: String, kind: Option<String>, source: Option<String>) -> Result<Value, String> {
+    instance().request("app_tips_append", json!({
+        "app": app,
+        "text": text,
+        "kind": kind.unwrap_or_else(|| "tip".into()),
+        "source": source.unwrap_or_else(|| "user".into()),
+    })).await
+}
+
+#[tauri::command]
+pub async fn app_tips_reset(app: String) -> Result<Value, String> {
+    instance().request("app_tips_reset", json!({"app": app})).await
+}
+
 // ---- 任务模板 ----
 #[tauri::command]
 pub async fn template_list() -> Result<Value, String> {

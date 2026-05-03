@@ -72,6 +72,10 @@ class ScreenshotConfig:
     l1_max_long_edge: int = 1568
     l2_max_long_edge: int = 1568
     l3_max_long_edge: int = 0
+    # 发送到 LLM 的图像编码：L1/L2 大图默认 JPEG（压缩 ~10x），L3 小图保留 PNG（无损）。
+    # 这是为了避免单条请求 body 过大（>1MB）导致 Copilot/openrouter 代理读 body 超时（408）。
+    send_jpeg_for_l1_l2: bool = True
+    send_jpeg_quality: int = 80
     # 对话历史里每个 level 保留最近 K 张截图（装入发给 LLM 的 prompt 里）。
     # 超出部分会被替换为占位文本（携带本地文件名/路径，需要时可反查）。
     keep_recent_l1: int = 1
@@ -92,12 +96,24 @@ class SafetyConfig:
     # 行为层：在保存/打开对话框里检测到“在左侧 25% 区域点击”时，注入一条
     # “请用文件名框/地址栏 type 路径”的纠正提示，避免模型去左侧导航树逐层点。
     save_dialog_sidebar_guard: bool = True
+    # 点击前预检：在执行 click 之前到目标 (x,y) 抓一张 L3 小图，与模型决策所
+    # 依据的“最近一次截图”同一区域做 dHash 对比；低于相似度阈值即取消本次
+    # click，把实时小图回送给模型让它重新看再决定。
+    verify_click_target_before: bool = True
+    verify_click_target_radius_px: int = 60
 
 
 @dataclass
 class InputConfig:
     chinese_input: str = "clipboard"
     action_delay: float = 0.15
+    # If True, `\n`/`\t` inside `type` text are split out and sent as Enter/Tab
+    # key presses (legacy behaviour). This is harmful for chat apps where Enter
+    # sends the message immediately (e.g. WeChat, Telegram, Slack), turning a
+    # single multi-line message into N separate messages. Default False:
+    # paste the whole string verbatim via clipboard and let the target widget
+    # interpret newlines as soft breaks.
+    type_split_newlines: bool = False
 
 
 @dataclass
@@ -124,12 +140,36 @@ class MemoryConfig:
 
 @dataclass
 class ToolsConfig:
-    """操作技巧 tools.md 的配置。表结构与 MemoryConfig 一致，但语义差异。"""
+    """操作技巧的配置。
+    - ``path``        全局 tools.md（每次任务起手注入到 system prompt 的 tips）。
+    - ``apps_dir``    per-app 资源根目录 ``apps/<slug>/``，按需加载；目前用于
+                       存 ``tips.md``，将来同一目录下可加 ``regions.json`` /
+                       ``launcher.json`` 等。新增 App = 新建一个子文件夹。
+    """
     enabled: bool = True
     path: str = "tools.md"
+    apps_dir: str = "apps"
     max_entries: int = 300
     max_entry_chars: int = 500
     max_chars: int = 12000
+
+
+@dataclass
+class LaunchersConfig:
+    """`launch_app` meta tool 的配置。"""
+    enabled: bool = True
+    # `<user data>/launchers.json` 持久化用户自定义 / 学习到的 launcher entries。
+    path: str = "launchers.json"
+    # 任务起手时把可用 launcher 的紧凑摘要注入 system prompt（每条 ~1 行）。
+    inject_catalog_in_system_prompt: bool = True
+
+
+@dataclass
+class RegionsConfig:
+    """App 区域化坐标库（initialization-time region calibration）配置。"""
+    enabled: bool = True
+    # `<user data>/regions/<app-slug>.json` 每个 App 一份。
+    dir: str = "regions"
 
 
 @dataclass
@@ -146,6 +186,31 @@ class IconMemoryConfig:
 
 
 @dataclass
+class ContextConfig:
+    """Context Manager: image recompression + adaptive history summarisation."""
+    # --- image recompression (no LLM, pure code) ---
+    # Old screenshots (those outside the per-level / global keep window) are
+    # recompressed to JPEG at this quality and downscaled to this max long edge,
+    # instead of being dropped to a text placeholder. Set image_max_long_edge=0
+    # to fall back to text-placeholder behaviour (legacy).
+    image_recompress_enabled: bool = True
+    image_recompress_quality: int = 35
+    image_recompress_max_long_edge: int = 720
+    # --- adaptive summarisation (uses LLM) ---
+    auto_compress_enabled: bool = True
+    # Target ratio of model context window before triggering summarisation.
+    target_ratio: float = 0.7
+    # Approximate model context window in tokens. Conservative default for Claude.
+    model_context_tokens: int = 200_000
+    # When summarising, keep this many most-recent non-prelude messages verbatim.
+    keep_recent_messages: int = 12
+    # Optional cheaper model for summarisation. Empty = reuse the main client.
+    summary_model: str = ""
+    # Max tokens the summary itself may consume.
+    summary_max_tokens: int = 1500
+
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     screenshot: ScreenshotConfig = field(default_factory=ScreenshotConfig)
@@ -155,6 +220,9 @@ class Config:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
     icons: IconMemoryConfig = field(default_factory=IconMemoryConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)
+    launchers: LaunchersConfig = field(default_factory=LaunchersConfig)
+    regions: RegionsConfig = field(default_factory=RegionsConfig)
 
 
 def _apply(dc: Any, raw: dict[str, Any] | None) -> Any:
@@ -202,4 +270,7 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.memory, raw.get("memory"))
     _apply(cfg.tools, raw.get("tools"))
     _apply(cfg.icons, raw.get("icons"))
+    _apply(cfg.context, raw.get("context"))
+    _apply(cfg.launchers, raw.get("launchers"))
+    _apply(cfg.regions, raw.get("regions"))
     return cfg

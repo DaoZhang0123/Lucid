@@ -3,6 +3,12 @@
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
 
+  type AppItem = { slug: string; title: string; file: string; lines: number; has_user_entries: boolean };
+
+  // "global" = tools.md ; otherwise app slug.
+  let scope = $state<string>("global");
+
+  // Global state
   let enabled = $state(true);
   let path = $state("");
   let text = $state("");
@@ -10,17 +16,41 @@
   let savedAt = $state("");
   let err = $state("");
 
+  // App-specific
+  let apps = $state<AppItem[]>([]);
+  let appsDir = $state("");
+  let newAppSlug = $state("");
+
   // 手动追加一条
   let newTip = $state("");
   let newKind = $state<"success" | "failure" | "tip">("tip");
 
+  async function loadApps() {
+    try {
+      const r = await invoke<any>("app_tips_list");
+      apps = (r.items ?? []) as AppItem[];
+      appsDir = r.dir ?? "";
+    } catch (e) {
+      err = String(e);
+    }
+  }
+
   async function load() {
     err = "";
+    savedAt = "";
     try {
-      const r = await invoke<any>("tools_read");
-      enabled = !!r.enabled;
-      path = r.path ?? "";
-      text = r.text ?? "";
+      if (scope === "global") {
+        const r = await invoke<any>("tools_read");
+        enabled = !!r.enabled;
+        path = r.path ?? "";
+        text = r.text ?? "";
+      } else {
+        const r = await invoke<any>("app_tips_read", { app: scope });
+        path = r.path ?? "";
+        text = r.text ?? "";
+        // enabled flag piggybacks on the global tools toggle
+      }
+      await loadApps();
     } catch (e) {
       err = String(e);
     }
@@ -30,8 +60,13 @@
     saving = true;
     err = "";
     try {
-      await invoke("tools_write", { text });
+      if (scope === "global") {
+        await invoke("tools_write", { text });
+      } else {
+        await invoke("app_tips_write", { app: scope, text });
+      }
       savedAt = new Date().toLocaleTimeString();
+      await loadApps();
     } catch (e) {
       err = String(e);
     } finally {
@@ -44,7 +79,11 @@
     if (!t) return;
     err = "";
     try {
-      await invoke("tools_append", { text: t, kind: newKind, source: "user" });
+      if (scope === "global") {
+        await invoke("tools_append", { text: t, kind: newKind, source: "user" });
+      } else {
+        await invoke("app_tips_append", { app: scope, text: t, kind: newKind, source: "user" });
+      }
       newTip = "";
       await load();
     } catch (e) {
@@ -53,9 +92,35 @@
   }
 
   async function reset() {
-    if (!confirm($_("tools_page.reset_confirm"))) return;
+    const msg = scope === "global"
+      ? $_("tools_page.reset_confirm")
+      : `Reset tips/${scope}.md to its built-in seed? Custom entries will be lost.`;
+    if (!confirm(msg)) return;
     try {
-      await invoke("tools_reset");
+      if (scope === "global") {
+        await invoke("tools_reset");
+      } else {
+        await invoke("app_tips_reset", { app: scope });
+      }
+      await load();
+    } catch (e) {
+      err = String(e);
+    }
+  }
+
+  async function selectScope(s: string) {
+    scope = s;
+    await load();
+  }
+
+  async function createNewApp() {
+    const slug = newAppSlug.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (!slug) return;
+    try {
+      // Write an empty body — backend will add header + (optionally) seed.
+      await invoke("app_tips_write", { app: slug, text: "" });
+      newAppSlug = "";
+      scope = slug;
       await load();
     } catch (e) {
       err = String(e);
@@ -78,9 +143,39 @@
   <p class="hint">
     {@html $_("tools_page.hint")}
   </p>
+
+  <div class="tabs">
+    <button class="tab" class:active={scope === "global"} onclick={() => selectScope("global")}>
+      <span class="tab-title">Global · tools.md</span>
+      <span class="tab-sub">always-on</span>
+    </button>
+    {#each apps as a (a.slug)}
+      <button class="tab" class:active={scope === a.slug} onclick={() => selectScope(a.slug)}>
+        <span class="tab-title">{a.title}</span>
+        <span class="tab-sub">
+          tips/{a.slug}.md · {a.lines}{a.has_user_entries ? " ✎" : ""}
+        </span>
+      </button>
+    {/each}
+    <div class="tab newapp">
+      <input
+        type="text"
+        placeholder="new app slug"
+        bind:value={newAppSlug}
+        onkeydown={(e) => { if (e.key === "Enter") createNewApp(); }}
+      />
+      <button onclick={createNewApp} disabled={!newAppSlug.trim()}>+ Add</button>
+    </div>
+  </div>
+
   <p class="meta">
-    {$_("tools_page.status_label")} {enabled ? $_("tools_page.status_enabled") : $_("tools_page.status_disabled")}<br/>
-    {$_("tools_page.path_label")} <code>{path}</code>
+    {#if scope === "global"}
+      {$_("tools_page.status_label")} {enabled ? $_("tools_page.status_enabled") : $_("tools_page.status_disabled")}<br/>
+      {$_("tools_page.path_label")} <code>{path}</code>
+    {:else}
+      Scope: <code>{scope}</code> — only loaded when the agent calls <code>load_app_tips(app="{scope}")</code> or <code>launch_app(name="{scope}")</code>.<br/>
+      Path: <code>{path}</code>
+    {/if}
   </p>
 
   {#if err}<p class="err">{err}</p>{/if}
@@ -88,7 +183,7 @@
   <div class="quick">
     <input
       type="text"
-      placeholder={$_("tools_page.append_placeholder")}
+      placeholder={scope === "global" ? $_("tools_page.append_placeholder") : `Append a tip to ${scope}.md`}
       bind:value={newTip}
       onkeydown={(e) => { if (e.key === "Enter") appendTip(); }}
       disabled={!enabled}
@@ -119,6 +214,20 @@
   .hint { font-size: 0.85rem; color: #4b5563; }
   .meta { font-size: 0.78rem; color: #6b7280; }
   .err { color: #b91c1c; }
+
+  .tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.6rem 0 0.4rem; }
+  .tab { display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem;
+         padding: 0.35rem 0.7rem; background: #f3f4f6; border: 1px solid #e5e7eb;
+         border-radius: 6px; cursor: pointer; font: inherit; min-width: 8rem; }
+  .tab:hover { background: #e5e7eb; }
+  .tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .tab-title { font-weight: 600; font-size: 0.85rem; }
+  .tab-sub { font-size: 0.7rem; opacity: 0.75; }
+  .tab.newapp { background: #fff; padding: 0.2rem 0.3rem; flex-direction: row; align-items: center; gap: 0.25rem; cursor: default; }
+  .tab.newapp input { width: 7rem; padding: 0.25rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; font: inherit; font-size: 0.8rem; }
+  .tab.newapp button { padding: 0.25rem 0.5rem; background: #10b981; color: #fff; border: 0; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+  .tab.newapp button:disabled { opacity: 0.5; cursor: not-allowed; }
+
   .quick { display: flex; gap: 0.4rem; margin: 0.6rem 0; }
   .quick input { flex: 1; padding: 0.4rem 0.6rem; border: 1px solid #d1d5db; border-radius: 4px; font: inherit; }
   .quick select { padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; }

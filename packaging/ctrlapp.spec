@@ -28,6 +28,8 @@ hidden += collect_submodules("pyperclip")
 hidden += collect_submodules("rich")
 hidden += collect_submodules("PIL")
 hidden += collect_submodules("tzdata")  # zoneinfo on Windows needs the tzdata pkg
+hidden += collect_submodules("psutil")  # used by ctrlapp.launchers for process detection
+hidden += collect_submodules("ctrlapp.apps")  # hot-plug per-app registry (tips + launcher specs)
 # NOTE: do NOT collect_submodules("openai") — it transitively drags in
 # torch / transformers / tiktoken (>5GB), blowing past WiX / NSIS limits.
 # We only need the OpenAI HTTP client; the chat.completions surface is enough.

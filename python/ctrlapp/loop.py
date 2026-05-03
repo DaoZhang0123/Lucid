@@ -28,12 +28,15 @@ from .llm_client import (
 )
 from .runlog import ThreadLog
 from .safety import SafetyLayer
-from .screen import ScreenLevel, ScreenSensor
+from .screen import Capture, ScreenLevel, ScreenSensor
 from .tools import ComputerTool, ToolResult
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
 from . import icon_memory as icon_mod
 from . import meta_tools
+from . import launchers as launchers_mod
+from . import regions as regions_mod
+from .context_manager import ContextManager, build_summary_prompt
 
 _console = Console()
 
@@ -49,11 +52,33 @@ Working principles:
    - level="cursor_local": a small high-detail tile around the mouse, used to click small buttons, read small text, or verify selection.
    Whichever you pick, subsequent `coordinate` values must use **that screenshot's coordinate system**. The system auto-appends an L1 screenshot after every action.
 3. Keep action granularity small: do one step at a time, then screenshot to verify.
-4. For text input use action="type" + text="...". The local driver pastes via the clipboard, IME-independent; CJK / English / paths can all be passed directly.
+4. For text input use action="type" + text="...". The local driver pastes via the clipboard, IME-independent; CJK / English / paths can all be passed directly. **Newlines (`\n`) inside `text` are pasted as soft line breaks**, NOT as Enter — so in chat apps like WeChat / Telegram (where Enter sends), a multi-line message stays as ONE message with line breaks. To submit / send, issue a separate `key` action (e.g. `Return`).
 5. **Every intermediate step MUST call the `computer` tool**; do not just emit narration like "I will now..." or "Let me...".
    The only time you may skip the tool call is when the task is confirmed complete or confirmed impossible — in that case, summarise with a message starting with "task complete:" or "task failed:".
 6. Do not try to shut down / reboot the system or operate elevated/privileged windows.
 7. `coordinate` must be image pixel coordinates (top-left origin); do not give percentages or relative coordinates.
+8. **Screenshots age out — write down what you see.** A context manager automatically recompresses old screenshots
+   (heavy JPEG downscale) and may even drop them entirely once the conversation grows. The crisp image you have
+   *right now* will likely be unreadable a few steps later. So whenever a screenshot shows information you might
+   need to refer back to — error dialog text, file/folder lists, form field values you just typed, target
+   coordinates of a small button you spotted, OCR'd labels, the contents of a chat thread, search results,
+   row/column data, etc. — **transcribe the salient parts into your assistant text in this turn**. Treat your own
+   text as the durable working memory; the images are ephemeral. Be concrete: quote exact strings, list items
+   verbatim, write down `(x, y)` coordinates of buttons before you click them. Do not assume "I'll look again
+   later" — later you may not be able to.
+9. **Two-phase click protocol.** Every click action with a `coordinate` (`left_click` / `right_click` /
+   `middle_click` / `double_click` / `triple_click` / `left_click_drag`) goes through preview-then-confirm:
+   - **First call** (no `confirmed` flag, or `confirmed=false`): the click is **NOT** executed. Instead, the
+     system captures a high-detail L3 tile around the target screen coordinate and returns it to you in the
+     next user message. Use this tile to **verify what is actually under the cursor at that pixel right now**
+     (which button / icon / text / cell?). The screen may have shifted since your last full screenshot —
+     this is your last chance to catch a wrong-target click.
+   - **Second call** to actually click: re-issue the **SAME** action with the **SAME** coordinate and add
+     `confirmed=true` to the args. The click then runs normally.
+   - If the preview shows the wrong target, **do NOT confirm**. Pick a different coordinate, take a fresh
+     screenshot, or change strategy. Always prefer keyboard shortcuts over a second click attempt when
+     possible. Skipping the preview entirely (e.g. blindly retrying with `confirmed=true` after a miss) is
+     forbidden.
 
 Operation tips library (dynamically learned):
 - The "## Operation tips" section below is a **dynamic tip library** injected from tools.md, containing reliable ways to drive
@@ -105,6 +130,13 @@ Icon memory (visual knowledge base):
   2) You **clicked a tray / taskbar icon and confirmed it succeeded** (the corresponding App's main window appeared), and that
      icon does **not** yet have an entry in the atlas — register it now so next time you can just look it up instead of probing.
   3) You have **confirmed** a resident icon's meaning via context (surrounding text / hover tooltip / Task Manager / etc.).
+  4) **You just opened / interacted with an App by ANY means (shortcut, Win+R, Start menu, alt-tab) and you can now spot its
+     resident tray / taskbar icon on screen.** This is the most common opportunity and you should not skip it just because you
+     didn't click the icon. Workflow: take an L3 (`cursor_local`) or L2 (`active_window` of the taskbar area) screenshot to
+     locate the icon precisely, read off its `(x, y, w, h)` in **image pixel coordinates of that screenshot**, then call
+     `remember_icon(label, description, x, y, w, h, level)`. Examples: opened WeChat with Ctrl+Alt+W → take L3 over the system
+     tray, find the green chat-bubble, register it. Opened VS Code via Win+R → look at the taskbar, find the blue ribbon icon,
+     register it. Doing this once per App pays for itself many times over.
 - **Do NOT** register: transient popups, one-shot task-related screenshots, ad banners, purely decorative non-App images.
 - **Avoid duplicates**: before registering, check the text index of the 'icon atlas' injected after the system prompt; if the
   same App already has a number, **do not** register it again (even at slightly different resolutions). If you find an existing
@@ -113,8 +145,8 @@ Icon memory (visual knowledge base):
 """
 
 
-def _data_url(png: bytes) -> str:
-    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+def _data_url(png: bytes, mime: str = "image/png") -> str:
+    return f"data:{mime};base64," + base64.b64encode(png).decode("ascii")
 
 
 def _prune_old_images_dispatch(messages: list[dict[str, Any]], keep_n: int,
@@ -339,6 +371,7 @@ class Agent:
         self.event_sink = event_sink
         self.cancel_event = cancel_event
         self.thread_log = thread_log
+        self.context_mgr = ContextManager(cfg.context)
         # md5(png) -> 代表该截图的文件名，用于 context.log 里用文件名替换 base64 图。
         self._image_names: dict[str, str] = {}
         self._current_step: int = 0
@@ -372,6 +405,15 @@ class Agent:
         """返回发送给 LLM 的 image_url 块，并顺带把 png→文件名 记入 mapping。"""
         self._record_img(png, name)
         return {"type": "image_url", "image_url": {"url": _data_url(png)}}
+
+    def _capture_image_part(self, cap: Capture) -> tuple[dict[str, Any], bytes]:
+        """Build an image_url block from a Capture, picking JPEG for L1/L2 and PNG for L3.
+        Returns (block, sent_bytes) so the caller can record the md5 against the
+        actual bytes that go on the wire (compress_old_images decodes them later)."""
+        sc = self.cfg.screenshot
+        prefer_jpeg = bool(sc.send_jpeg_for_l1_l2) and cap.level in (ScreenLevel.L1, ScreenLevel.L2)
+        sent_bytes, mime = cap.encoded_for_send(prefer_jpeg, sc.send_jpeg_quality)
+        return {"type": "image_url", "image_url": {"url": _data_url(sent_bytes, mime)}}, sent_bytes
 
     def _sanitize_for_log(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """复制一份 messages，把所有 image_url 的 base64 数据替换成 [image: <文件名>]。"""
@@ -482,6 +524,112 @@ class Agent:
         if self.cancel_event is not None and self.cancel_event.is_set():
             raise CancelledError("cancelled by user")
 
+    def _summarize_segment(self, text_segment: list[dict[str, Any]], max_tokens: int) -> str:
+        """Callback used by ContextManager. Sends a cheap text-only chat to the
+        active LLM client to condense the given message segment into a recap.
+        Returns the summary text (empty string on failure)."""
+        prompt_msgs = build_summary_prompt(text_segment)
+        try:
+            resp = self.client.chat(
+                messages=prompt_msgs,
+                tools=[],
+                max_tokens=int(max_tokens) if max_tokens else 1500,
+            )
+            return (resp.text or "").strip()
+        except Exception:
+            # Caller (ContextManager) logs and skips on failure.
+            raise
+
+    # ---- 点击前预检（pre-click target verification） ----
+
+    _CLICK_ACTIONS_FOR_VERIFY = {
+        "left_click", "right_click", "middle_click",
+        "double_click", "triple_click", "left_click_drag",
+    }
+
+    def _maybe_pre_click_verify(self, action: str, args: dict[str, Any], log: ThreadLog) -> "ToolResult | None":
+        """Two-phase click protocol.
+
+        On the FIRST call (no ``confirmed=true`` in args), do NOT click; instead
+        capture a high-detail L3 tile around the target screen coordinate and
+        return it to the model. The model then inspects the tile and either
+        (a) re-issues the same click with ``confirmed=true`` to actually
+        perform it, or (b) chooses a different action. This makes the model
+        the final arbiter on every click — no automatic similarity heuristic.
+
+        Returns:
+          - None  → not a click / no coordinate / verification disabled / model
+                    explicitly passed ``confirmed=true`` → caller proceeds with
+                    the normal click dispatch.
+          - ToolResult(image_png=..., output=...) → preview tile; caller uses
+                    this as the click's tool result. The click is NOT executed.
+        """
+        if not self.cfg.safety.verify_click_target_before:
+            return None
+        if action not in self._CLICK_ACTIONS_FOR_VERIFY:
+            return None
+        coord = args.get("coordinate")
+        if not (isinstance(coord, (list, tuple)) and len(coord) == 2):
+            return None
+        # Model has explicitly confirmed after seeing the preview → let it click.
+        if bool(args.get("confirmed", False)):
+            # Strip the flag so it's not forwarded to the actual driver call.
+            args.pop("confirmed", None)
+            return None
+        ref_cap = self.tool.last_capture
+        if ref_cap is None:
+            return None
+        try:
+            cx_img, cy_img = int(coord[0]), int(coord[1])
+        except (TypeError, ValueError):
+            return None
+
+        sx, sy = ref_cap.model_to_screen(cx_img, cy_img)
+        radius_screen = max(8, int(self.cfg.safety.verify_click_target_radius_px))
+
+        try:
+            live = self.sensor.capture_around(sx, sy, radius_screen)
+        except Exception as e:
+            log.warning(f"pre-click preview: live capture failed: {e}; allowing click through")
+            return None
+
+        live_png = live.png_bytes()
+        live_name = log.save_image(
+            live_png, f"step-{self._current_step:03d}-preclick-preview", level="INFO"
+        )
+        if live_name:
+            self._record_img(live_png, live_name)
+        # Cache as the most-recent L3 so remember_icon can reuse it.
+        self._last_png_by_level["L3"] = live_png
+
+        log.info(
+            f"pre-click preview: {action} @ img({cx_img},{cy_img})→screen({sx},{sy}) "
+            f"radius={radius_screen}px; awaiting model confirmation"
+        )
+        self._emit(
+            "preclick_preview",
+            step=self._current_step,
+            action=action,
+            coord=[cx_img, cy_img],
+            screen=[sx, sy],
+            radius=radius_screen,
+        )
+        v_ox, v_oy = live.offset
+        v_rw, v_rh = live.raw_size
+        v_sw, v_sh = live.sent_size
+        return ToolResult(
+            image_png=live_png,
+            output=(
+                f"[pre-click preview, NOT clicked yet] {action} would land at "
+                f"image-coord ({cx_img},{cy_img}) → screen ({sx},{sy}). "
+                f"Attached: a {v_sw}x{v_sh} L3 tile (raw {v_rw}x{v_rh}) centred on the target, "
+                f"screen-rect (left={v_ox}, top={v_oy}, right={v_ox + v_rw}, bottom={v_oy + v_rh}). "
+                f"Inspect this tile carefully. If the target really is what you intended to click, "
+                f"re-issue the SAME action with the SAME coordinate AND add `confirmed=true` to actually click. "
+                f"If the target is wrong, choose a different action instead — do NOT confirm."
+            ),
+        )
+
     def run(self, instruction: str) -> str:
         log = self.thread_log or ThreadLog.create(self.cfg.logging, instruction)
         log.info(
@@ -570,7 +718,16 @@ class Agent:
                        phase="init")
 
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT + memory_mod.memory_for_prompt(self.cfg.memory) + tooltips_mod.tools_for_prompt(self.cfg.tools)},
+            {"role": "system", "content": (
+                SYSTEM_PROMPT
+                + memory_mod.memory_for_prompt(self.cfg.memory)
+                + tooltips_mod.tools_for_prompt(self.cfg.tools)
+                + (launchers_mod.catalog_for_prompt(self.cfg.launchers)
+                   if getattr(self.cfg, "launchers", None) and self.cfg.launchers.enabled
+                      and self.cfg.launchers.inject_catalog_in_system_prompt else "")
+                + (regions_mod.regions_for_prompt(self.cfg.regions)
+                   if getattr(self.cfg, "regions", None) and self.cfg.regions.enabled else "")
+            )},
         ]
         # 图标合集图（如果有的话）以一对 user/assistant 伪对话的形式注入到 system 之后、
         # 真正的 instruction 之前。这样跨各家模型都能稳定接住图。
@@ -609,6 +766,8 @@ class Agent:
             })
             messages.append({"role": "assistant", "content": "Understood, I'll proactively call remember_icon when I encounter an icon worth registering."})
         # 真正的 instruction + 起手 L1 截图
+        first_block, first_sent = self._capture_image_part(first)
+        self._record_img(first_sent, init_name)
         messages.append({
             "role": "user",
             "content": [
@@ -623,7 +782,7 @@ class Agent:
                         f" `computer` 工具的 coordinate 用 {screen_w}x{screen_h} 这个发送坐标系。"
                     ),
                 },
-                {"type": "image_url", "image_url": {"url": _data_url(first.png_bytes())}},
+                first_block,
             ],
         })
         # 缓存"最近一张 L1"，供 remember_icon 工具裁剪用
@@ -664,19 +823,41 @@ class Agent:
             self._rule(f"[cyan]Step {step + 1}/{self.cfg.llm.max_steps}")
             log.info(f"--- step {step + 1}/{self.cfg.llm.max_steps} ---")
             self._emit("step_start", step=step + 1, max_steps=self.cfg.llm.max_steps)
-            dropped = _prune_old_images_dispatch(
+            recompressed, dropped = self.context_mgr.compress_old_images(
                 messages,
-                self.cfg.llm.keep_recent_screenshots,
-                name_lookup=lambda png: self._image_names.get(hashlib.md5(png).hexdigest()),
-                run_dir=(log.run_dir if log else None),
                 keep_per_level={
                     "L1": self.cfg.screenshot.keep_recent_l1,
                     "L2": self.cfg.screenshot.keep_recent_l2,
                     "L3": self.cfg.screenshot.keep_recent_l3,
                 },
+                keep_recent_global=self.cfg.llm.keep_recent_screenshots,
+                image_names=self._image_names,
+                run_dir=(log.run_dir if log else None),
             )
-            if dropped:
-                log.debug(f"pruned {dropped} old screenshot(s) from prompt")
+            if recompressed or dropped:
+                log.debug(
+                    f"context manager: recompressed {recompressed} image(s), "
+                    f"dropped {dropped} to placeholder"
+                )
+            # Adaptive history summarisation: if we're heading over the model's
+            # context window, condense the oldest non-prelude messages with a
+            # cheap LLM call.
+            try:
+                summarised = self.context_mgr.maybe_summarize(
+                    messages,
+                    prelude_len=self._current_prelude_len,
+                    summarizer=self._summarize_segment,
+                    log_fn=log.info,
+                )
+                if summarised:
+                    self._current_messages = messages
+                    self._emit(
+                        "context_summarised",
+                        step=step + 1,
+                        message_count=len(messages),
+                    )
+            except Exception as e:
+                log.warning(f"context summariser skipped: {type(e).__name__}: {e}")
             try:
                 resp = self._chat_with_retry(messages, tools_for_llm, log)
             except APIError as e:
@@ -743,6 +924,7 @@ class Agent:
             # 派发每个 tool_call
             had_screenshot = False
             step_tool_records: list[dict[str, Any]] = []
+            step_preview_pngs: list[bytes] = []
             for tc in tool_calls:
                 fn_name = tc.name
                 try:
@@ -766,7 +948,14 @@ class Agent:
                     tr = ToolResult(error="user declined this action")
                     log.warning(f"user declined {action} {args}")
                 else:
-                    tr = self.tool.dispatch(action, args)
+                    tr = self._maybe_pre_click_verify(action, args, log)
+                    if tr is not None and tr.image_png:
+                        # Two-phase click: this iteration is a preview, not an
+                        # actual click. Stash the tile so the post-step user
+                        # message includes it for the model to inspect.
+                        step_preview_pngs.append(tr.image_png)
+                    if tr is None:
+                        tr = self.tool.dispatch(action, args)
 
                 if action == "screenshot":
                     had_screenshot = True
@@ -899,8 +1088,10 @@ class Agent:
                     f"在屏幕坐标系中位于 (left={p_ox}, top={p_oy}, right={p_ox + p_rw}, bottom={p_oy + p_rh})；"
                     f"图片内 (px,py) → 屏幕坐标 ({p_ox}+px*{p_rw / p_sw:.3f}, {p_oy}+py*{p_rh / p_sh:.3f})。"
                 )},
-                {"type": "image_url", "image_url": {"url": _data_url(post_png)}},
             ]
+            post_block, post_sent = self._capture_image_part(post)
+            self._record_img(post_sent, saved_name)
+            content.append(post_block)
             if verify_png and verify_capture is not None:
                 v_ox, v_oy = verify_capture.offset
                 v_rw, v_rh = verify_capture.raw_size
@@ -914,10 +1105,21 @@ class Agent:
                         "**下一步 coordinate 仍以上方主图为准**（这张 L3 仅供视觉验证）。"
                     ),
                 })
-                content.append({"type": "image_url", "image_url": {"url": _data_url(verify_png)}})
+                v_block, _v_sent = self._capture_image_part(verify_capture)
+                content.append(v_block)
             if saved_dialog_hint:
                 content.append({"type": "text", "text": saved_dialog_hint})
                 log.warning("save_dialog sidebar guard triggered; hint injected")
+            for idx, prev_png in enumerate(step_preview_pngs, start=1):
+                content.append({
+                    "type": "text",
+                    "text": (
+                        f"[level=L3] Pre-click preview #{idx}: tile around the click target you just proposed. "
+                        "The click was NOT executed. Inspect this image carefully — if it really shows what you intended to click, "
+                        "re-issue the SAME click action with the SAME coordinate AND `confirmed=true`. Otherwise, change your plan."
+                    ),
+                })
+                content.append({"type": "image_url", "image_url": {"url": _data_url(prev_png)}})
 
             messages.append({"role": "user", "content": content})
 

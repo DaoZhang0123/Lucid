@@ -67,6 +67,8 @@ from . import tooltips as tooltips_mod
 from . import icon_memory as icon_mod
 from . import templates as templates_mod
 from . import scheduler as scheduler_mod
+from . import launchers as launchers_mod
+from . import regions as regions_mod
 
 # rich 默认会写 stdout，会污染协议——sidecar 模式必须把 console 重定向到 stderr。
 _err_console = Console(file=sys.stderr)
@@ -334,6 +336,128 @@ class Sidecar:
     def _rpc_tools_reset(self, _params: dict[str, Any]) -> dict[str, Any]:
         tooltips_mod.reset_to_seed(self.cfg.tools)
         return {"ok": True}
+
+    # ---- per-app tips/<app>.md ----
+
+    def _rpc_app_tips_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "enabled": self.cfg.tools.enabled,
+            "dir": str(tooltips_mod.apps_dir(self.cfg.tools)),
+            "items": tooltips_mod.list_app_tips(self.cfg.tools),
+        }
+
+    def _rpc_app_tips_read(self, params: dict[str, Any]) -> dict[str, Any]:
+        app = (params.get("app") or "").strip()
+        if not app:
+            raise ValueError("app required")
+        return {
+            "app": app,
+            "path": str(tooltips_mod.app_tips_path(self.cfg.tools, app)),
+            "text": tooltips_mod.read_app_tips(self.cfg.tools, app),
+        }
+
+    def _rpc_app_tips_write(self, params: dict[str, Any]) -> dict[str, Any]:
+        app = (params.get("app") or "").strip()
+        text = params.get("text")
+        if not app or text is None:
+            raise ValueError("app and text required")
+        ok = tooltips_mod.write_app_tips_raw(self.cfg.tools, app, text)
+        return {"ok": ok}
+
+    def _rpc_app_tips_append(self, params: dict[str, Any]) -> dict[str, Any]:
+        app = (params.get("app") or "").strip() or None
+        text = (params.get("text") or "").strip()
+        kind = params.get("kind") or "tip"
+        source = params.get("source") or "user"
+        ok = tooltips_mod.append_tip(self.cfg.tools, text, kind=kind, source=source, app=app)
+        return {"ok": ok}
+
+    def _rpc_app_tips_reset(self, params: dict[str, Any]) -> dict[str, Any]:
+        app = (params.get("app") or "").strip()
+        if not app:
+            raise ValueError("app required")
+        ok = tooltips_mod.reset_app_to_seed(self.cfg.tools, app)
+        return {"ok": ok}
+
+    # ---- launchers (`launch_app` meta tool) ----
+
+    def _rpc_launchers_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "enabled": self.cfg.launchers.enabled,
+            "path": str(launchers_mod.launchers_path(self.cfg.launchers)),
+            "items": launchers_mod.list_launchers(self.cfg.launchers),
+        }
+
+    def _rpc_launchers_get(self, params: dict[str, Any]) -> dict[str, Any]:
+        name = (params.get("name") or "").strip()
+        if not name:
+            raise ValueError("name required")
+        return {"item": launchers_mod.get_launcher(self.cfg.launchers, name)}
+
+    def _rpc_launchers_set(self, params: dict[str, Any]) -> dict[str, Any]:
+        slug = (params.get("slug") or params.get("name") or "").strip()
+        spec = params.get("spec") or {}
+        if not slug or not isinstance(spec, dict):
+            raise ValueError("slug and spec dict required")
+        item = launchers_mod.upsert_launcher(self.cfg.launchers, slug, spec)
+        return {"item": item}
+
+    def _rpc_launchers_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        slug = (params.get("slug") or params.get("name") or "").strip()
+        ok = launchers_mod.delete_launcher_override(self.cfg.launchers, slug)
+        return {"ok": ok}
+
+    def _rpc_launchers_test(self, params: dict[str, Any]) -> dict[str, Any]:
+        name = (params.get("name") or "").strip()
+        if not name:
+            raise ValueError("name required")
+        return launchers_mod.launch_app(self.cfg.launchers, name)
+
+    def _rpc_launchers_check(self, params: dict[str, Any]) -> dict[str, Any]:
+        name = (params.get("name") or "").strip()
+        if not name:
+            raise ValueError("name required")
+        return launchers_mod.check_app_running(self.cfg.launchers, name)
+
+    # ---- regions (per-app coordinate library) ----
+
+    def _rpc_regions_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "enabled": self.cfg.regions.enabled,
+            "dir": str(regions_mod.regions_dir(self.cfg.regions)),
+            "items": regions_mod.list_apps_with_regions(self.cfg.regions),
+        }
+
+    def _rpc_regions_get(self, params: dict[str, Any]) -> dict[str, Any]:
+        app = (params.get("app") or "").strip()
+        if not app:
+            raise ValueError("app required")
+        data = regions_mod.load_app_regions(self.cfg.regions, app)
+        return {"app": app, "data": data, "path": str(regions_mod.regions_path(self.cfg.regions, app))}
+
+    def _rpc_regions_set(self, params: dict[str, Any]) -> dict[str, Any]:
+        app = (params.get("app") or "").strip()
+        data = params.get("data")
+        if not app or not isinstance(data, dict):
+            raise ValueError("app and data dict required")
+        regions_mod.save_app_regions(self.cfg.regions, app, data)
+        return {"ok": True}
+
+    def _rpc_regions_calibrate(self, params: dict[str, Any]) -> dict[str, Any]:
+        app = (params.get("app") or "").strip()
+        if not app:
+            raise ValueError("app required")
+        return regions_mod.calibrate(self.cfg.regions, self.cfg.launchers, app)
+
+    def _rpc_regions_resolve(self, params: dict[str, Any]) -> dict[str, Any]:
+        app = (params.get("app") or "").strip()
+        name = (params.get("name") or "").strip()
+        if not app or not name:
+            raise ValueError("app and name required")
+        result = regions_mod.region(self.cfg.regions, self.cfg.launchers, app, name)
+        if isinstance(result, dict):
+            return result
+        return result.to_dict()
 
     # ---- icons/ （图标记忆库）----
 

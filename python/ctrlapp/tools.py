@@ -133,6 +133,19 @@ class ComputerTool:
                         },
                         "scroll_amount": {"type": "integer", "description": "Number of scroll ticks."},
                         "duration": {"type": "number", "description": "Seconds, for wait/hold_key."},
+                        "confirmed": {
+                            "type": "boolean",
+                            "description": (
+                                "Only meaningful for click actions "
+                                "(left_click / right_click / middle_click / double_click / triple_click / left_click_drag) "
+                                "when a `coordinate` is supplied. Default false. "
+                                "When false (or omitted), the click is NOT performed; instead, the system captures a high-detail L3 "
+                                "(`cursor_local`) tile around the target screen coordinate and returns it as the tool result, so you can "
+                                "verify what is actually under the cursor at that pixel right now. After inspecting the tile, if you still "
+                                "want to click, re-issue the SAME action with the SAME coordinate and `confirmed=true` to actually perform the click. "
+                                "If the area is wrong, change your plan instead."
+                            ),
+                        },
                     },
                     "required": ["action"],
                     "additionalProperties": False,

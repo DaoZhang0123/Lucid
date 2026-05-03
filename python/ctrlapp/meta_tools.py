@@ -22,6 +22,8 @@ from .tools import ToolResult
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
 from . import icon_memory as icon_mod
+from . import launchers as launchers_mod
+from . import regions as regions_mod
 
 
 REMEMBER_SCHEMA: dict = {
@@ -69,6 +71,7 @@ LEARN_TIP_SCHEMA: dict = {
             "properties": {
                 "text": {"type": "string", "description": "The tip to record. e.g. 'Outlook: Ctrl+R to reply is more reliable than clicking the Reply button'."},
                 "kind": {"type": "string", "enum": ["success", "failure", "tip"], "description": "Success story / failure lesson / general tip. Defaults to success."},
+                "app": {"type": "string", "description": "Optional. App slug (e.g. 'wechat', 'vscode') — routes the tip to that app's tips/<slug>.md so it's only loaded when working with that App. Omit / empty for cross-App general tips (go to global tools.md)."},
             },
             "required": ["text"],
         },
@@ -107,6 +110,159 @@ REMEMBER_ICON_SCHEMA: dict = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Per-app tip loading
+# ---------------------------------------------------------------------------
+
+LOAD_APP_TIPS_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "load_app_tips",
+        "description": (
+            "Pull a specific App's tips/<app>.md into the current conversation. App-specific tips are NOT loaded by "
+            "default (to save context); call this once per task when you start working with that App, then the result "
+            "(the file's content) becomes part of your tool history and you can re-read it any time. "
+            "Available app slugs are listed in the system prompt under 'App-specific tips'. "
+            "Calling this tool is cheap (<1KB) and idempotent."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "app": {"type": "string", "description": "App slug, e.g. 'wechat', 'vscode', 'browser', 'save-dialog'."},
+            },
+            "required": ["app"],
+        },
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Native app launching (`launch_app` meta tool)
+# ---------------------------------------------------------------------------
+
+LAUNCH_APP_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "launch_app",
+        "description": (
+            "Launch or focus an app via Windows native APIs (process detection + window enumeration + shortcut / URI / exe). "
+            "**Always prefer this over visually clicking a desktop shortcut or taskbar icon** — it's faster, doesn't risk "
+            "double-launching (it focuses the existing window if already running), and works even if the icon is off-screen. "
+            "On success the App's tips file (if any) is auto-loaded so you immediately have its keyboard / quirks knowledge.\n"
+            "If `launch_app` returns ok=false ('no launcher named ...'), call `list_apps()` to see what slugs exist; if your "
+            "target App is genuinely missing, fall back to win+r + exe alias and consider `learn_tip(app=...)` to record what worked."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Launcher slug (e.g. 'wechat', 'vscode', 'chrome', 'explorer', 'settings')."},
+            },
+            "required": ["name"],
+        },
+    },
+}
+
+LIST_APPS_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "list_apps",
+        "description": (
+            "List all registered launcher slugs (with their display names and which launch methods are available: "
+            "shortcut / uri / exe / window-detection). Use this when `launch_app` returns 'no launcher named ...' to find the right slug."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+CHECK_APP_RUNNING_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "check_app_running",
+        "description": (
+            "Inspect whether an App is currently running (process and / or visible window) without launching anything. "
+            "Returns running / has_window / pid / hwnd / window_title. Useful before deciding whether to launch."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Launcher slug (same as `launch_app`)."},
+            },
+            "required": ["name"],
+        },
+    },
+}
+
+FOCUS_WINDOW_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "focus_window",
+        "description": (
+            "Bring the first visible top-level window whose title contains the given substring to the foreground. "
+            "Use for ad-hoc switching when no launcher entry exists for the App but you know part of its window title."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title_substring": {"type": "string", "description": "Substring (case-sensitive) to match against window titles."},
+            },
+            "required": ["title_substring"],
+        },
+    },
+}
+
+UPDATE_LAUNCHER_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "update_launcher",
+        "description": (
+            "Persistently update fields of a launcher entry — e.g. when you discovered the global shortcut changed, the exe alias was wrong, or the window title needs a different regex. "
+            "The override is written to `<user data>/launchers.json` and takes precedence over the built-in defaults from this version, and survives across tasks / restarts.\n"
+            "**When to call**: after a `launch_app` / `check_app_running` failure that you traced to a wrong field (e.g. `shortcut` no longer triggers WeChat — try the new combo, then call `update_launcher(name='wechat', shortcut='ctrl+shift+w')`). Don't call for one-off failures (network glitch, app currently broken). After updating, call `launch_app` again to verify, and consider also `learn_tip(app=..., text='shortcut changed from X to Y on YYYY-MM')`."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name":            {"type": "string", "description": "Launcher slug to update (must already exist; call `list_apps()` to see slugs). To create a brand-new launcher use the UI."},
+                "shortcut":        {"type": "string", "description": "Optional new global hotkey, e.g. 'ctrl+alt+w'. Pass empty string to clear."},
+                "uri":             {"type": "string", "description": "Optional new shell URI, e.g. 'weixin://'. Pass empty string to clear."},
+                "exe":             {"type": "string", "description": "Optional new exe alias / absolute path."},
+                "process":         {"type": "string", "description": "Optional new process name (Windows tasklist style, e.g. 'WeChat.exe')."},
+                "window_title":    {"type": "string", "description": "Optional new window-title substring."},
+                "window_title_re": {"type": "string", "description": "Optional new window-title regex (overrides window_title)."},
+            },
+            "required": ["name"],
+        },
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Region calibration / lookup
+# ---------------------------------------------------------------------------
+
+REGION_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "region",
+        "description": (
+            "Resolve a named UI region of an App's window into **screen pixel coordinates** (returns center {x,y} + bounding "
+            "rect {x,y,w,h}). Each region is a stable area like 'editor' / 'activity_bar' / 'chat_view' / 'input_box'. "
+            "Use the returned center as the click target instead of guessing pixel coordinates from a screenshot. "
+            "The App's window is brought to the foreground first (so coordinates reflect what's currently visible). "
+            "Available (app, region) pairs are listed in the system prompt under 'Available region(...) lookups'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "app": {"type": "string", "description": "App slug (same as `launch_app`)."},
+                "name": {"type": "string", "description": "Region name within that App."},
+            },
+            "required": ["app", "name"],
+        },
+    },
+}
+
+
 def build_meta_tool_schemas(cfg: Config) -> list[dict]:
     """按 cfg 开关返回当次请求要附带的 meta tool schemas 列表。"""
     out: list[dict] = []
@@ -114,8 +270,17 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
         out.append(REMEMBER_SCHEMA)
     if cfg.tools.enabled:
         out.append(LEARN_TIP_SCHEMA)
+        out.append(LOAD_APP_TIPS_SCHEMA)
     if cfg.icons.enabled:
         out.append(REMEMBER_ICON_SCHEMA)
+    if getattr(cfg, "launchers", None) and cfg.launchers.enabled:
+        out.append(LAUNCH_APP_SCHEMA)
+        out.append(LIST_APPS_SCHEMA)
+        out.append(CHECK_APP_RUNNING_SCHEMA)
+        out.append(FOCUS_WINDOW_SCHEMA)
+        out.append(UPDATE_LAUNCHER_SCHEMA)
+    if getattr(cfg, "regions", None) and cfg.regions.enabled:
+        out.append(REGION_SCHEMA)
     return out
 
 
@@ -141,11 +306,115 @@ def dispatch_meta_tool(
     if fn_name == "learn_tip" and cfg.tools.enabled:
         text = (args.get("text") or "").strip()
         kind = (args.get("kind") or "success").strip().lower() or "success"
-        ok = tooltips_mod.append_tip(cfg.tools, text, kind=kind, source="agent")
+        app = (args.get("app") or "").strip() or None
+        ok = tooltips_mod.append_tip(cfg.tools, text, kind=kind, source="agent", app=app)
+        scope = f"app={app}" if app else "global"
         return ToolResult(
-            output=f"tip saved ({kind}): {text[:80]}" if ok else "",
+            output=f"tip saved ({kind}, {scope}): {text[:80]}" if ok else "",
             error=None if ok else "tools disabled or empty",
         )
+
+    if fn_name == "load_app_tips" and cfg.tools.enabled:  
+        app = (args.get("app") or "").strip()
+        if not app:
+            return ToolResult(error="app required")
+        body = tooltips_mod.app_tips_for_prompt(cfg.tools, app)
+        if not body:
+            return ToolResult(error=f"no tips found for app {app!r}; check spelling against list_app_tips()")
+        return ToolResult(output=body)
+
+    if fn_name == "launch_app" and getattr(cfg, "launchers", None) and cfg.launchers.enabled:
+        name = (args.get("name") or "").strip()
+        if not name:
+            return ToolResult(error="name required")
+        result = launchers_mod.launch_app(cfg.launchers, name)
+        # On success, also append the app's tips body so the model gets it for free.
+        out_lines = [f"launch_app: {result.get('message', '')}"]
+        for k in ("ok", "method", "slug", "hwnd", "pid", "window_title"):
+            if k in result and result[k] is not None:
+                out_lines.append(f"  {k}: {result[k]}")
+        if result.get("ok") and cfg.tools.enabled:
+            slug = result.get("slug") or name
+            tips_body = tooltips_mod.app_tips_for_prompt(cfg.tools, slug)
+            if tips_body:
+                out_lines.append("")
+                out_lines.append(tips_body)
+        return ToolResult(output="\n".join(out_lines), error=None if result.get("ok") else result.get("message"))
+
+    if fn_name == "list_apps" and getattr(cfg, "launchers", None) and cfg.launchers.enabled:
+        items = launchers_mod.list_launchers(cfg.launchers)
+        lines = ["Available launcher slugs:"]
+        for it in items:
+            methods = []
+            if it.get("shortcut"):
+                methods.append(f"shortcut={it['shortcut']}")
+            if it.get("uri"):
+                methods.append(f"uri={it['uri']}")
+            if it.get("exe"):
+                methods.append(f"exe={it['exe']}")
+            if it.get("process"):
+                methods.append(f"process={it['process']}")
+            lines.append(f"- {it['slug']} ({it.get('name', it['slug'])}): {', '.join(methods) or '(no method)'}")
+        return ToolResult(output="\n".join(lines))
+
+    if fn_name == "check_app_running" and getattr(cfg, "launchers", None) and cfg.launchers.enabled:
+        name = (args.get("name") or "").strip()
+        if not name:
+            return ToolResult(error="name required")
+        info = launchers_mod.check_app_running(cfg.launchers, name)
+        lines = [f"check_app_running({name!r}):"]
+        for k, v in info.items():
+            lines.append(f"  {k}: {v}")
+        return ToolResult(output="\n".join(lines))
+
+    if fn_name == "focus_window" and getattr(cfg, "launchers", None) and cfg.launchers.enabled:
+        title = (args.get("title_substring") or "").strip()
+        if not title:
+            return ToolResult(error="title_substring required")
+        info = launchers_mod.focus_window(title)
+        return ToolResult(
+            output=info.get("message", ""),
+            error=None if info.get("ok") else info.get("message"),
+        )
+
+    if fn_name == "update_launcher" and getattr(cfg, "launchers", None) and cfg.launchers.enabled:
+        name = (args.get("name") or "").strip()
+        if not name:
+            return ToolResult(error="name required")
+        # Verify the launcher exists (default or already an override).
+        if launchers_mod.get_launcher(cfg.launchers, name) is None:
+            return ToolResult(error=f"no launcher named {name!r}; call list_apps() to see available slugs")
+        # Pull only the writable fields the schema permits.
+        spec: dict[str, Any] = {}
+        for key in ("shortcut", "uri", "exe", "process", "window_title", "window_title_re"):
+            if key in args:
+                v = args.get(key)
+                if isinstance(v, str):
+                    spec[key] = v.strip()
+                elif v is not None:
+                    spec[key] = v
+        if not spec:
+            return ToolResult(error="no fields to update; pass at least one of shortcut/uri/exe/process/window_title/window_title_re")
+        item = launchers_mod.upsert_launcher(cfg.launchers, name, spec)
+        changed = ", ".join(f"{k}={v!r}" for k, v in spec.items())
+        return ToolResult(output=f"launcher {name!r} updated: {changed}\nnow active: {item}")
+
+    if fn_name == "region" and getattr(cfg, "regions", None) and cfg.regions.enabled:
+        app = (args.get("app") or "").strip()
+        name = (args.get("name") or "").strip()
+        if not app or not name:
+            return ToolResult(error="app and name required")
+        result = regions_mod.region(cfg.regions, cfg.launchers, app, name)
+        if isinstance(result, dict):  # error
+            return ToolResult(error=result.get("message", "region lookup failed"))
+        d = result.to_dict()
+        lines = [
+            f"region {app}/{name}:",
+            f"  description: {d['description']}",
+            f"  center: ({d['center']['x']}, {d['center']['y']})",
+            f"  rect: x={d['screen']['x']} y={d['screen']['y']} w={d['screen']['w']} h={d['screen']['h']}",
+        ]
+        return ToolResult(output="\n".join(lines))
 
     if fn_name == "remember_icon" and cfg.icons.enabled:
         label = (args.get("label") or "").strip()
