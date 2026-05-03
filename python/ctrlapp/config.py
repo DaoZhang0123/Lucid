@@ -82,6 +82,35 @@ class ScreenshotConfig:
     keep_recent_l2: int = 1
     keep_recent_l3: int = 2
     skip_if_similarity_above: float = 0.985
+    # ---- R2: launch_app diff → L2 (Docs/screenshot.md §13.3) ----
+    # When launch_app actually starts a new instance (method != activate-existing),
+    # snapshot L1 before/after and use the diff bbox to crop a tight L2 of the
+    # newly-appeared window. Falls back to window_client_rect(hwnd) on failure.
+    launch_diff_enabled: bool = True
+    # Diff bbox area must cover at least this fraction of L1 to be trusted.
+    launch_diff_min_area_ratio: float = 0.05
+    # Max wait (ms) for the launched window to become visible+non-iconic.
+    launch_wait_max_ms: int = 1500
+    # Poll interval while waiting for the window.
+    launch_wait_poll_ms: int = 80
+    # ---- R3: click pre/post pixel-diff verify (Docs/screenshot.md §13.4) ----
+    click_verify_enabled: bool = True
+    # Below this fraction of pixels changed near the cursor → "didn't click".
+    click_no_change_threshold: float = 0.005
+    # How long to wait after the click before sampling post (UI reaction time).
+    click_verify_post_sleep_ms: int = 150
+    # Radius (in screen px) of the L3 tile sampled before/after the click.
+    click_verify_radius_px: int = 100
+    # ---- Initial L1: feed it to the LLM as the very first user-message image? ----
+    # When False, the run still captures the L1 (used internally as
+    # ``last_capture`` for coordinate reverse-mapping and as the pre-image for
+    # R2 launch_app diff), and still saves ``step-000-init.png`` to disk, but
+    # the LLM only receives the textual task instruction without an attached
+    # screenshot. Useful when the user's task explicitly starts with
+    # `launch_app(...)` etc., where the desktop snapshot is irrelevant noise
+    # that wastes tokens. The model can always request one via
+    # `screenshot(level='fullscreen')` when it needs orientation.
+    feed_initial_l1_to_llm: bool = False
 
 
 @dataclass
@@ -99,7 +128,9 @@ class SafetyConfig:
     # 点击前预检：在执行 click 之前到目标 (x,y) 抓一张 L3 小图，与模型决策所
     # 依据的“最近一次截图”同一区域做 dHash 对比；低于相似度阈值即取消本次
     # click，把实时小图回送给模型让它重新看再决定。
-    verify_click_target_before: bool = True
+    # **2026-05 修订**：R3（点击后 pixel-diff 校验，见 §13.4）落地后默认关闭这条
+    # 强制 preview，改为事后判定；保守用户可手动 = true 回到强制 preview。
+    verify_click_target_before: bool = False
     verify_click_target_radius_px: int = 60
 
 

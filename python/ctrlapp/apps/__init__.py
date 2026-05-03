@@ -27,6 +27,10 @@ class AppDef:
     title: str
     tips: str
     launcher: dict[str, Any] | None
+    # Other app slugs whose tips should be auto-appended whenever this app's
+    # tips are loaded (e.g. ``edge`` → ``["browser"]`` so cross-browser
+    # shortcuts always come along when launch_app("edge") is called).
+    includes: tuple[str, ...] = ()
 
 
 _CACHE: dict[str, AppDef] | None = None
@@ -54,7 +58,11 @@ def discover_apps() -> dict[str, AppDef]:
         launcher = getattr(mod, "LAUNCHER", None)
         if launcher is not None and not isinstance(launcher, dict):
             launcher = None
-        out[slug] = AppDef(slug=slug, title=title, tips=tips, launcher=launcher)
+        raw_inc = getattr(mod, "INCLUDES", ()) or ()
+        if isinstance(raw_inc, str):
+            raw_inc = (raw_inc,)
+        includes = tuple(s for s in raw_inc if isinstance(s, str) and s)
+        out[slug] = AppDef(slug=slug, title=title, tips=tips, launcher=launcher, includes=includes)
     _CACHE = out
     return out
 

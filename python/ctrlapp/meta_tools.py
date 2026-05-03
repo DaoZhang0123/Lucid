@@ -284,16 +284,103 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
     return out
 
 
+def _resolve_launch_region(
+    sensor: Any,
+    cfg: Config,
+    hwnd: int,
+    method: str,
+    pre_cap: Any | None,
+) -> tuple[int, int, int, int] | None:
+    """Decide the screen rect to capture as L2 after launch_app (Docs/screenshot.md §13.3).
+
+    Strategy:
+    - If method == 'focus_existing_window': skip diff, just use window_client_rect(hwnd).
+    - Otherwise (shortcut / uri / exe): wait briefly for the window to become
+      visible+non-iconic, then try the diff bbox between pre_cap and a fresh L1;
+      if diff misses or doesn't overlap the hwnd's client rect, fall back to
+      window_client_rect.
+    """
+    import time as _time
+    from .screen import ScreenSensor, ScreenLevel
+
+    wait_ms = int(getattr(cfg.screenshot, "launch_wait_max_ms", 1500))
+    poll_ms = int(getattr(cfg.screenshot, "launch_wait_poll_ms", 80))
+    min_area = float(getattr(cfg.screenshot, "launch_diff_min_area_ratio", 0.05))
+    activate_only = method == "focus_existing_window"
+
+    # Wait for the window to materialise (best-effort; only on real launches).
+    if hwnd and not activate_only:
+        deadline = _time.monotonic() + wait_ms / 1000.0
+        while _time.monotonic() < deadline:
+            r = launchers_mod.window_client_rect(hwnd)
+            if r is not None:
+                break
+            _time.sleep(poll_ms / 1000.0)
+
+    client_rect = launchers_mod.window_client_rect(hwnd) if hwnd else None
+
+    if activate_only:
+        return client_rect
+
+    # Real launch path → try diff first.
+    if pre_cap is not None:
+        try:
+            post_cap = sensor.capture(ScreenLevel.L1)
+            bbox = ScreenSensor.diff_bbox(
+                pre_cap.image, post_cap.image, min_area_ratio=min_area
+            )
+        except Exception:
+            bbox = None
+        if bbox is not None:
+            # bbox is in image (sent) coords; convert to screen coords.
+            bx, by, bw, bh = bbox
+            rw, rh = post_cap.raw_size
+            sw, sh = post_cap.sent_size
+            sx_scale = rw / sw if sw else 1.0
+            sy_scale = rh / sh if sh else 1.0
+            ox, oy = post_cap.offset
+            screen_rect = (
+                int(ox + bx * sx_scale),
+                int(oy + by * sy_scale),
+                int(bw * sx_scale),
+                int(bh * sy_scale),
+            )
+            # Sanity-check vs client_rect IoU; otherwise fall back to client_rect.
+            if client_rect is None or _iou(screen_rect, client_rect) >= 0.30:
+                return screen_rect
+
+    return client_rect
+
+
+def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix0 = max(ax, bx); iy0 = max(ay, by)
+    ix1 = min(ax + aw, bx + bw); iy1 = min(ay + ah, by + bh)
+    iw = max(0, ix1 - ix0); ih = max(0, iy1 - iy0)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
+
+
 def dispatch_meta_tool(
     fn_name: str,
     args: dict[str, Any],
     cfg: Config,
     last_png_by_level: dict[str, bytes],
+    sensor: Any = None,
 ) -> ToolResult | None:
     """处理一次 meta tool 的 tool_call。
 
     返回 ``None`` 表示 ``fn_name`` 不是已知 meta tool（也不在 enabled 集合里），
     调用方应当报 ``unknown tool``。
+
+    ``sensor`` (optional) — a ``ScreenSensor``; when provided, ``launch_app``
+    will perform R2 visual capture (Docs/screenshot.md §13.3): snapshot before/
+    after the launch, diff to find the new window's bbox (or fall back to the
+    hwnd's client rect), then attach an L2 of that region to the result.
     """
     if fn_name == "remember" and cfg.memory.enabled:
         text = (args.get("text") or "").strip()
@@ -327,6 +414,20 @@ def dispatch_meta_tool(
         name = (args.get("name") or "").strip()
         if not name:
             return ToolResult(error="name required")
+
+        # ---- R2: pre-launch L1 (only if diff is enabled and we have a sensor) ----
+        from .screen import ScreenSensor, ScreenLevel  # local import to avoid cycles
+        diff_enabled = bool(getattr(cfg.screenshot, "launch_diff_enabled", False)) and sensor is not None
+        pre_cap = None
+        if diff_enabled:
+            try:
+                # Only capture pre-L1 when we'll actually run a diff (i.e. not
+                # the focus_existing_window path). We can't tell yet what method
+                # launchers will pick, so capture optimistically; cheap mss grab.
+                pre_cap = sensor.capture(ScreenLevel.L1)
+            except Exception:
+                pre_cap = None
+
         result = launchers_mod.launch_app(cfg.launchers, name)
         # On success, also append the app's tips body so the model gets it for free.
         out_lines = [f"launch_app: {result.get('message', '')}"]
@@ -339,7 +440,65 @@ def dispatch_meta_tool(
             if tips_body:
                 out_lines.append("")
                 out_lines.append(tips_body)
-        return ToolResult(output="\n".join(out_lines), error=None if result.get("ok") else result.get("message"))
+
+        # ---- R2: visual capture (region resolution + L2 crop) ----
+        image_png: bytes | None = None
+        attached_l2 = None
+        attached_rect: tuple[int, int, int, int] | None = None
+        if result.get("ok") and sensor is not None:
+            hwnd = result.get("hwnd") or 0
+            method = (result.get("method") or "").lower()
+            slug = result.get("slug") or name
+            try:
+                rect = _resolve_launch_region(
+                    sensor=sensor,
+                    cfg=cfg,
+                    hwnd=int(hwnd) if hwnd else 0,
+                    method=method,
+                    pre_cap=pre_cap if diff_enabled else None,
+                )
+            except Exception as e:
+                rect = None
+                out_lines.append(f"  region resolution failed: {type(e).__name__}: {e}")
+            if rect is not None:
+                rx, ry, rw, rh = rect
+                try:
+                    l2 = sensor.capture_region(rx, ry, rw, rh)
+                    image_png = l2.png_bytes()
+                    attached_l2 = l2
+                    attached_rect = (rx, ry, rx + rw, ry + rh)
+                    out_lines.append("")
+                    out_lines.append(
+                        f"  region: x={rx} y={ry} w={rw} h={rh} (L2 attached as user message; this is now the active coordinate frame for the next click. Subsequent post-step screenshots will stay narrowed to this rect until you explicitly call screenshot(level='fullscreen').)"
+                    )
+                    # Persist to region store as __main_window for next launch.
+                    try:
+                        if getattr(cfg, "regions", None):
+                            data = regions_mod.load_app_regions(cfg.regions, slug) or {}
+                            regions = dict(data.get("regions") or {})
+                            regions["__main_window"] = {"x": rx, "y": ry, "w": rw, "h": rh}
+                            data["regions"] = regions
+                            data.setdefault("slug", slug)
+                            regions_mod.save_app_regions(cfg.regions, slug, data)
+                    except Exception:
+                        pass  # cache best-effort, never break the dispatch
+                except Exception as e:
+                    image_png = None
+                    out_lines.append(
+                        f"  L2 capture of region ({rx},{ry},{rw}x{rh}) failed: {type(e).__name__}: {e}"
+                    )
+            else:
+                out_lines.append(
+                    f"  no region resolved (hwnd={hwnd} method={method}); skipping L2 attachment"
+                )
+
+        return ToolResult(
+            output="\n".join(out_lines),
+            error=None if result.get("ok") else result.get("message"),
+            image_png=image_png,
+            attached_capture=attached_l2,
+            attached_active_rect=attached_rect,
+        )
 
     if fn_name == "list_apps" and getattr(cfg, "launchers", None) and cfg.launchers.enabled:
         items = launchers_mod.list_launchers(cfg.launchers)

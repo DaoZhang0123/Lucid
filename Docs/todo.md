@@ -135,7 +135,8 @@
   - 实现：复用现有 `LLMClient`，每个角色有独立 prompt 文件（`python/ctrlapp/prompts/{planner,checker}.md`），共享 `thread.messages.json` 持久化。
   - UI：聊天流里给三种角色不同色块前缀（planner=蓝、checker=橙、executor=绿）。
 - [ ] **App 区域化坐标库（initialization-time region calibration）**：避免每次都靠视觉找按钮，针对常用 App（VS Code / 微信 / Outlook / Excel / Chrome / 资源管理器）在首次运行/设置页一键自检里跑一遍"区域校准"：
-  - 把每个 App 主窗口划分成固定区域（如 VS Code: `activity_bar / sidebar / editor_tabs / editor_body / status_bar / panel`；微信: `nav_bar / chat_list / chat_header / chat_body / input_area / send_button`），每区域记录"相对窗口左上角的归一化矩形 (x%, y%, w%, h%) + 该区域内若干锚点元素的描述"。
+  - 把每个 App 主窗口划分成固定区域（如 VS Code: `activity_bar / sidebar / editor_tabs / editor_body / status_bar / panel`；微信: `nav_bar / chat_list / chat_header / chat_body / input_area / send_button`），每区域记录"相对窗口左上角的归一化矩形 (x%, y%, w%,
+   h%) + 该区域内若干锚点元素的描述"。
   - 校准方式：① 让 Agent 用 `Win+E` / `ctrl+alt+w` 等启动 App，截 L1 + L2，用 LLM 一次性识别六七个区域并落盘；② 用户也可在前端区域校准面板手动框选/拖动调整。
   - 数据：`%LOCALAPPDATA%\dev.ctrlapp\regions\<app_id>.json`（`window_signature` 用于 startup 时验证窗口尺寸/版本是否变化、变化则提示重校准）。
   - Runtime：模型可用新 meta tool `region(app, region_name)` 拿到"屏幕坐标 + 描述"，省掉一次截图+识别+点击的 3 步。
@@ -145,6 +146,7 @@
   - 索引：sidecar 启动时把 memory/tools 切成单条 → 倒排索引；条目变更时增量更新（监听 `/memory` `/tools` 页面写盘事件）。
   - 配置：`[rag] enabled / top_k=5 / backend / refresh_every_steps=10 / max_chars_per_entry=300`。
   - 收益：(1) 大幅减少每步发给 LLM 的 prompt 体积；(2) 给模型的 memory/tools 信噪比变高（不会被无关条目干扰）；(3) 为后面 Phase 3 的"用户多人 / 多角色记忆隔离"留接口。
+- [ ] **打盹**：5分钟内没有任务的时候，启用打盹功能，从执行过任务的context.md等文件提取需要的信息，比如icon信息，成功或者失败的点（以防执行任务的时候没有记录下来）等。
 
 ---
 

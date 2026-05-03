@@ -101,6 +101,14 @@ class ScreenSensor:
             return self._capture_cursor_local()
         raise ValueError(level)
 
+    def virtual_size(self) -> tuple[int, int]:
+        """Return (width, height) of the virtual desktop without grabbing
+        pixels. Cheap; used to seed the tool schema dimensions when the run
+        is configured to skip the initial L1 capture."""
+        with mss.mss() as sct:
+            mon = sct.monitors[0]
+            return int(mon["width"]), int(mon["height"])
+
     # ---------- 实现 ----------
     def _grab(self, region: dict) -> Image.Image:
         with mss.mss() as sct:
@@ -159,6 +167,26 @@ class ScreenSensor:
             offset=(region["left"], region["top"]), phash=_phash(sent),
         )
 
+    def capture_region(self, left: int, top: int, width: int, height: int,
+                       max_long_edge: int | None = None) -> Capture:
+        """Grab an arbitrary screen rect and return an L2-tagged Capture (so
+        history compression treats it like an active-window screenshot).
+        Used by R2 launch_app to ship the new App's client area to the model.
+
+        ``max_long_edge`` defaults to the L2 limit; pass 0 to skip downscaling.
+        """
+        w = max(1, int(width))
+        h = max(1, int(height))
+        region = {"left": int(left), "top": int(top), "width": w, "height": h}
+        img = self._grab(region)
+        raw = img.size
+        limit = self.cfg.l2_max_long_edge if max_long_edge is None else int(max_long_edge)
+        sent = _shrink(img, limit)
+        return Capture(
+            level=ScreenLevel.L2, image=sent, raw_size=raw, sent_size=sent.size,
+            offset=(int(left), int(top)), phash=_phash(sent),
+        )
+
     # ---------- 变化检测 ----------
     @staticmethod
     def similarity(a: str, b: str) -> float:
@@ -167,3 +195,65 @@ class ScreenSensor:
         hb = imagehash.hex_to_hash(b)
         bits = ha.hash.size
         return 1.0 - (ha - hb) / bits
+
+    @staticmethod
+    def diff_bbox(pre: Image.Image, post: Image.Image,
+                  min_area_ratio: float = 0.05,
+                  pixel_threshold: int = 25) -> tuple[int, int, int, int] | None:
+        """Find the bounding box of the largest contiguous change between two
+        same-size images. Used by R2 launch_app to locate the newly-appeared
+        window's bbox in screen coords. Returns (x, y, w, h) in the IMAGE
+        coordinate system (caller scales back to screen coords if needed),
+        or None if change is too small / too scattered.
+        """
+        from PIL import ImageChops, ImageFilter
+        if pre.size != post.size:
+            return None
+        a = pre.convert("L")
+        b = post.convert("L")
+        diff = ImageChops.difference(a, b)
+        # Threshold to binary (anything brighter than `pixel_threshold` counts)
+        diff = diff.point(lambda v: 255 if v > pixel_threshold else 0)
+        # Eat away tiny noise (cursor blink, fan-spinner pixels)
+        diff = diff.filter(ImageFilter.MaxFilter(5))
+        bbox = diff.getbbox()
+        if not bbox:
+            return None
+        x0, y0, x1, y1 = bbox
+        w, h = x1 - x0, y1 - y0
+        total = pre.size[0] * pre.size[1]
+        if total <= 0:
+            return None
+        if (w * h) / total < float(min_area_ratio):
+            return None
+        return (int(x0), int(y0), int(w), int(h))
+
+    @staticmethod
+    def pixel_diff_ratio(pre: Image.Image, post: Image.Image,
+                         pixel_threshold: int = 25) -> float:
+        """Fraction of pixels whose grayscale value differs by more than
+        ``pixel_threshold`` between pre and post. 0.0 = identical, 1.0 = all
+        pixels changed. More robust than dHash for small UI animations.
+        Used by R3 click verification."""
+        from PIL import ImageChops
+        if pre.size != post.size:
+            return 1.0
+        a = pre.convert("L")
+        b = post.convert("L")
+        diff = ImageChops.difference(a, b)
+        # Count pixels above threshold (sum of 1s after binarisation / 255)
+        bw = diff.point(lambda v: 1 if v > pixel_threshold else 0)
+        total = bw.size[0] * bw.size[1]
+        if total <= 0:
+            return 0.0
+        # Sum of pixel values = number of "changed" pixels
+        try:
+            import numpy as np  # type: ignore[import-not-found]
+            arr = np.asarray(bw, dtype=np.uint8)
+            changed = int(arr.sum())
+        except Exception:
+            # Fallback: histogram
+            h = bw.histogram()
+            changed = h[1] if len(h) > 1 else 0
+        return changed / total
+

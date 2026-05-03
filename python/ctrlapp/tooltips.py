@@ -123,17 +123,37 @@ def _ensure_global_seeded(cfg: ToolsConfig) -> Path:
 def _ensure_app_seeded(cfg: ToolsConfig, app_slug: str) -> Path | None:
     """If we have a seed for this app and the file is missing, write it.
 
+    Additionally, if the file exists but contains ONLY seed entries (no
+    user/agent additions) and the registry's current seed body differs from
+    the on-disk text, rewrite the file with the fresh seed. This keeps users
+    who never customised an app's tips on the latest in-code recipes (e.g.
+    when we strengthen ``edge`` with a "use ctrl+t" recipe).
+
     Returns the path if a file exists (after possibly seeding), else None.
     """
     p = app_tips_path(cfg, app_slug)
-    if p.is_file():
-        return p
     seed = _app_seeds().get(app_slug)
-    if seed is None:
-        return p if p.is_file() else None
-    title, body = seed
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(f"# {title}\n\n{body}", encoding="utf-8")
+    if not p.is_file():
+        if seed is None:
+            return p if p.is_file() else None
+        title, body = seed
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"# {title}\n\n{body}", encoding="utf-8")
+        return p
+    if seed is not None:
+        try:
+            existing = p.read_text(encoding="utf-8")
+        except OSError:
+            existing = ""
+        # "Pristine" = every entry line is a seed entry. If so, refresh from
+        # the registry. Non-entry lines (header, blank lines, prose) are
+        # ignored when classifying.
+        entry_lines = [ln for ln in existing.splitlines() if ln.lstrip().startswith("- [")]
+        if entry_lines and all(("[seed " in ln or "· seed " in ln) for ln in entry_lines):
+            title, body = seed
+            fresh = f"# {title}\n\n{body}"
+            if existing.strip() != fresh.strip():
+                p.write_text(fresh, encoding="utf-8")
     return p
 
 
@@ -277,7 +297,12 @@ def tools_for_prompt(cfg: ToolsConfig) -> str:
 
 
 def app_tips_for_prompt(cfg: ToolsConfig, app: str) -> str:
-    """Format one app's tips file as an injectable user message body."""
+    """Format one app's tips file as an injectable user message body. If the
+    app's registry entry declares ``INCLUDES = (...)`` (e.g. ``edge`` includes
+    ``browser``), each included app's tips are appended below as a separate
+    section so the model gets the cross-cutting shortcuts together with the
+    app-specific ones.
+    """
     raw = read_app_tips(cfg, app).strip()
     if not raw:
         return ""
@@ -290,7 +315,37 @@ def app_tips_for_prompt(cfg: ToolsConfig, app: str) -> str:
     head = f"## App tips for `{_slugify(app)}`"
     if title:
         head += f" ({title})"
-    return head + "\n" + body.strip() + "\n"
+    parts = [head, body.strip()]
+    # Auto-include transitive tips so e.g. launch_app("edge") drags in the
+    # generic browser tips without the model having to chain load_app_tips.
+    seen: set[str] = {_slugify(app)}
+    queue: list[str] = []
+    app_def = apps_pkg.get_app(_slugify(app))
+    if app_def is not None:
+        queue.extend(app_def.includes)
+    while queue:
+        inc_slug = _slugify(queue.pop(0))
+        if not inc_slug or inc_slug in seen:
+            continue
+        seen.add(inc_slug)
+        inc_raw = read_app_tips(cfg, inc_slug).strip()
+        if not inc_raw:
+            continue
+        inc_body = _strip_header(inc_raw)
+        inc_title = ""
+        for line in inc_raw.splitlines():
+            if line.startswith("# "):
+                inc_title = line[2:].strip()
+                break
+        sub_head = f"### Inherited tips from `{inc_slug}`"
+        if inc_title:
+            sub_head += f" ({inc_title})"
+        parts.append(sub_head)
+        parts.append(inc_body.strip())
+        inc_def = apps_pkg.get_app(inc_slug)
+        if inc_def is not None:
+            queue.extend(inc_def.includes)
+    return "\n".join(p for p in parts if p) + "\n"
 
 
 # ---------------------------------------------------------------------------

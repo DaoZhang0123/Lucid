@@ -840,49 +840,60 @@ def launch(name: str) -> str:
 
 ---
 
+
 ## 13. 截图链路重构：函数化 + 启动差分捕获 L2 + 点击前后 L3 校验
 
 > 本节是对 §10 / §11 的整合落地方案：把"模型该不该截图、截哪、截完怎么验"
 > 这套决策从 prompt 工程移到**确定性的代码 hook**里，让 LLM 把宝贵的 reasoning
 > 步数花在"做什么"而不是"看哪"。设计前提：[`launch_app`](todo.md) 已落地。
+>
+> **2026-05 修订（基于自评 + GetWindowRect 调研）**：相比初稿做了几处取舍——
+> R1（拆独立 screenshot tool）**降级为可选 / 暂不做**（详见 §13.2），R2 改为**只在
+> 真正启动新实例时做差分**（激活已有窗口直接走 `window_client_rect`），R3 把
+> dHash 换成更鲁棒的**像素差占比**，回退路径用 **DWM extended frame bounds +
+> client rect** 而不是裸 `GetWindowRect`（详见 §13.3 末尾）。
 
 ### 13.1 现状的三个痛点
 
-1. **screenshot 藏在 `computer.action` 里** —— schema 大、参数耦合（`coordinate` /
-   `text` / `level` 共用一个对象），弱模型经常把"截图"当"点一下"调；
-   独立加一个新参数（如 §10A 的 `region`）就要扩 `computer` 整个 schema。
+1. **screenshot 藏在 `computer.action` 里** —— 多一种 level / 参数都要扩通用 schema。
+   但这条**不是真瓶颈**：单 tool + action 字段也能加 `region` 参数；拆独立 tool
+   会破坏 §0 论证过的"对齐 Anthropic 规范"约束，先不动。
 2. **每步都自动补 L1** —— 真正最贵的瓶颈不是 token，而是"Anthropic / Copilot 的
    单图 vision pass + 模型对全屏 1568×~700 的低分辨率扫描"。launch_app 之后，
    App 主窗口的位置 / 尺寸完全已知，**根本不需要再让模型看一遍 L1 才知道窗口在哪**。
 3. **点击校验是模型自检** —— 现在的两阶段 preview + post L3 取证靠模型"自己看图自己
-   判断"，多 1 个 round-trip。其实"鼠标周围 200×200 的像素哈希在点击前后是否变化"
+   判断"，多 1 个 round-trip。其实"鼠标周围 200×200 的像素在点击前后是否变化"
    是个**纯算法**问题，不该上 LLM。
 
-### 13.2 R1 — `screenshot` 拆成独立 function tool
+### 13.2 R1 — `screenshot` 拆成独立 function tool（**降级 / 可选**）
 
-新建 `python/ctrlapp/screenshot_tool.py`，暴露顶层 `screenshot` 工具：
+初稿建议把 screenshot 抽成顶层 tool。复盘后认为：
 
-```jsonc
-{
-  "name": "screenshot",
-  "parameters": {
-    "level":          {"enum": ["fullscreen", "active_window", "cursor_local", "region"]},
-    "region":         {"type": "array", "items": "number", "description": "[x, y, w, h] in screen px (level=region only)"},
-    "max_long_edge":  {"type": "integer", "description": "0 = no shrink; clamped to 2400"},
-    "quality":        {"type": "integer", "description": "1-100; 100 = PNG; default = config"}
-  }
-}
-```
+- 收益主要是 schema 美学（参数空间紧凑）；R2/R3 的实现**不依赖** R1。
+- 现有 hook（`_maybe_pre_click_verify` / 落点 L3 取证 / `had_screenshot` 复用）都按
+  `action` 字段分支，拆 tool 后要全部改成"按 tool name 分支"。
+- §0 的"对齐 Anthropic computer-use 规范"约束仍然成立。
 
-- 共享坐标系：仍写回到 `tool_state.last_capture`，`computer` 里所有点击动作从同一处
-  读 offset / scale，与现状一致。
-- **保留兼容别名**：`computer.action="screenshot"` 继续可用，内部直接转发到新 tool；
-  这样 prompt / fixture / 历史 thread 不需要迁移即可回滚。
-- 把 §10 方案 A / B / C（region / max_long_edge / quality）一次性收进新 schema。
-- `_dispatch` / `_maybe_pre_click_verify` / 落点 L3 取证里所有"按 action 名分支"的 hook
-  改成"按 tool name 分支"——`tool_name in ("screenshot", "computer")` 二选一。
+**结论**：R1 不做。如果将来加 `region` / `max_long_edge` / `quality` 参数，全部
+塞进现有 `computer.action="screenshot"` schema 即可，向后兼容、零迁移成本。
 
 ### 13.3 R2 — 起手只 L1 一次；之后 launch_app 用差分给出 L2
+
+#### 触发条件（**修订后只在"真启动"时才做差分**）
+
+```
+launch_app(name) 内部走 4 步策略链：
+  1. 已在跑 + 找到窗口 → SetForegroundWindow         method="activate-existing"
+  2. 全局快捷键                                       method="shortcut"
+  3. 协议 URI                                         method="uri"
+  4. exe 别名 / 路径                                  method="exe"
+```
+
+- **method == "activate-existing"** → 桌面像素本来就没变（同一个窗口被切到前台），
+  diff 必然失败白拍 2 张 L1。**直接走 `window_client_rect(hwnd)`** 拿可视区域，
+  不做差分。
+- **method ∈ {shortcut, uri, exe}** → 真正起了进程 / 唤出托盘窗口，桌面会出现新窗口；
+  跑 diff，失败回退 `window_client_rect(hwnd)`。
 
 #### 时序
 
@@ -892,30 +903,39 @@ def launch(name: str) -> str:
   └─ 与首条 user message 一并发出
 
 模型决定 launch_app("wechat")
-  ├─ pre  = sensor.capture(L1)                       (loop 内拍，不发给模型)
-  ├─ launchers.launch("wechat")                       (现有逻辑)
-  ├─ 等待 ≤ 1.5s（轮询 GetForegroundWindow / process_iter）
-  ├─ post = sensor.capture(L1)                       (loop 内拍)
-  ├─ region = diff_bbox(pre, post)                    (确定性算法，见下)
-  ├─ 若 region 命中 (面积比 > min_ratio):
-  │     l2 = sensor.capture_region(region.x, region.y, region.w, region.h)
-  │     落盘 step-NNN-launch_app-l2.png
-  │     回送给模型一条 user message（注意：是 user 而不是 tool_result，
-  │       因为这是 loop 主动追加的视觉提示，不算 launch_app 的"返回值"）：
-  │       ## launch_app result (visual)
-  │       app=wechat hwnd=0x1234 region=[x,y,w,h] confidence=0.92
-  │       <l2 jpeg q80>
-  └─ 若 diff 失败:
-        l2 = sensor.capture_window(hwnd)             (用 Windows API 拿 hwnd 客户区)
-        以同样格式回送，confidence=0.0 + reason="diff fallback"
+  ├─ 若 method == activate-existing:
+  │     hwnd 已有 → rect = window_client_rect(hwnd)
+  │     l2 = sensor.capture_region(rect)
+  │     skip diff
+  └─ 否则（shortcut / uri / exe）:
+        pre  = sensor.capture(L1)                    (loop 内拍，不发给模型)
+        launchers.launch(...)                          (现有逻辑)
+        等待 ≤ 1.5s（轮询 GetForegroundWindow / process_iter，命中即返回）
+        post = sensor.capture(L1)                    (loop 内拍)
+        bbox = diff_bbox(pre, post)                  (确定性算法)
+        若 bbox 命中 + 与 hwnd client rect IoU > 0.3:
+            rect = bbox
+        else:
+            rect = window_client_rect(hwnd)          (兜底)
+        l2 = sensor.capture_region(rect)
+
+落盘 step-NNN-launch_app-l2.png + 把 rect 写入 regions 缓存
+回送给模型一条 user message：
+   ## launch_app result (visual)
+   app=wechat hwnd=0x1234 method=shortcut region=[x,y,w,h]
+   <l2 jpeg q80>
 ```
+
+> 注意：L2 是以 **user role** 追加到 tool message 之后，不是塞进 launch_app 的
+> ToolResult（OpenAI tool_call 协议要求 tool_result 是文本）。这样既不破坏协议，
+> 又能让模型在下一轮 LLM call 自然看到图。
 
 #### diff 算法（约 30 行）
 
 ```python
 from PIL import ImageChops, ImageFilter
 
-def diff_bbox(pre: Image, post: Image, min_area_ratio: float = 0.05) -> Box | None:
+def diff_bbox(pre, post, min_area_ratio: float = 0.05) -> tuple | None:
     """返回 (x, y, w, h)；None 表示差异太小 / 太散，无法判定。"""
     if pre.size != post.size:
         return None
@@ -932,21 +952,61 @@ def diff_bbox(pre: Image, post: Image, min_area_ratio: float = 0.05) -> Box | No
     return (x0, y0, w, h)
 ```
 
-> 算法用 dHash 也行，但 ImageChops.difference + getbbox 已经够了，且能直接给出
-> bbox。多个不连通变化区域时取并集（getbbox 自带），再让 launch_app 的 hwnd
-> 客户区做 sanity 校验：如果 diff bbox 与 GetWindowRect(hwnd) IoU < 0.3，
-> 说明 diff 命中的可能不是新 App（可能是通知 / 时钟刷新），回退到 window rect。
+#### `window_client_rect(hwnd)` —— 不要裸 `GetWindowRect`
+
+裸 `GetWindowRect` 在 Win10+ 有几个坑：
+
+1. **DWM 阴影 / extended frame**：返回的 rect 比"看起来的样子"大 7~9px / 边，点这块
+   会落空到桌面。**正解**：`DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS)`
+   拿真实可视边界。
+2. **window rect ≠ client rect**：标题栏 / 菜单栏 / 边框都算在内。L2 用它会把顶部
+   切掉一条无信息的标题栏，底部漏掉真正内容。**正解**：`GetClientRect` +
+   `ClientToScreen`。
+3. **Per-monitor DPI**：sidecar 必须 `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`，
+   否则高 DPI 屏会自动缩放、跟 mss 物理像素对不上。Phase 0 已设 PMA v2，OK。
+4. **最小化窗口返回历史位置**：`IsIconic(hwnd)` 为真时返回 (-32000, -32000, ...)。
+   launch_app 激活后 sleep ~80ms 等 `IsWindowVisible && !IsIconic` 再读。
+
+```python
+def window_client_rect(hwnd: int) -> tuple[int,int,int,int] | None:
+    if sys.platform != "win32" or not hwnd:
+        return None
+    user32 = ctypes.windll.user32
+    if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+        return None
+    # 1) DWM extended frame bounds（去掉阴影）
+    rect = wintypes.RECT()
+    hr = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+        hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect))   # 9 = DWMWA_EXTENDED_FRAME_BOUNDS
+    if hr != 0:  # 失败回退
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    # 2) 再裁到客户区（去掉标题栏 / 菜单栏）
+    crect = wintypes.RECT()
+    user32.GetClientRect(hwnd, ctypes.byref(crect))
+    pt = wintypes.POINT(crect.left, crect.top)
+    user32.ClientToScreen(hwnd, ctypes.byref(pt))
+    return (pt.x, pt.y, crect.right - crect.left, crect.bottom - crect.top)
+```
 
 #### 收益
 
 - "起手 → launch_app → 模型看到新 App" 从 4 个 round-trip（init L1 → launch tool_call
   → L1 看一眼 → L3 围观）压到 **2 个**：init L1 + 含 L2 的 launch_app 推送消息。
-- L2 是 App 客户区裁剪 + 局部高分辨率（不再把 4K 屏整张缩到 1568px），按钮文字识别准确率显著提升。
+- L2 是 App 客户区裁剪（去标题栏 / 阴影 / DPI 校正），按钮文字识别率显著提升。
 - 模型完全不需要"L1 找窗口在哪"的视觉步骤——hwnd 和 region 都是 Windows API 给的事实。
 
-### 13.4 R3 — 点击前后 L3 + L2 双图，dHash 算法判定"有没有发生事"
+#### 副产品：自动写入 region 缓存（衔接 TODO #4 区域库）
 
-替代当前的两阶段 preview + 模型自检 L3 取证：
+R2 拿到的 `(slug, rect)` 直接写一条 `<user data>/regions/<slug>.json::__main_window`
+缓存：下次同 App 启动时若 method=activate-existing，可以直接拿缓存 rect 校验
+client-rect 是否一致；变了就更新。这样 §13 落地后顺手把 TODO #4 区域库的"自动校准"
+通路打通了大半。
+
+### 13.4 R3 — 点击前后像素差校验（取代 dHash + 两阶段 preview 兜底）
+
+替代当前的"两阶段 preview 强制 + 模型自检 L3 取证"。**注意不用 dHash**：8x8 的
+dHash 对中文 IME 光标闪烁、Chrome 标签 hover 动效很容易误判"没动"。改用
+**鼠标周围像素差占比**（更鲁棒、更便宜）：
 
 ```
 模型: computer({action: "left_click", coordinate: [x, y]})
@@ -954,34 +1014,36 @@ def diff_bbox(pre: Image, post: Image, min_area_ratio: float = 0.05) -> Box | No
   ├─ driver.click(x, y)                                 (执行)
   ├─ time.sleep(0.15)                                   (等 UI 反应)
   ├─ post_l3 = sensor.capture_around(x, y, 100)
-  ├─ post_l2 = sensor.capture(L2)                       (活动窗口)
-  ├─ sim = dhash_similarity(pre_l3, post_l3)
+  ├─ changed = pixel_diff_ratio(pre_l3, post_l3)        (>25 灰度差的像素占比)
   └─ 回送 ToolResult:
-        若 sim > 0.97:
-            output  = "click executed but no visual change near cursor (dHash sim=0.98); coordinate may be wrong or target unresponsive"
-            image   = post_l2 (PNG)                    ← 让模型直接看活动窗口现状
-            error   = None  (软警告，模型自行决策重试)
+        若 changed < 0.005:   (<0.5% 像素变化 → 几乎可以肯定没点中)
+            output  = "click executed but ~0% visual change near cursor; coordinate may be wrong or target unresponsive"
+            image_png = post_l2 (loop.py 拼到 user message 里)
         否则:
-            output  = f"click landed at ({x},{y}); pre/post diff sim={sim:.2f}"
-            image   = post_l2
+            output  = f"click landed at ({x},{y}); pixel-change ratio={changed:.2%}"
+            image_png = None  (走默认 post 流程)
 ```
 
-- 把"明显没点中"这个判定从模型脑子搬到 8 行代码，**省掉一次完整 round-trip**。
-- 仍然给模型 post L2，让它有视觉上下文做下一步决策；不再单独发 L3 取证图（信息量小）。
-- 两阶段 preview 改为"信心评估触发"：仅当 (a) 模型在 L1 直接点 < 32px 区域，
-  或 (b) 上一次同坐标点击命中过"no visual change" 警告时，才走 preview → confirmed
-  双步流程。其它情况直接执行。
+- 把"明显没点中"这个判定从模型脑子搬到 ~10 行代码，**省掉一次完整 round-trip**。
+- 阈值 0.5% 是经验值（Chrome hover 动效 ~0.1%，光标闪烁 <0.05%；真点中按钮通常
+  >2%）。可在 `[screenshot] click_no_change_threshold` 里调。
+- 两阶段 preview 仍然保留（受 `[safety].verify_click_target_before` 控制），但**降级为
+  显式 opt-in**：默认关闭，改用 R3 的事后判定；老用户可以一键打开回到强制 preview
+  行为。
 
 #### 配置
 
 ```toml
 [screenshot]
 launch_diff_enabled            = true
-launch_diff_min_area_ratio     = 0.05    # 差异区域 < 5% 屏幕面积视为失败
-launch_diff_window_iou         = 0.30    # diff bbox 与 hwnd 客户区 IoU 下限
-click_verify_dhash_threshold   = 0.97    # >= 该阈值视为"没动"
+launch_diff_min_area_ratio     = 0.05    # diff bbox 面积 < 5% 屏幕视为失败
+launch_diff_window_iou         = 0.30    # diff bbox 与 hwnd client rect IoU 下限
+click_verify_enabled           = true    # R3 总开关
+click_no_change_threshold      = 0.005   # 像素差占比 < 此阈值视为"没点中"
 click_verify_post_sleep_ms     = 150     # 点击后等多久再拍 post
-first_l1_only                  = true    # 起手 L1 后只在显式请求时再发 L1
+
+[safety]
+verify_click_target_before     = false   # 改默认：关掉强制 preview，改用 R3 事后判定
 ```
 
 ### 13.5 R4 — 坐标系强校验
@@ -989,54 +1051,53 @@ first_l1_only                  = true    # 起手 L1 后只在显式请求时再
 每次 `computer` 收到带 `coordinate` 的 action：
 
 ```python
-cap = tool_state.last_capture
+cap = self.last_capture
 if cap is None:
-    return ToolResult(error="no screenshot taken yet; call screenshot() first")
+    return ToolResult(error="no screenshot taken yet; call screenshot first")
 ix, iy = args["coordinate"]
 sw, sh = cap.sent_size
 if not (0 <= ix < sw and 0 <= iy < sh):
     return ToolResult(error=(
         f"coordinate ({ix},{iy}) is outside the most recent screenshot "
-        f"({sw}x{sh}, level={cap.level.value}). Call screenshot() again to refresh, "
+        f"({sw}x{sh}, level={cap.level.value}). Take a fresh screenshot first, "
         f"then re-issue the click with coordinates inside the new image."
     ))
 ```
 
 把 §9 第 1 条"越界静默换算"的暗坑彻底堵上。
 
-### 13.6 实现拆分（建议提交粒度）
+### 13.6 实现拆分（修订后的提交粒度）
 
 | 提交 | 内容 | 行数估算 |
 |------|------|----------|
-| C1 | R4 坐标越界硬校验 + 单测 | ~30 |
-| C2 | R1 抽出独立 `screenshot` tool（含兼容别名） | ~120 |
-| C3 | R2 launch_app 接 diff + 自动注入 L2 user message | ~150 |
-| C4 | R3 点击前后 dHash 校验，preview 降级为兜底 | ~80 |
-| C5 | 配置 + 文档 + 端到端 thread 跑通微信发消息（验证步数从 ~12 降到 ~5） | ~30 |
+| C1 | R4 坐标越界硬校验 | ~20 |
+| C2 | `window_client_rect(hwnd)` 辅助函数（DWM + ClientRect） | ~40 |
+| C3 | `screen.capture_region(...)` + `diff_bbox(...)` 工具函数 | ~50 |
+| C4 | R3 点击前后 pixel-diff 校验，preview 默认关 | ~80 |
+| C5 | R2 launch_app 触发条件 + diff + region 缓存 + 注入 user message | ~150 |
+| (C6) | R1 抽出独立 `screenshot` tool —— **暂不做**，留作未来必要时再考虑 | — |
 
-C1 → C5 顺序解耦，每一步都可独立验证、独立回滚。
+C1 → C5 顺序解耦，每一步都可独立验证、独立回滚。**R1 跳过**（详见 §13.2）。
 
 ### 13.7 与 §10 / §11 / §12 的关系
 
 | 已有方案 | 本节新增 | 关系 |
 |----------|----------|------|
-| §10 A region | R1 把 region 收进独立 screenshot tool | 实现层重叠，本节统一落地 |
-| §11 I preview 可跳过 | R3 把 preview 降级为兜底 | 同向，更激进 |
+| §10 A region | （未做）region 参数若将来加，仍走现有 `computer.action=screenshot` schema | R1 不做后，A 本身仍可独立加 |
+| §11 I preview 可跳过 | R3 把 preview 默认关，改用算法判定 | 同向，更彻底 |
 | §11 J1 取消 nudge | — | 正交，仍要单独做 |
-| §12 launch_app | R2 给 launch_app 配视觉返回 | 互补：原方案管"开"，本节管"开完后看到了什么" |
-| TODO #4 区域库 | — | 区域库可以在 R2 落地后用 diff 算法**自动**校准（首次跑 launch_app 时把 diff bbox 写进 region.json） |
+| §12 launch_app | R2 给 launch_app 配视觉返回 + region 缓存 | 互补：原方案管"开"，本节管"开完后看到了什么" |
+| TODO #4 区域库 | R2 副产品自动写入 `__main_window` 缓存 | 衔接打通：launch_app 触发的 region 反过来喂养区域库 |
 
 ### 13.8 风险与回退
 
-- **diff 误判**：通知弹窗、时钟刷新、桌面壁纸动效都会污染 diff。缓解：(a) 跟 hwnd
-  rect 求 IoU 做 sanity 校验；(b) 给 launch_app 一个 `expected_window_size_ratio` 配置；
-  (c) `launch_diff_enabled=false` 一键回退到"模型自己看 L1"。
-- **dHash 阈值**：97% 是经验值，对动效多的 App（Chrome 标签切换有动画）可能误报"没动"。
-  缓解：阈值可配置；首次出现误报时把"该 App 的 click_verify_threshold"作为 `learn_tip`
-  写回，下次自动放宽。
-- **兼容别名**：`computer.action="screenshot"` 保留 1~2 个版本后再移除，给历史 thread
-  和外部 fixture 充分迁移期。
-
-
-
-
+- **diff 误判**：通知弹窗、时钟刷新、桌面壁纸动效都会污染 diff。缓解：(a) 与 hwnd
+  client rect 求 IoU 做 sanity 校验；(b) `launch_diff_enabled=false` 一键回退到
+  "模型自己看 L1"；(c) 等待循环命中 `IsWindowVisible(hwnd) && !IsIconic` 再拍 post。
+- **R3 像素差阈值偏激**：动效多的 App（Chrome 标签切换）可能漏报"没动"。缓解：
+  阈值可配置；首次出现误报时把"该 App 的 click_no_change_threshold"作为
+  `learn_tip` 写回，下次自动放宽。
+- **`window_client_rect` 失败**：极少数无窗口 App / UAC 弹窗 hwnd 不可见时会返回
+  None；R2 在这种情况下回退到模型显式 `screenshot(level=fullscreen)`。
+- **配置默认值变化**（`verify_click_target_before` 从 true → false）：会改变现有
+  thread 的行为。升级时在 release notes 里写明，给保守用户一键恢复脚本。

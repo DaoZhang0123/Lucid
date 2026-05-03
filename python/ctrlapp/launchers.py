@@ -258,6 +258,41 @@ def _force_foreground(hwnd: int) -> bool:
             user32.AttachThreadInput(cur_tid, fg_tid, False)
 
 
+def window_client_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Return the screen-space (x, y, w, h) of an hwnd's **client area**,
+    using DWM extended frame bounds (no shadow) and ClientRect+ClientToScreen
+    (no title bar / menu bar). See Docs/screenshot.md §13.3 for the rationale.
+
+    Returns None if the window is hidden / minimised / hwnd invalid.
+    """
+    if sys.platform != "win32" or not hwnd:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        if not user32.IsWindowVisible(hwnd):
+            return None
+        if user32.IsIconic(hwnd):
+            return None
+        # GetClientRect → (0, 0, w, h) of the client area
+        crect = wintypes.RECT()
+        if not user32.GetClientRect(hwnd, ctypes.byref(crect)):
+            return None
+        w = int(crect.right - crect.left)
+        h = int(crect.bottom - crect.top)
+        if w <= 0 or h <= 0:
+            return None
+        # ClientToScreen on the (0,0) client corner gives the screen origin
+        pt = wintypes.POINT(int(crect.left), int(crect.top))
+        if not user32.ClientToScreen(hwnd, ctypes.byref(pt)):
+            return None
+        return (int(pt.x), int(pt.y), w, h)
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Public API used by meta_tools / sidecar
 # ---------------------------------------------------------------------------

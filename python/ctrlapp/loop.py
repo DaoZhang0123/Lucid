@@ -45,12 +45,14 @@ You are a vision-driven GUI Agent running on a Windows desktop.
 You can only interact with the system through the `computer` tool (screenshot, mouse, keyboard).
 
 Working principles:
-1. First call action="screenshot" to see the current screen, then decide the next step.
+1. **No fullscreen screenshot is sent up-front.** The first user message tells you the task — start by calling `launch_app(name="...")` (which brings the target App to the foreground AND attaches an L2 screenshot of its window) or, if you genuinely need to see the whole desktop first, call `screenshot(level="fullscreen")` explicitly.
 2. **Three-tier screenshot strategy** (selected via the `level` parameter when action="screenshot"):
-   - level="fullscreen" (default): the entire virtual desktop, used to build global awareness and locate windows.
-   - level="active_window": only the active window, higher resolution, used for in-App work.
+   - level="fullscreen": the entire virtual desktop. Use only when you need to see icons/widgets across multiple windows; this also **releases** any active-app pin (see below).
+   - level="active_window": only the focused window, higher resolution, used for in-App work.
    - level="cursor_local": a small high-detail tile around the mouse, used to click small buttons, read small text, or verify selection.
-   Whichever you pick, subsequent `coordinate` values must use **that screenshot's coordinate system**. The system auto-appends an L1 screenshot after every action.
+   Whichever you pick, subsequent `coordinate` values must use **that screenshot's coordinate system**.
+   - **Active-app pinning:** after a successful `launch_app` / `focus_window`, the system pins the App's window rect as the active coordinate frame. The very first post-step screenshot is an L2 of that whole rect (your "map"); **subsequent post-step screenshots are L3 (cursor-local) by default** — the L2 map's coordinate frame is still the one for your `coordinate` arguments. If you need a fresh L2 map, call `screenshot(level="active_window")` explicitly.
+   - Click coordinates that reverse-map outside the pinned App rect are rejected. To leave the App, call `screenshot(level="fullscreen")` (which also releases the pin).
 3. Keep action granularity small: do one step at a time, then screenshot to verify.
 4. For text input use action="type" + text="...". The local driver pastes via the clipboard, IME-independent; CJK / English / paths can all be passed directly. **Newlines (`\n`) inside `text` are pasted as soft line breaks**, NOT as Enter — so in chat apps like WeChat / Telegram (where Enter sends), a multi-line message stays as ONE message with line breaks. To submit / send, issue a separate `key` action (e.g. `Return`).
 5. **Every intermediate step MUST call the `computer` tool**; do not just emit narration like "I will now..." or "Let me...".
@@ -366,7 +368,7 @@ class Agent:
         self.model = self.client.model
         self.sensor = ScreenSensor(cfg.screenshot)
         self.driver = InputDriver(cfg.input)
-        self.tool = ComputerTool(self.sensor, self.driver)
+        self.tool = ComputerTool(self.sensor, self.driver, cfg.screenshot)
         self.safety = SafetyLayer(cfg.safety)
         self.event_sink = event_sink
         self.cancel_event = cancel_event
@@ -698,24 +700,34 @@ class Agent:
         raise last_exc
 
     def _run(self, instruction: str, log: ThreadLog) -> str:
-        # 起手一张 L1 截图
-        first = self.sensor.capture(ScreenLevel.L1)
-        self.tool.last_capture = first
-        screen_w, screen_h = first.sent_size
+        # 起手 L1 截图：仅当配置要喂给 LLM 时才真正抓图 + 落盘 + 设为 last_capture。
+        # 否则只问一下虚拟桌面尺寸用于 tool schema；step-000-init.png 不存在。
+        feed_initial = bool(getattr(self.cfg.screenshot, "feed_initial_l1_to_llm", False))
+        first: Capture | None = None
+        init_name: str | None = None
+        if feed_initial:
+            first = self.sensor.capture(ScreenLevel.L1)
+            self.tool.last_capture = first
+            screen_w, screen_h = first.sent_size
+        else:
+            # 只查虚拟桌面尺寸，不抓像素，也不写文件。模型若需要看桌面会自己
+            # 调 screenshot；坐标的反算交给后续的真实截图（active_app L2 等）。
+            screen_w, screen_h = self.sensor.virtual_size()
         tool_schema = ComputerTool.openai_tool_schema(screen_w, screen_h)
         # 本次 run 要发给 LLM 的 tools 列表（computer + 按 cfg 启用的 meta tools）。
         # meta tool 的 schema / 派发逻辑都在 ctrlapp.meta_tools 模块里。
         tools_for_llm = [tool_schema] + meta_tools.build_meta_tool_schemas(self.cfg)
-        log.info(f"initial screenshot {screen_w}x{screen_h}")
-        init_name = log.save_image(first.png_bytes(), "step-000-init", level="INFO")
-        self._record_img(first.png_bytes(), init_name)
-        if init_name:
-            self._emit("step_image", step=0, level=first.level.value,
-                       width=screen_w, height=screen_h,
-                       path=str(log.run_dir / init_name) if log.run_dir else None,
-                       file=init_name,
-                       thread_id=log.id if log else None,
-                       phase="init")
+        log.info(f"initial screen {screen_w}x{screen_h} (feed_initial_l1={feed_initial})")
+        if feed_initial and first is not None:
+            init_name = log.save_image(first.png_bytes(), "step-000-init", level="INFO")
+            self._record_img(first.png_bytes(), init_name)
+            if init_name:
+                self._emit("step_image", step=0, level=first.level.value,
+                           width=screen_w, height=screen_h,
+                           path=str(log.run_dir / init_name) if log.run_dir else None,
+                           file=init_name,
+                           thread_id=log.id if log else None,
+                           phase="init")
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": (
@@ -765,28 +777,36 @@ class Agent:
                 ),
             })
             messages.append({"role": "assistant", "content": "Understood, I'll proactively call remember_icon when I encounter an icon worth registering."})
-        # 真正的 instruction + 起手 L1 截图
-        first_block, first_sent = self._capture_image_part(first)
-        self._record_img(first_sent, init_name)
-        messages.append({
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"任务：{instruction}\n\n"
+        # 真正的 instruction + (可选)起手 L1 截图（feed_initial 已在 _run 顶部解析）
+        instruction_content: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": (
+                    f"任务：{instruction}\n\n"
+                    + (
                         f"[level=L1] 以下是当前桌面截图：发送尺寸 {screen_w}x{screen_h}，"
                         f"原始 {first.raw_size[0]}x{first.raw_size[1]}；"
                         f"在屏幕坐标系中位于 (left={first.offset[0]}, top={first.offset[1]}, "
                         f"right={first.offset[0] + first.raw_size[0]}, bottom={first.offset[1] + first.raw_size[1]})。"
                         f" `computer` 工具的 coordinate 用 {screen_w}x{screen_h} 这个发送坐标系。"
-                    ),
-                },
-                first_block,
-            ],
+                        if feed_initial else
+                        f"（未附起手截图。系统已就位，coordinate 默认坐标系为 {screen_w}x{screen_h}；"
+                        "若需要看桌面再决策，请显式调用 `screenshot` 或先 `launch_app` 让目标 App 置前。）"
+                    )
+                ),
+            },
+        ]
+        if feed_initial:
+            first_block, first_sent = self._capture_image_part(first)
+            self._record_img(first_sent, init_name)
+            instruction_content.append(first_block)
+        messages.append({
+            "role": "user",
+            "content": instruction_content,
         })
-        # 缓存"最近一张 L1"，供 remember_icon 工具裁剪用
-        self._last_png_by_level["L1"] = first.png_bytes()
+        # 缓存"最近一张 L1"，供 remember_icon 工具裁剪用（仅当我们真的抓了 L1）
+        if feed_initial and first is not None:
+            self._last_png_by_level["L1"] = first.png_bytes()
 
         # ---- F3 持久化续接 ----
         # 如果 thread 目录里有 messages.json（同 thread 上一次任务结尾保存的快照），
@@ -925,6 +945,11 @@ class Agent:
             had_screenshot = False
             step_tool_records: list[dict[str, Any]] = []
             step_preview_pngs: list[bytes] = []
+            # R2/R3 follow-up images: tool image_png from non-screenshot actions.
+            # Format: (label, png_bytes, attached_capture | None) — appended to
+            # the post-step user message; if a Capture is attached, its coord
+            # metadata is rendered alongside so the model uses the right frame.
+            step_meta_pngs: list[tuple[str, bytes, Any]] = []
             for tc in tool_calls:
                 fn_name = tc.name
                 try:
@@ -940,7 +965,8 @@ class Agent:
 
                 if fn_name != "computer":
                     tr = meta_tools.dispatch_meta_tool(
-                        fn_name, args, self.cfg, self._last_png_by_level
+                        fn_name, args, self.cfg, self._last_png_by_level,
+                        sensor=self.sensor,
                     )
                     if tr is None:
                         tr = ToolResult(error=f"unknown tool: {fn_name}")
@@ -977,6 +1003,48 @@ class Agent:
                 step_tool_records.append({"action": action, "args": args, "result": content_str})
                 self._emit("tool_result", step=step + 1, action=action,
                            ok=tr.error is None, output=tr.output or "", error=tr.error or "")
+
+                # R2 / R3 follow-up image (e.g. launch_app L2, click-verify L2 on
+                # suspected miss). For action='screenshot' the image already
+                # rides via the post-step capture path below; skip duplicates.
+                if tr.image_png and action != "screenshot" and not tr.error:
+                    if fn_name == "launch_app":
+                        label = f"launch_app({args.get('name','?')}) L2"
+                        save_tag = f"step-{step + 1:03d}-launch_app-l2"
+                    elif fn_name == "computer":
+                        label = f"{action} post-click L2 (low pixel-change → likely miss)"
+                        save_tag = f"step-{step + 1:03d}-{action}-postverify-l2"
+                    else:
+                        label = f"{fn_name} follow-up image"
+                        save_tag = f"step-{step + 1:03d}-{fn_name}-l2"
+                    # If the tool also attached a Capture, pass it along so the
+                    # coordinate-frame metadata text and self.tool.last_capture
+                    # can be updated together. Exception: if the tool ALSO
+                    # attached an active-app rect, the post-step path below
+                    # will re-capture an L2 of that exact rect and show it as
+                    # the main image — so skip the follow-up to avoid sending
+                    # a near-duplicate image. Only the rect/capture state is
+                    # installed.
+                    if tr.attached_active_rect is not None:
+                        if tr.attached_capture is not None:
+                            self.tool.last_capture = tr.attached_capture
+                        self.tool.set_active_app_rect(tr.attached_active_rect)
+                        try:
+                            saved_meta_name = log.save_image(tr.image_png, save_tag, level="INFO")
+                            if saved_meta_name:
+                                self._record_img(tr.image_png, saved_meta_name)
+                        except Exception as e:
+                            log.warning(f"failed to persist follow-up image {save_tag}: {e}")
+                    else:
+                        step_meta_pngs.append((label, tr.image_png, tr.attached_capture))
+                        if tr.attached_capture is not None:
+                            self.tool.last_capture = tr.attached_capture
+                        try:
+                            saved_meta_name = log.save_image(tr.image_png, save_tag, level="INFO")
+                            if saved_meta_name:
+                                self._record_img(tr.image_png, saved_meta_name)
+                        except Exception as e:
+                            log.warning(f"failed to persist follow-up image {save_tag}: {e}")
 
                 messages.append(
                     {
@@ -1031,6 +1099,51 @@ class Agent:
             if had_screenshot and self.tool.last_capture is not None:
                 post = self.tool.last_capture
                 tag = f"模型请求的截图 ({post.level.value})"
+            elif self.tool.active_app_rect is not None:
+                # Frame-stickiness: while an active-app rect is pinned (set by
+                # launch_app / focus_window), keep the coordinate frame stable.
+                # First time after the rect was (re)installed we show an L2 of
+                # the whole rect so the model has a complete "map". After that
+                # we downgrade to L3 (cursor_local) per design — the model has
+                # already memorised the rect's structure, so subsequent posts
+                # only need a small high-detail tile around the cursor for
+                # change verification. Coordinate frame stays L2 (the rect),
+                # because last_capture isn't overwritten by the L3.
+                if not self.tool.active_app_l2_shown:
+                    left, top, right, bottom = self.tool.active_app_rect
+                    w, h = max(1, right - left), max(1, bottom - top)
+                    try:
+                        post = self.sensor.capture_region(left, top, w, h)
+                        self.tool.last_capture = post
+                        self.tool.active_app_l2_shown = True
+                        tag = "动作后截图 (L2 active app, first map)"
+                    except Exception as e:
+                        log.warning(f"active_app_rect L2 capture failed, falling back to L1: {e}")
+                        post = self.sensor.capture(ScreenLevel.L1)
+                        self.tool.last_capture = post
+                        self.tool.set_active_app_rect(None)
+                        tag = "动作后截图 (L1)"
+                else:
+                    try:
+                        # L3 is around the current cursor. Don't overwrite
+                        # last_capture — the L2-of-rect remains the active
+                        # coordinate frame for the next click.
+                        post = self.sensor.capture(ScreenLevel.L3)
+                        tag = "动作后截图 (L3 cursor-local; coordinate frame still = L2 active app)"
+                    except Exception as e:
+                        log.warning(f"L3 post capture failed, falling back to active-app L2: {e}")
+                        left, top, right, bottom = self.tool.active_app_rect
+                        w, h = max(1, right - left), max(1, bottom - top)
+                        try:
+                            post = self.sensor.capture_region(left, top, w, h)
+                            self.tool.last_capture = post
+                            tag = "动作后截图 (L2 active app, L3 fallback)"
+                        except Exception as e2:
+                            log.warning(f"active_app_rect L2 capture also failed: {e2}")
+                            post = self.sensor.capture(ScreenLevel.L1)
+                            self.tool.last_capture = post
+                            self.tool.set_active_app_rect(None)
+                            tag = "动作后截图 (L1)"
             else:
                 post = self.sensor.capture(ScreenLevel.L1)
                 self.tool.last_capture = post
@@ -1087,6 +1200,12 @@ class Agent:
                     f"[level={level_tag}] {tag}：发送尺寸 {p_sw}x{p_sh}（原始 {p_rw}x{p_rh}）；"
                     f"在屏幕坐标系中位于 (left={p_ox}, top={p_oy}, right={p_ox + p_rw}, bottom={p_oy + p_rh})；"
                     f"图片内 (px,py) → 屏幕坐标 ({p_ox}+px*{p_rw / p_sw:.3f}, {p_oy}+py*{p_rh / p_sh:.3f})。"
+                    + (
+                        "（活动 App 已锁定，后续 post 截图都会以此 App 的窗口区域为准；"
+                        "若需要重新看整桌面，请显式调用 screenshot(level='fullscreen')，这会同时解除锁定。）"
+                        if (level_tag == "L2" and self.tool.active_app_rect is not None)
+                        else ""
+                    )
                 )},
             ]
             post_block, post_sent = self._capture_image_part(post)
@@ -1110,6 +1229,21 @@ class Agent:
             if saved_dialog_hint:
                 content.append({"type": "text", "text": saved_dialog_hint})
                 log.warning("save_dialog sidebar guard triggered; hint injected")
+            for label, meta_png, meta_cap in step_meta_pngs:
+                if meta_cap is not None:
+                    m_ox, m_oy = meta_cap.offset
+                    m_rw, m_rh = meta_cap.raw_size
+                    m_sw, m_sh = meta_cap.sent_size
+                    coord_text = (
+                        f"[follow-up image] {label}: 发送尺寸 {m_sw}x{m_sh}（原始 {m_rw}x{m_rh}）；"
+                        f"在屏幕坐标系中位于 (left={m_ox}, top={m_oy}, right={m_ox + m_rw}, bottom={m_oy + m_rh})；"
+                        f"图片内 (px,py) → 屏幕坐标 ({m_ox}+px*{m_rw / m_sw:.3f}, {m_oy}+py*{m_rh / m_sh:.3f})。"
+                        f"**这张图是当前活动的坐标参考系**——下一步 `coordinate` 必须按这张图的像素来给（不是上方的 L1）。"
+                    )
+                else:
+                    coord_text = f"[follow-up image] {label}"
+                content.append({"type": "text", "text": coord_text})
+                content.append({"type": "image_url", "image_url": {"url": _data_url(meta_png)}})
             for idx, prev_png in enumerate(step_preview_pngs, start=1):
                 content.append({
                     "type": "text",
