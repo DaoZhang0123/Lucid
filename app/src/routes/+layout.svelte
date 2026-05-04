@@ -1,6 +1,7 @@
 <script lang="ts">
   import { isLoading } from "svelte-i18n";
   import { setupI18n } from "$lib/i18n";
+  import ConfirmModal from "$lib/ConfirmModal.svelte";
 
   // Bootstrap i18n once at the root layout. Locale lookup currently falls back
   // to navigator -> "en". A user-selectable locale (saved to config.toml [ui])
@@ -14,4 +15,5 @@
   <div style="padding: 2rem; font-family: sans-serif; color: #6b7280;">Loading…</div>
 {:else}
   {@render children()}
+  <ConfirmModal />
 {/if}

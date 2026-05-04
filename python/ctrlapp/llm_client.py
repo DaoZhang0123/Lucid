@@ -86,6 +86,9 @@ class LLMClient(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_tokens: int,
+        *,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> LLMResponse: ...
 
 
@@ -119,13 +122,21 @@ class OpenAIChatClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_tokens: int,
+        *,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> LLMResponse:
-        resp = self._client.chat.completions.create(
-            model=self.model,
-            messages=messages,  # type: ignore[arg-type]
-            tools=tools,  # type: ignore[arg-type]
-            max_tokens=max_tokens,
-        )
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "max_tokens": max_tokens,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        resp = self._client.chat.completions.create(**kwargs)
         msg = resp.choices[0].message
         text = msg.content or ""
         calls: list[ToolCall] = []
@@ -319,6 +330,9 @@ class AnthropicClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_tokens: int,
+        *,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> LLMResponse:
         system_text, msgs = _openai_messages_to_anthropic(messages)
         ant_tools = _openai_tools_to_anthropic(tools)
@@ -332,6 +346,10 @@ class AnthropicClient:
             kwargs["system"] = system_text
         if ant_tools:
             kwargs["tools"] = ant_tools
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if top_p is not None:
+            kwargs["top_p"] = top_p
 
         resp = self._client.messages.create(**kwargs)
 
@@ -377,6 +395,9 @@ class CopilotClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         max_tokens: int,
+        *,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> LLMResponse:
         token, base_url = self._tm.get_active()
         # 不缓存 OpenAI client：base_url/token 可能在 30 分钟后变更
@@ -394,12 +415,17 @@ class CopilotClient:
             max_retries=_SDK_MAX_RETRIES,
             http_client=_build_openai_http_client(),
         )
-        resp = client.chat.completions.create(
-            model=self.model,
-            messages=messages,  # type: ignore[arg-type]
-            tools=tools,  # type: ignore[arg-type]
-            max_tokens=max_tokens,
-        )
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "max_tokens": max_tokens,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        resp = client.chat.completions.create(**kwargs)
         msg = resp.choices[0].message
         text = msg.content or ""
         calls: list[ToolCall] = []

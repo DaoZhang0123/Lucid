@@ -2,8 +2,9 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
+  import { appConfirm } from "$lib/appConfirm.svelte";
 
-  type AppItem = { slug: string; title: string; file: string; lines: number; has_user_entries: boolean };
+  type AppItem = { slug: string; title: string; file: string; lines: number; has_user_entries: boolean; is_seeded?: boolean };
 
   // "global" = tools.md ; otherwise app slug.
   let scope = $state<string>("global");
@@ -95,7 +96,7 @@
     const msg = scope === "global"
       ? $_("tools_page.reset_confirm")
       : `Reset tips/${scope}.md to its built-in seed? Custom entries will be lost.`;
-    if (!confirm(msg)) return;
+    if (!(await appConfirm(msg, { danger: true, okLabel: "Reset" }))) return;
     try {
       if (scope === "global") {
         await invoke("tools_reset");
@@ -108,11 +109,6 @@
     }
   }
 
-  async function selectScope(s: string) {
-    scope = s;
-    await load();
-  }
-
   async function createNewApp() {
     const slug = newAppSlug.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
     if (!slug) return;
@@ -121,6 +117,39 @@
       await invoke("app_tips_write", { app: slug, text: "" });
       newAppSlug = "";
       scope = slug;
+      await load();
+    } catch (e) {
+      err = String(e);
+    }
+  }
+
+  async function selectScope(s: string) {
+    scope = s;
+    await load();
+  }
+
+  let currentApp = $derived<AppItem | undefined>(
+    scope === "global" ? undefined : apps.find((a) => a.slug === scope)
+  );
+  let canDeleteApp = $derived(scope !== "global");
+
+  async function deleteApp() {
+    if (!canDeleteApp) return;
+    const slug = scope;
+    const builtin = currentApp?.is_seeded === true;
+    const msg = builtin
+      ? `Delete built-in app tips tips/${slug}/tips.md? A '.disabled' marker will be created so the seeder won't recreate it. Click "Reset to seed" later to re-enable the built-in defaults.`
+      : `Delete user app tips tips/${slug}/tips.md? This is irreversible.`;
+    if (!(await appConfirm(msg, { danger: true, okLabel: "Delete" }))) return;
+    err = "";
+    try {
+      const r = await invoke<any>("app_tips_delete", { app: slug });
+      if (r && r.ok === false) {
+        err = `Delete refused: ${r.reason ?? "unknown"}`;
+        return;
+      }
+      // Pop back to global view and refresh list.
+      scope = "global";
       await load();
     } catch (e) {
       err = String(e);
@@ -144,27 +173,30 @@
     {@html $_("tools_page.hint")}
   </p>
 
-  <div class="tabs">
-    <button class="tab" class:active={scope === "global"} onclick={() => selectScope("global")}>
-      <span class="tab-title">Global · tools.md</span>
-      <span class="tab-sub">always-on</span>
-    </button>
-    {#each apps as a (a.slug)}
-      <button class="tab" class:active={scope === a.slug} onclick={() => selectScope(a.slug)}>
-        <span class="tab-title">{a.title}</span>
-        <span class="tab-sub">
-          tips/{a.slug}.md · {a.lines}{a.has_user_entries ? " ✎" : ""}
-        </span>
-      </button>
-    {/each}
-    <div class="tab newapp">
+  <div class="scope-bar">
+    <label class="scope-label">
+      <span>Scope</span>
+      <select class="scope-select" value={scope} onchange={(e) => selectScope((e.currentTarget as HTMLSelectElement).value)}>
+        <option value="global">Global · tools.md (always-on)</option>
+        {#if apps.length}
+          <optgroup label="Per-app tips">
+            {#each apps as a (a.slug)}
+              <option value={a.slug}>
+                {a.title} · tips/{a.slug}.md · {a.lines} lines{a.has_user_entries ? " ✎" : ""}
+              </option>
+            {/each}
+          </optgroup>
+        {/if}
+      </select>
+    </label>
+    <div class="newapp">
       <input
         type="text"
         placeholder="new app slug"
         bind:value={newAppSlug}
         onkeydown={(e) => { if (e.key === "Enter") createNewApp(); }}
       />
-      <button onclick={createNewApp} disabled={!newAppSlug.trim()}>+ Add</button>
+      <button onclick={createNewApp} disabled={!newAppSlug.trim()}>+ Add app</button>
     </div>
   </div>
 
@@ -201,6 +233,16 @@
   <div class="actions">
     <button onclick={save} disabled={saving || !enabled}>{saving ? $_("tools_page.saving_button") : $_("tools_page.save_full_button")}</button>
     <button class="danger" onclick={reset} disabled={!enabled}>{$_("tools_page.reset_button")}</button>
+    {#if scope !== "global"}
+      <button
+        class="danger"
+        onclick={deleteApp}
+        disabled={!canDeleteApp}
+        title={currentApp?.is_seeded
+          ? `Delete tips/${scope}/tips.md and write a .disabled marker (built-in app — Reset to seed re-enables it)`
+          : `Delete tips/${scope}/tips.md`}
+      >Delete app tips</button>
+    {/if}
     <button onclick={load}>{$_("tools_page.reload_button")}</button>
     {#if savedAt}<span class="ok">{$_("tools_page.saved_at", { values: { at: savedAt } })}</span>{/if}
   </div>
@@ -215,18 +257,17 @@
   .meta { font-size: 0.78rem; color: #6b7280; }
   .err { color: #b91c1c; }
 
-  .tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.6rem 0 0.4rem; }
-  .tab { display: flex; flex-direction: column; align-items: flex-start; gap: 0.1rem;
-         padding: 0.35rem 0.7rem; background: #f3f4f6; border: 1px solid #e5e7eb;
-         border-radius: 6px; cursor: pointer; font: inherit; min-width: 8rem; }
-  .tab:hover { background: #e5e7eb; }
-  .tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
-  .tab-title { font-weight: 600; font-size: 0.85rem; }
-  .tab-sub { font-size: 0.7rem; opacity: 0.75; }
-  .tab.newapp { background: #fff; padding: 0.2rem 0.3rem; flex-direction: row; align-items: center; gap: 0.25rem; cursor: default; }
-  .tab.newapp input { width: 7rem; padding: 0.25rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; font: inherit; font-size: 0.8rem; }
-  .tab.newapp button { padding: 0.25rem 0.5rem; background: #10b981; color: #fff; border: 0; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
-  .tab.newapp button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .scope-bar { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+               margin: 0.7rem 0 0.5rem; padding: 0.5rem 0.7rem;
+               background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; }
+  .scope-label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: #374151; }
+  .scope-label > span { font-weight: 600; }
+  .scope-select { padding: 0.35rem 0.5rem; border: 1px solid #d1d5db; border-radius: 4px;
+                  font: inherit; min-width: 22rem; background: #fff; cursor: pointer; }
+  .newapp { display: flex; align-items: center; gap: 0.3rem; margin-left: auto; }
+  .newapp input { width: 9rem; padding: 0.3rem 0.5rem; border: 1px solid #d1d5db; border-radius: 4px; font: inherit; font-size: 0.8rem; }
+  .newapp button { padding: 0.3rem 0.65rem; background: #10b981; color: #fff; border: 0; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+  .newapp button:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .quick { display: flex; gap: 0.4rem; margin: 0.6rem 0; }
   .quick input { flex: 1; padding: 0.4rem 0.6rem; border: 1px solid #d1d5db; border-radius: 4px; font: inherit; }

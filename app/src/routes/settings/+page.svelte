@@ -31,6 +31,8 @@
 
   let autonomy = $state<"full" | "confirm_critical" | "confirm_each">("confirm_critical");
   let maxSteps = $state(25);
+  let temperature = $state<number>(0.2);
+  let topP = $state<number>(1.0);
   let saving = $state(false);
   let savedAt = $state("");
   let error = $state("");
@@ -57,6 +59,8 @@
         provider: string;
         autonomy: string;
         max_steps: number;
+        temperature: number | null;
+        top_p: number | null;
         proxy: { base_url: string; model: string; api_key: string };
         anthropic: { api_key: string; model: string; base_url: string };
         copilot: { model: string };
@@ -76,6 +80,8 @@
         autonomy = cfg.autonomy;
       }
       if (cfg.max_steps && cfg.max_steps > 0) maxSteps = cfg.max_steps;
+      if (typeof cfg.temperature === "number") temperature = cfg.temperature;
+      if (typeof cfg.top_p === "number") topP = cfg.top_p;
     } catch (e) {
       error = String(e);
     }
@@ -96,6 +102,8 @@
           provider,
           autonomy,
           max_steps: maxSteps,
+          temperature,
+          top_p: topP,
           proxy: { base_url: baseUrl, model, api_key: apiKey },
           anthropic: { api_key: anthApiKey, model: anthModel, base_url: anthBaseUrl },
           copilot: { model: copModel },
@@ -312,6 +320,15 @@
       {$_("settings.max_steps_label")}
       <input type="number" min="1" max="200" bind:value={maxSteps} />
     </label>
+    <label>
+      {$_("settings.temperature_label")}
+      <input type="number" min="0" max="2" step="0.05" bind:value={temperature} />
+    </label>
+    <label>
+      {$_("settings.top_p_label")}
+      <input type="number" min="0" max="1" step="0.05" bind:value={topP} />
+    </label>
+    <p class="hint">{$_("settings.sampling_hint")}</p>
     <div class="row">
       <button onclick={save} disabled={saving}>{saving ? $_("settings.saving_button") : $_("settings.save_button")}</button>
       {#if savedAt}<span class="ok">{$_("settings.saved_at", { values: { at: savedAt } })}</span>{/if}

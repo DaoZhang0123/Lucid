@@ -679,6 +679,8 @@ class Agent:
                     messages=messages,
                     tools=tools,
                     max_tokens=self.cfg.llm.max_tokens,
+                    temperature=self.cfg.llm.temperature,
+                    top_p=self.cfg.llm.top_p,
                 )
             except APIConnectionError as e:
                 last_exc = e

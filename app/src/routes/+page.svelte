@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
+  import { appConfirm } from "$lib/appConfirm.svelte";
   import {
     chat,
     ensureChatListeners,
@@ -71,7 +72,7 @@
 
   async function onDeleteThread(e: MouseEvent, id: string) {
     e.stopPropagation();
-    if (!confirm($_("sidebar.thread_delete_confirm"))) return;
+    if (!(await appConfirm($_("sidebar.thread_delete_confirm"), { danger: true }))) return;
     await deleteThread(id);
   }
 
@@ -88,6 +89,34 @@
     }
     return `${d.getMonth() + 1}/${d.getDate()}`;
   }
+
+  // -------- Sidebar pagination --------
+  const THREAD_PAGE_SIZE = 10;
+  let threadPage = $state(0);
+  let threadPageCount = $derived(Math.max(1, Math.ceil(chat.threads.length / THREAD_PAGE_SIZE)));
+  $effect(() => {
+    // Clamp when threads list shrinks (e.g. after delete).
+    if (threadPage > threadPageCount - 1) threadPage = threadPageCount - 1;
+    if (threadPage < 0) threadPage = 0;
+  });
+  let pagedThreads = $derived(
+    chat.threads.slice(threadPage * THREAD_PAGE_SIZE, (threadPage + 1) * THREAD_PAGE_SIZE)
+  );
+  // Always make the active thread visible — jump to its page if the user
+  // picked / opened a thread that lives on a different page. We remember the
+  // id we last auto-jumped for so that subsequent manual page clicks (which
+  // don't change `activeThreadId`) aren't yanked back to page 0.
+  let lastJumpedActive: string | null = null;
+  $effect(() => {
+    const aid = chat.activeThreadId;
+    if (!aid) { lastJumpedActive = null; return; }
+    if (aid === lastJumpedActive) return;
+    const idx = chat.threads.findIndex((t) => t.id === aid);
+    if (idx < 0) return;
+    const p = Math.floor(idx / THREAD_PAGE_SIZE);
+    if (p !== threadPage) threadPage = p;
+    lastJumpedActive = aid;
+  });
 </script>
 
 <div class="app">
@@ -129,7 +158,7 @@
           <button class="side-new" title={$_("sidebar.new_thread_title")} onclick={newThread}>+</button>
         </div>
         <div class="thread-list">
-          {#each chat.threads as t (t.id)}
+          {#each pagedThreads as t (t.id)}
             <div class="thread" class:active={t.id === chat.activeThreadId}
                  role="button" tabindex="0"
                  onclick={() => onPickThread(t.id)}
@@ -149,6 +178,13 @@
             <div class="empty">{$_("sidebar.empty")}</div>
           {/if}
         </div>
+        {#if threadPageCount > 1}
+          <div class="pager">
+            <button class="pg-btn" onclick={() => { if (threadPage > 0) threadPage -= 1; }} disabled={threadPage === 0} title="Previous page">‹</button>
+            <span class="pg-info">{threadPage + 1} / {threadPageCount}</span>
+            <button class="pg-btn" onclick={() => { if (threadPage < threadPageCount - 1) threadPage += 1; }} disabled={threadPage >= threadPageCount - 1} title="Next page">›</button>
+          </div>
+        {/if}
       </aside>
     {/if}
 
@@ -264,6 +300,14 @@
   .side-new { margin-left: auto; background: #2563eb; color: #fff; border: 0; border-radius: 4px;
               width: 1.6rem; height: 1.6rem; font-size: 1.1rem; line-height: 1; cursor: pointer; }
   .thread-list { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0.3rem; min-width: 0; }
+  .pager { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem;
+           padding: 0.35rem 0.6rem; border-top: 1px solid #1f2937; background: #0b1220;
+           font-size: 0.72rem; color: #cbd5e1; }
+  .pg-btn { background: #1f2937; color: #e5e7eb; border: 1px solid #374151; border-radius: 4px;
+            width: 1.6rem; height: 1.4rem; line-height: 1; cursor: pointer; font-size: 0.9rem; padding: 0; }
+  .pg-btn:hover:not(:disabled) { background: #374151; }
+  .pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .pg-info { font-variant-numeric: tabular-nums; opacity: 0.85; }
   .thread { display: block; width: 100%; text-align: left; background: transparent; color: inherit;
             border: 0; padding: 0.5rem 0.6rem; border-radius: 6px; cursor: pointer; position: relative;
             margin-bottom: 0.15rem; }

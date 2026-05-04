@@ -343,6 +343,13 @@ class ThreadLog:
             key=lambda p: p.name,
         )
         excess = len(runs) - keep
+        if excess <= 0:
+            # Important: bail out before slicing. ``runs[:excess]`` with a
+            # negative excess is interpreted as ``runs[:-N]`` (all but the
+            # last N), which would silently delete the oldest threads on
+            # every new-thread creation — capping the on-disk count at
+            # roughly ``keep`` even when the user has way fewer than that.
+            return
         for old in runs[:excess]:
             shutil.rmtree(old, ignore_errors=True)
 

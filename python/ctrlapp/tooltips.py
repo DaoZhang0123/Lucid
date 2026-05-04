@@ -106,6 +106,16 @@ def app_tips_path(cfg: ToolsConfig, app: str) -> Path:
     return app_dir(cfg, app) / "tips.md"
 
 
+def app_disabled_marker(cfg: ToolsConfig, app: str) -> Path:
+    """Marker file that suppresses re-seeding for a built-in app the user
+    has explicitly deleted. Lives next to the tips file as ``.disabled``."""
+    return app_dir(cfg, app) / ".disabled"
+
+
+def is_app_disabled(cfg: ToolsConfig, app: str) -> bool:
+    return app_disabled_marker(cfg, app).is_file()
+
+
 # ---------------------------------------------------------------------------
 # Seed / read / write
 # ---------------------------------------------------------------------------
@@ -133,6 +143,10 @@ def _ensure_app_seeded(cfg: ToolsConfig, app_slug: str) -> Path | None:
     """
     p = app_tips_path(cfg, app_slug)
     seed = _app_seeds().get(app_slug)
+    # If the user has explicitly deleted a built-in app's tips, honour that
+    # and never re-seed until they reset/re-enable.
+    if is_app_disabled(cfg, app_slug):
+        return p if p.is_file() else None
     if not p.is_file():
         if seed is None:
             return p if p.is_file() else None
@@ -158,9 +172,12 @@ def _ensure_app_seeded(cfg: ToolsConfig, app_slug: str) -> Path | None:
 
 
 def seed_all_apps(cfg: ToolsConfig) -> list[str]:
-    """Make sure every known app seed file exists. Returns slugs touched."""
+    """Make sure every known app seed file exists. Returns slugs touched.
+    Skips apps the user has explicitly disabled via ``.disabled`` marker."""
     out: list[str] = []
     for slug in _app_seeds().keys():
+        if is_app_disabled(cfg, slug):
+            continue
         if _ensure_app_seeded(cfg, slug) is not None:
             out.append(slug)
     return out
@@ -237,10 +254,14 @@ def list_app_tips(cfg: ToolsConfig) -> list[dict]:
                 "file": str(f),
                 "lines": len(entry_lines),
                 "has_user_entries": user_entries > 0,
+                "is_seeded": slug in _app_seeds(),
             })
     # also surface seed-only slugs that haven't been written yet
     for slug, (title, _body) in _app_seeds().items():
         if slug in seen:
+            continue
+        if is_app_disabled(cfg, slug):
+            # User-deleted built-in: keep it hidden until they reset.
             continue
         out.append({
             "slug": slug,
@@ -248,6 +269,7 @@ def list_app_tips(cfg: ToolsConfig) -> list[dict]:
             "file": str(app_tips_path(cfg, slug)),
             "lines": 0,
             "has_user_entries": False,
+            "is_seeded": True,
         })
     return out
 
@@ -434,7 +456,58 @@ def reset_app_to_seed(cfg: ToolsConfig, app: str) -> bool:
     p = app_tips_path(cfg, slug)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(f"# {seed[0]}\n\n{seed[1]}", encoding="utf-8")
+    # Reset = re-enable: clear any prior delete marker.
+    marker = app_disabled_marker(cfg, slug)
+    if marker.exists():
+        try:
+            marker.unlink()
+        except OSError:
+            pass
     return True
+
+
+def delete_app_tips(cfg: ToolsConfig, app: str) -> dict:
+    """Delete a per-app tips file.
+
+    For user-created apps (no in-code seed): removes ``apps/<slug>/tips.md``
+    and the enclosing folder if empty.
+
+    For built-in apps (with a registered seed): removes the tips file AND
+    writes a ``.disabled`` marker so the seeder won't recreate it. Call
+    :func:`reset_app_to_seed` to re-enable the built-in defaults.
+    """
+    slug = _slugify(app)
+    if not slug:
+        return {"ok": False, "reason": "invalid slug"}
+    p = app_tips_path(cfg, slug)
+    if p.exists():
+        try:
+            p.unlink()
+        except OSError as e:
+            return {"ok": False, "reason": f"unlink failed: {e}"}
+    is_builtin = slug in _app_seeds()
+    if is_builtin:
+        # Drop a marker so _ensure_app_seeded won't resurrect the file.
+        marker = app_disabled_marker(cfg, slug)
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("deleted by user\n", encoding="utf-8")
+        except OSError as e:
+            return {"ok": False, "reason": f"marker write failed: {e}"}
+        return {"ok": True, "disabled": True}
+    # User-created app: try to clean up the now-empty folder.
+    parent = p.parent
+    if parent.is_dir():
+        try:
+            next(parent.iterdir())
+        except StopIteration:
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
+        except OSError:
+            pass
+    return {"ok": True}
 
 
 def _rotate(cfg: ToolsConfig, p: Path) -> None:

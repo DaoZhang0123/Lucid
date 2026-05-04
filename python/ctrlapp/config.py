@@ -55,6 +55,13 @@ class LLMConfig:
     max_tokens: int = 16384
     max_steps: int = 25
     enable_prompt_cache: bool = True
+    # Sampling parameters. Sent to the provider on every request when not None;
+    # leave None to use the provider's server-side default (usually
+    # temperature=1.0, top_p=1.0). For GUI-agent / tool-use workloads a low
+    # temperature is recommended; combining a low temperature with a tight
+    # top_p can cause repetition loops, so prefer adjusting only one.
+    temperature: float | None = 0.2
+    top_p: float | None = 1.0
     # 发往模型的对话历史里最多保留多少张截图（含起始图）。
     # 超出后旧图被替换成一段占位文字，避免 413 Request Entity Too Large。
     keep_recent_screenshots: int = 0

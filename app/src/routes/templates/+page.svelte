@@ -3,6 +3,7 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { _ } from "svelte-i18n";
+  import { appConfirm } from "$lib/appConfirm.svelte";
   import { startTask, ensureChatListeners } from "$lib/chatStore.svelte";
 
   type Tpl = { id: string; name: string; instruction: string; autonomy: string; max_steps: number };
@@ -63,7 +64,7 @@
   }
 
   async function del(id: string) {
-    if (!confirm($_("templates.delete_confirm"))) return;
+    if (!(await appConfirm($_("templates.delete_confirm"), { danger: true }))) return;
     try {
       await invoke("template_delete", { id });
       if (editing?.id === id) reset();

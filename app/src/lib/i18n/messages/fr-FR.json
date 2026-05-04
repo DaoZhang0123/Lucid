@@ -91,6 +91,9 @@
     "language_hint": "Changer la langue de l'interface. Sauvegardé par utilisateur, effet immédiat.",
     "default_autonomy_label": "Autonomie par défaut",
     "max_steps_label": "Étapes max",
+    "temperature_label": "Température",
+    "top_p_label": "Top-p",
+    "sampling_hint": "temperature : quantité d'aléa injectée dans la réponse (0 = analytique / quasi déterministe, 1 = créatif ; défaut Anthropic 1). top_p : nucleus sampling — n'échantillonne que parmi le plus petit ensemble de tokens dont la probabilité cumulée atteint top_p (1 = sans filtre). Anthropic recommande de régler soit temperature, soit top_p, pas les deux.",
     "save_button": "Enregistrer",
     "saving_button": "Enregistrement…",
     "saved_at": "Enregistré @ {at}",
@@ -106,6 +109,11 @@
   },
   "common": {
     "back": "‹ Retour"
+  },
+  "confirm": {
+    "title": "Veuillez confirmer",
+    "ok": "OK",
+    "cancel": "Annuler"
   },
   "memory": {
     "page_title": "ctrlapp · Mémoire",

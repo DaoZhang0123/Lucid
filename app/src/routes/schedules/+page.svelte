@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
+  import { appConfirm } from "$lib/appConfirm.svelte";
 
   type Spec =
     | { kind: "interval"; every_minutes: number; tz?: string }
@@ -137,7 +138,7 @@
   }
 
   async function del(id: string) {
-    if (!confirm($_("schedules.delete_confirm"))) return;
+    if (!(await appConfirm($_("schedules.delete_confirm"), { danger: true }))) return;
     try {
       await invoke("schedule_delete", { id });
       if (editing?.id === id) reset();

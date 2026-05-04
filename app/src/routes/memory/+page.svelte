@@ -2,6 +2,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
   import { _ } from "svelte-i18n";
+  import { appConfirm } from "$lib/appConfirm.svelte";
 
   let enabled = $state(true);
   let path = $state("");
@@ -36,7 +37,7 @@
   }
 
   async function clear() {
-    if (!confirm($_("memory.clear_confirm"))) return;
+    if (!(await appConfirm($_("memory.clear_confirm"), { danger: true }))) return;
     try {
       await invoke("memory_clear");
       await load();

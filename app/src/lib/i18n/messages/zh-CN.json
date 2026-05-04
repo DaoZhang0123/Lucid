@@ -91,6 +91,9 @@
     "language_hint": "切换界面语言。按用户保存，立即生效。",
     "default_autonomy_label": "默认自动度",
     "max_steps_label": "最大步数",
+    "temperature_label": "Temperature（温度）",
+    "top_p_label": "Top-p（核采样）",
+    "sampling_hint": "temperature：注入回复的随机度（0 偏分析 / 接近确定，1 偏创造；Anthropic 默认 1）。top_p：核采样——只在累计概率达到 top_p 的最小 token 集合中采样（1 = 不过滤）。Anthropic 建议 temperature 和 top_p 只调一个。",
     "save_button": "保存",
     "saving_button": "保存中…",
     "saved_at": "已保存 @ {at}",
@@ -106,6 +109,11 @@
   },
   "common": {
     "back": "‹ 返回"
+  },
+  "confirm": {
+    "title": "请确认",
+    "ok": "确定",
+    "cancel": "取消"
   },
   "memory": {
     "page_title": "ctrlapp · 记忆",

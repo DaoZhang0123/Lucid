@@ -379,6 +379,12 @@ class Sidecar:
         ok = tooltips_mod.reset_app_to_seed(self.cfg.tools, app)
         return {"ok": ok}
 
+    def _rpc_app_tips_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        app = (params.get("app") or "").strip()
+        if not app:
+            raise ValueError("app required")
+        return tooltips_mod.delete_app_tips(self.cfg.tools, app)
+
     # ---- launchers (`launch_app` meta tool) ----
 
     def _rpc_launchers_list(self, _params: dict[str, Any]) -> dict[str, Any]:

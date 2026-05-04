@@ -484,6 +484,11 @@ pub async fn app_tips_reset(app: String) -> Result<Value, String> {
     instance().request("app_tips_reset", json!({"app": app})).await
 }
 
+#[tauri::command]
+pub async fn app_tips_delete(app: String) -> Result<Value, String> {
+    instance().request("app_tips_delete", json!({"app": app})).await
+}
+
 // ---- 任务模板 ----
 #[tauri::command]
 pub async fn template_list() -> Result<Value, String> {
@@ -555,6 +560,8 @@ pub async fn read_settings() -> Result<Value, String> {
     let mut provider = String::new();
     let mut max_steps: i64 = 0;
     let mut autonomy = String::new();
+    let mut temperature: Option<f64> = None;
+    let mut top_p: Option<f64> = None;
     let mut proxy_base_url = String::new();
     let mut proxy_model = String::new();
     let mut proxy_api_key = String::new();
@@ -573,6 +580,8 @@ pub async fn read_settings() -> Result<Value, String> {
             "[llm]" => {
                 if let Some(v) = parse_kv(l, "provider")   { provider   = v; }
                 if let Some(v) = parse_kv(l, "max_steps")  { max_steps  = v.parse::<i64>().unwrap_or(0); }
+                if let Some(v) = parse_kv(l, "temperature") { temperature = v.parse::<f64>().ok(); }
+                if let Some(v) = parse_kv(l, "top_p")       { top_p       = v.parse::<f64>().ok(); }
             }
             "[llm.proxy]" => {
                 if let Some(v) = parse_kv(l, "base_url") { proxy_base_url = v; }
@@ -599,6 +608,8 @@ pub async fn read_settings() -> Result<Value, String> {
         "provider": provider,
         "autonomy": autonomy,
         "max_steps": max_steps,
+        "temperature": temperature,
+        "top_p": top_p,
         "proxy": {
             "base_url": proxy_base_url,
             "model": proxy_model,
@@ -639,6 +650,8 @@ pub struct SettingsPatch {
     pub provider: Option<String>,
     pub autonomy: Option<String>,
     pub max_steps: Option<i64>,
+    pub temperature: Option<f64>,
+    pub top_p: Option<f64>,
     pub proxy: Option<ProviderProxyPatch>,
     pub anthropic: Option<ProviderAnthropicPatch>,
     pub copilot: Option<ProviderCopilotPatch>,
@@ -660,6 +673,8 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
     let mut want: std::collections::BTreeMap<&'static str, Vec<(&'static str, String)>> = Default::default();
     if let Some(v) = &patch.provider  { want.entry("[llm]").or_default().push(("provider", v.clone())); }
     if let Some(v) = &patch.max_steps { want.entry("[llm]").or_default().push(("max_steps", v.to_string())); }
+    if let Some(v) = &patch.temperature { want.entry("[llm]").or_default().push(("temperature", format!("{}", v))); }
+    if let Some(v) = &patch.top_p       { want.entry("[llm]").or_default().push(("top_p",       format!("{}", v))); }
     if let Some(p) = &patch.proxy {
         if let Some(v) = &p.base_url { want.entry("[llm.proxy]").or_default().push(("base_url", v.clone())); }
         if let Some(v) = &p.model    { want.entry("[llm.proxy]").or_default().push(("model",    v.clone())); }
@@ -687,7 +702,7 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
         }
     }
 
-    let is_numeric = |k: &str| matches!(k, "max_steps");
+    let is_numeric = |k: &str| matches!(k, "max_steps" | "temperature" | "top_p");
     let format_kv = |k: &str, v: &str| -> String {
         if is_numeric(k) {
             format!("{k} = {v}")

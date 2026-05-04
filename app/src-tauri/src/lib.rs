@@ -79,6 +79,7 @@ pub fn run() {
             sidecar::app_tips_write,
             sidecar::app_tips_append,
             sidecar::app_tips_reset,
+            sidecar::app_tips_delete,
             sidecar::template_list,
             sidecar::template_add,
             sidecar::template_update,
