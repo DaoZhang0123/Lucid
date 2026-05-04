@@ -40,7 +40,7 @@ from .context_manager import ContextManager, build_summary_prompt
 
 _console = Console()
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT_HEAD = """\
 You are a vision-driven GUI Agent running on a Windows desktop.
 You can only interact with the system through the `computer` tool (screenshot, mouse, keyboard).
 
@@ -68,6 +68,14 @@ Working principles:
    text as the durable working memory; the images are ephemeral. Be concrete: quote exact strings, list items
    verbatim, write down `(x, y)` coordinates of buttons before you click them. Do not assume "I'll look again
    later" — later you may not be able to.
+"""
+
+# Item 9 — the two-phase preview-then-confirm protocol — is ONLY appended when
+# safety.verify_click_target_before is True. When the flag is False (current
+# default) clicks execute immediately on first call; telling the model
+# otherwise causes it to "confirm" with a duplicate click that re-hits the
+# same target as a no-op (low pixel-change), which it then misreads as a miss.
+TWO_PHASE_CLICK_SECTION = """\
 9. **Two-phase click protocol.** Every click action with a `coordinate` (`left_click` / `right_click` /
    `middle_click` / `double_click` / `triple_click` / `left_click_drag`) goes through preview-then-confirm:
    - **First call** (no `confirmed` flag, or `confirmed=false`): the click is **NOT** executed. Instead, the
@@ -81,6 +89,31 @@ Working principles:
      screenshot, or change strategy. Always prefer keyboard shortcuts over a second click attempt when
      possible. Skipping the preview entirely (e.g. blindly retrying with `confirmed=true` after a miss) is
      forbidden.
+"""
+
+# When two-phase is OFF (default), tell the model that clicks fire on first
+# call, so it doesn't waste a turn trying to "confirm". Also explain the
+# `(post-click pixel-change X%)` text it will see, so it doesn't read a low
+# percentage as a guaranteed miss (e.g. WeChat contact-row hover ≈ 1%).
+SINGLE_PHASE_CLICK_SECTION = """\
+9. **Clicks fire immediately.** Every click action (`left_click` / `right_click` / `middle_click` /
+   `double_click` / `triple_click` / `left_click_drag`) is performed on the first tool call — there is
+   NO preview-then-confirm step. You do **not** need to add `confirmed=true`; sending the same click
+   twice will hit the target twice (and on already-selected items the second hit is usually a no-op).
+   - The tool result text `(post-click pixel-change X%)` is informational, not a verdict. It is the
+     fraction of pixels that changed in a small region around the cursor between just before and just
+     after the click. A high % usually means the click did something visible nearby; a low % can mean
+     either (a) the click missed, or (b) the click landed but the visible reaction happened **far from
+     the cursor** (typical: clicking a contact in WeChat opens the chat view on the far right while
+     the cursor stays on the row → only ~1% pixels changed near the cursor, but the click DID work).
+     If a click result is ambiguous, take a fresh `screenshot(level="active_window")` to see the whole
+     window before deciding to retry — do **not** blindly re-click the same coordinate.
+   - When `(... pixel-change X%)` is below the miss threshold (default 0.5%), the system additionally
+     attaches an L3 tile around the cursor with an explicit "may have missed" hint; use that tile + a
+     fresh L2 if needed to decide whether to retry or change strategy.
+"""
+
+SYSTEM_PROMPT_TAIL = """\
 
 Operation tips library (dynamically learned):
 - The "## Operation tips" section below is a **dynamic tip library** injected from tools.md, containing reliable ways to drive
@@ -145,6 +178,16 @@ Icon memory (visual knowledge base):
   entry's description is wrong, you may register a new one and note "replaces #N" in the description; the user can decide whether to delete the old.
 - Example call: `remember_icon(label="WeChat", description="Resident green chat-bubble icon in the Windows system tray", x=1620, y=1410, w=28, h=28, level="L1")`
 """
+
+
+def _build_system_prompt(cfg: Any) -> str:
+    """Assemble the system prompt, picking the click-protocol section that
+    matches the current ``safety.verify_click_target_before`` setting so we
+    don't lie to the model about whether clicks are previewed first.
+    """
+    two_phase = bool(getattr(getattr(cfg, "safety", None), "verify_click_target_before", False))
+    click_section = TWO_PHASE_CLICK_SECTION if two_phase else SINGLE_PHASE_CLICK_SECTION
+    return SYSTEM_PROMPT_HEAD + click_section + SYSTEM_PROMPT_TAIL
 
 
 def _data_url(png: bytes, mime: str = "image/png") -> str:
@@ -733,7 +776,7 @@ class Agent:
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": (
-                SYSTEM_PROMPT
+                _build_system_prompt(self.cfg)
                 + memory_mod.memory_for_prompt(self.cfg.memory)
                 + tooltips_mod.tools_for_prompt(self.cfg.tools)
                 + (launchers_mod.catalog_for_prompt(self.cfg.launchers)
@@ -1014,8 +1057,8 @@ class Agent:
                         label = f"launch_app({args.get('name','?')}) L2"
                         save_tag = f"step-{step + 1:03d}-launch_app-l2"
                     elif fn_name == "computer":
-                        label = f"{action} post-click L2 (low pixel-change → likely miss)"
-                        save_tag = f"step-{step + 1:03d}-{action}-postverify-l2"
+                        label = f"{action} post-click L3 around cursor (low pixel-change → likely miss; coordinate frame unchanged)"
+                        save_tag = f"step-{step + 1:03d}-{action}-postverify-l3"
                     else:
                         label = f"{fn_name} follow-up image"
                         save_tag = f"step-{step + 1:03d}-{fn_name}-l2"
@@ -1126,26 +1169,43 @@ class Agent:
                         self.tool.set_active_app_rect(None)
                         tag = "动作后截图 (L1)"
                 else:
-                    try:
-                        # L3 is around the current cursor. Don't overwrite
-                        # last_capture — the L2-of-rect remains the active
-                        # coordinate frame for the next click.
-                        post = self.sensor.capture(ScreenLevel.L3)
-                        tag = "动作后截图 (L3 cursor-local; coordinate frame still = L2 active app)"
-                    except Exception as e:
-                        log.warning(f"L3 post capture failed, falling back to active-app L2: {e}")
+                    # 默认 L3 cursor-local；但如果 [screenshot] post_step_use_l3 = false
+                    # 则继续每步重拍 active_app_rect 的 L2（适用于点击常导致焦点远离鼠标的 App）。
+                    use_l3 = bool(getattr(self.cfg.screenshot, "post_step_use_l3", True))
+                    if not use_l3:
                         left, top, right, bottom = self.tool.active_app_rect
                         w, h = max(1, right - left), max(1, bottom - top)
                         try:
                             post = self.sensor.capture_region(left, top, w, h)
                             self.tool.last_capture = post
-                            tag = "动作后截图 (L2 active app, L3 fallback)"
-                        except Exception as e2:
-                            log.warning(f"active_app_rect L2 capture also failed: {e2}")
+                            tag = "动作后截图 (L2 active app, post_step_use_l3=false)"
+                        except Exception as e:
+                            log.warning(f"active_app_rect L2 re-capture failed, falling back to L1: {e}")
                             post = self.sensor.capture(ScreenLevel.L1)
                             self.tool.last_capture = post
                             self.tool.set_active_app_rect(None)
                             tag = "动作后截图 (L1)"
+                    else:
+                        try:
+                            # L3 is around the current cursor. Don't overwrite
+                            # last_capture — the L2-of-rect remains the active
+                            # coordinate frame for the next click.
+                            post = self.sensor.capture(ScreenLevel.L3)
+                            tag = "动作后截图 (L3 cursor-local; coordinate frame still = L2 active app)"
+                        except Exception as e:
+                            log.warning(f"L3 post capture failed, falling back to active-app L2: {e}")
+                            left, top, right, bottom = self.tool.active_app_rect
+                            w, h = max(1, right - left), max(1, bottom - top)
+                            try:
+                                post = self.sensor.capture_region(left, top, w, h)
+                                self.tool.last_capture = post
+                                tag = "动作后截图 (L2 active app, L3 fallback)"
+                            except Exception as e2:
+                                log.warning(f"active_app_rect L2 capture also failed: {e2}")
+                                post = self.sensor.capture(ScreenLevel.L1)
+                                self.tool.last_capture = post
+                                self.tool.set_active_app_rect(None)
+                                tag = "动作后截图 (L1)"
             else:
                 post = self.sensor.capture(ScreenLevel.L1)
                 self.tool.last_capture = post

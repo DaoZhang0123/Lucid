@@ -100,6 +100,13 @@ class ScreenshotConfig:
     launch_wait_max_ms: int = 1500
     # Poll interval while waiting for the window.
     launch_wait_poll_ms: int = 80
+    # ---- post-step 主图：pin 之后是否每步降级到 L3 cursor-local ----
+    # True（默认）：第一步拍 L2 map，之后每步只补一张 L3 鼠标周边小图，省 token。
+    # False：每一步都重新拍 active_app_rect 的 L2。适用于"点击经常导致焦点跳到
+    # 远离鼠标的位置"的 App（典型：微信点联系人 → 焦点跳到右下输入框，鼠标
+    # 仍停在左侧联系人列表，L3 cursor-local 看不到右侧新打开的聊天视图，
+    # 容易被模型误读为"点击没生效"）。
+    post_step_use_l3: bool = True
     # ---- R3: click pre/post pixel-diff verify (Docs/screenshot.md §13.4) ----
     click_verify_enabled: bool = True
     # Below this fraction of pixels changed near the cursor → "didn't click".
@@ -162,7 +169,9 @@ class LoggingConfig:
     image_level: str = "INFO"    # DEBUG | INFO | WARNING | OFF
     image_format: str = "png"    # png | jpg
     jpg_quality: int = 85
-    keep_runs: int = 20
+    # 历史轮转：最多保留多少个 thread 目录；超过会从最旧的开始删除。
+    # 设为 0 / 负数 表示**不轮转**（永不自动删除任何 thread）。
+    keep_runs: int = 0
 
 
 @dataclass

@@ -70,8 +70,8 @@ image_level = "INFO"
 image_format = "png"
 # JPG 质量（仅 image_format=jpg 时生效）
 jpg_quality = 85
-# 历史轮转：最多保留多少次运行的目录
-keep_runs = 20
+# 历史轮转：最多保留多少次运行的目录；0 = 不轮转（永不自动删除）。
+keep_runs = 0
 
 [screenshot]
 # === 三级金字塔（design.md §4.5.3） ===

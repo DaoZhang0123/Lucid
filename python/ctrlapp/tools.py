@@ -202,6 +202,39 @@ class ComputerTool:
         "double_click", "triple_click", "left_mouse_down", "left_mouse_up",
         "left_click_drag", "scroll",
     }
+
+    @staticmethod
+    def _maybe_unscreen_coord(cap: "Capture", ix: int, iy: int) -> tuple[int, int] | None:
+        """If ``(ix, iy)`` looks like **screen-pixel** coordinates that fall
+        inside the capture's screen rect, translate them back into image
+        pixel coordinates and return the adjusted ``(px, py)``. Returns
+        ``None`` if the point is not inside the screen rect or already a
+        valid in-image coordinate.
+
+        Why: the model is told to give image-pixel coords, but it sometimes
+        slips and gives the corresponding screen coords (e.g. for an L2 of
+        an active window with offset (1224, 375), it might say ``(1420, 556)``
+        which is screen-frame, when the in-image equivalent is ``(196, 181)``).
+        Both forms unambiguously identify the same pixel — accept either.
+        """
+        ox, oy = cap.offset
+        rw, rh = cap.raw_size
+        sw, sh = cap.sent_size
+        # Already a valid in-image coord? Don't touch.
+        if 0 <= ix < sw and 0 <= iy < sh:
+            return None
+        # Falls inside the capture's screen rect? Treat as screen coord.
+        if ox <= ix < ox + rw and oy <= iy < oy + rh:
+            scale_x = sw / rw if rw else 1.0
+            scale_y = sh / rh if rh else 1.0
+            px = int(round((ix - ox) * scale_x))
+            py = int(round((iy - oy) * scale_y))
+            # Clamp to image bounds (rounding can land on the edge).
+            px = max(0, min(sw - 1, px))
+            py = max(0, min(sh - 1, py))
+            return px, py
+        return None
+
     # Click actions also accept "no coordinate = use current cursor pos", so
     # only enforce bounds when a coordinate IS provided. mouse_move + drag
     # always require a coordinate, but we still gate on presence to avoid
@@ -224,11 +257,23 @@ class ComputerTool:
             ))
         sw, sh = cap.sent_size
         if not (0 <= ix < sw and 0 <= iy < sh):
+            # Tolerance: accept screen-pixel coords if they fall inside the
+            # capture's screen rect — see ``_maybe_unscreen_coord`` docstring.
+            adj = self._maybe_unscreen_coord(cap, ix, iy)
+            if adj is not None:
+                params["coordinate"] = [adj[0], adj[1]]
+                return None
+            ox, oy = cap.offset
+            rw, rh = cap.raw_size
             return ToolResult(error=(
                 f"coordinate ({ix},{iy}) is outside the most recent screenshot "
-                f"({sw}x{sh}, level={cap.level.value}). Take a fresh screenshot first "
-                f"(e.g. action='screenshot' with the appropriate level), then re-issue "
-                f"the action with coordinates inside the new image."
+                f"({sw}x{sh}, level={cap.level.value}, screen rect "
+                f"left={ox}, top={oy}, right={ox + rw}, bottom={oy + rh}). "
+                f"Coordinates must be image-pixel (0..{sw - 1}, 0..{sh - 1}); "
+                f"screen-pixel coords inside the rect above are also accepted "
+                f"and auto-translated. If neither matches your target, take a "
+                f"fresh screenshot first (action='screenshot' with the appropriate "
+                f"level), then re-issue the action with coordinates inside the new image."
             ))
         # When an active-app rect is pinned, also enforce that the resolved
         # screen point lies inside that rect — catches the common case where
@@ -287,23 +332,26 @@ class ComputerTool:
             return ToolResult(output=f"{action} {x},{y} (verify error: {type(e).__name__}: {e})")
 
         if ratio < threshold:
+            # Miss 兜底：附上已经拍好的 post_cap（鼠标周围 L3）作为 follow-up
+            # image，不再额外拍 L2。原因：sensor.capture(L2) 拿的是"当前前台
+            # 窗口"，跟 active_app_rect 不一定一致——尤其是当前一次点击意外切
+            # 走焦点时，那张 L2 会拍到别的 app，把模型坐标系搞乱。这里只回
+            # 一段警告 + post_l3 视觉证据，不动 last_capture；模型若需要重对齐
+            # 应显式调 screenshot(level="active_window")。
             try:
-                l2 = self.sensor.capture(ScreenLevel.L2)
-                self.last_capture = l2
-                image_png = l2.png_bytes()
-                hint = (
-                    f"{action} executed at ({x},{y}) but only {ratio:.2%} of pixels "
-                    f"changed near the cursor (threshold {threshold:.2%}). "
-                    f"The click may have missed its target, or the target was "
-                    f"unresponsive. A fresh L2 active-window screenshot is attached "
-                    f"and is now your active coordinate frame."
-                )
-                return ToolResult(output=hint, image_png=image_png, attached_capture=l2)
+                image_png = post_cap.png_bytes()
             except Exception:
-                return ToolResult(output=(
-                    f"{action} {x},{y} — only {ratio:.2%} pixels changed near cursor "
-                    f"(possible miss); follow-up L2 capture failed"
-                ))
+                image_png = None
+            hint = (
+                f"{action} executed at ({x},{y}) but only {ratio:.2%} of pixels "
+                f"changed near the cursor (threshold {threshold:.2%}). The click "
+                f"may have missed its target, or the target was unresponsive. "
+                f"A post-click L3 tile around the cursor is attached for "
+                f"inspection. **Coordinate frame unchanged.** If you need to "
+                f"re-align (e.g. the layout has shifted), call "
+                f"`screenshot(level=\"active_window\")` yourself before retrying."
+            )
+            return ToolResult(output=hint, image_png=image_png)
 
         return ToolResult(output=f"{action} {x},{y} (post-click pixel-change {ratio:.2%})")
 
