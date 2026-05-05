@@ -26,6 +26,9 @@
   let items = $state<Sched[]>([]);
   let err = $state("");
   let editing = $state<Sched | null>(null);
+  // Global default for max_steps, fetched from sidecar (config.toml [llm].max_steps).
+  // Falls back to 50 only if the status call fails.
+  let defaultMaxSteps = $state(50);
 
   let name = $state("");
   let instruction = $state("");
@@ -109,7 +112,7 @@
     name = "";
     instruction = "";
     autonomy = "confirm_critical";
-    maxSteps = 25;
+    maxSteps = defaultMaxSteps;
     enabled = true;
     kind = "daily";
     hourlyMinute = 0;
@@ -138,7 +141,7 @@
     name = s.name;
     instruction = s.instruction;
     autonomy = (s.autonomy as any) ?? "confirm_critical";
-    maxSteps = s.max_steps ?? 25;
+    maxSteps = s.max_steps ?? defaultMaxSteps;
     enabled = !!s.enabled;
     kind = s.spec.kind as any;
     if (s.spec.kind === "hourly") hourlyMinute = s.spec.minute;
@@ -279,7 +282,19 @@
     return new Date(ms).toLocaleString();
   }
 
-  onMount(load);
+  onMount(async () => {
+    // Pull the global step budget from sidecar so the new-schedule form
+    // mirrors config.toml [llm].max_steps instead of hard-coding 25.
+    try {
+      const st = await invoke<any>("sidecar_get_status");
+      const m = Number(st?.max_steps);
+      if (Number.isFinite(m) && m > 0) {
+        defaultMaxSteps = m;
+        if (!editing) maxSteps = m;
+      }
+    } catch { /* keep fallback 50 */ }
+    await load();
+  });
 </script>
 
 <svelte:head>

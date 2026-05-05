@@ -179,7 +179,12 @@ def _is_running_by_name(process_name: str) -> tuple[bool, int | None]:
 
 
 def _find_windows(spec: dict[str, Any]) -> list[WindowMatch]:
-    """Enumerate visible top-level windows that match the spec's title rules."""
+    """Enumerate visible top-level windows that match the spec's title rules.
+
+    Also filters by ``spec["process"]`` when provided — title-only matching is
+    too brittle (e.g. an Explorer window whose tab/folder name happens to
+    contain "计算器" would otherwise match the Calculator launcher).
+    """
     if sys.platform != "win32":
         return []
     title_sub = spec.get("window_title")
@@ -192,6 +197,18 @@ def _find_windows(spec: dict[str, Any]) -> list[WindowMatch]:
             pat = re.compile(title_re, re.IGNORECASE)
         except re.error:
             pat = None
+    proc_target = (spec.get("process") or "").lower()
+    pid_to_pname: dict[int, str] = {}
+    if proc_target:
+        try:
+            import psutil  # type: ignore[import-not-found]
+            for p in psutil.process_iter(["name", "pid"]):
+                try:
+                    pid_to_pname[int(p.info.get("pid") or 0)] = (p.info.get("name") or "").lower()
+                except Exception:
+                    continue
+        except Exception:
+            pid_to_pname = {}
     import ctypes
     from ctypes import wintypes
 
@@ -216,10 +233,19 @@ def _find_windows(spec: dict[str, Any]) -> list[WindowMatch]:
             ok = bool(pat.search(title))
         elif title_sub:
             ok = title_sub in title
-        if ok:
-            pid = wintypes.DWORD(0)
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            found.append(WindowMatch(hwnd=int(hwnd), title=title, pid=int(pid.value)))
+        if not ok:
+            return True
+        pid = wintypes.DWORD(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        pid_int = int(pid.value)
+        # When a process name is declared, require the window to actually
+        # belong to that process. Skip the check only when psutil failed to
+        # enumerate processes (pid_to_pname empty) — fall back to title-only.
+        if proc_target and pid_to_pname:
+            pname = pid_to_pname.get(pid_int, "")
+            if pname != proc_target:
+                return True
+        found.append(WindowMatch(hwnd=int(hwnd), title=title, pid=pid_int))
         return True
 
     user32.EnumWindows(EnumWindowsProc(cb), 0)
@@ -352,7 +378,12 @@ def launch_app(cfg: LaunchersConfig, name: str) -> dict[str, Any]:
     """Try to start / focus an app. Returns a structured result dict."""
     spec = get_launcher(cfg, name)
     if spec is None:
-        return {"ok": False, "method": None, "message": f"no launcher named {name!r}; call list_apps() to see available names"}
+        return {"ok": False, "method": None, "message": (
+            f"no launcher named {name!r}; call list_apps() to see available names. "
+            f"If this is an app the user wants but isn't registered yet, you can create it on the fly via "
+            f"`update_launcher(name={name!r}, exe='<alias-or-abs-path>', process='<X.exe>', window_title_re='<regex>')` — "
+            f"unknown slugs are auto-created."
+        )}
     slug = spec["slug"]
 
     # Step 1: already-running window → focus

@@ -29,7 +29,20 @@ hidden += collect_submodules("rich")
 hidden += collect_submodules("PIL")
 hidden += collect_submodules("tzdata")  # zoneinfo on Windows needs the tzdata pkg
 hidden += collect_submodules("psutil")  # used by ctrlapp.launchers for process detection
-hidden += collect_submodules("ctrlapp.apps")  # hot-plug per-app registry (tips + launcher specs)
+# Per-app registry: every `python/ctrlapp/apps/<slug>.py` is a hot-plug module.
+# We need PyInstaller to (a) bundle each module AND (b) emit them as .pyc files
+# under MEIPASS/ctrlapp/apps/ so `pkgutil.iter_modules` works at runtime.
+# `collect_submodules` alone bundles the bytecode into the PYZ archive but does
+# NOT lay them out as filesystem entries — so we additionally enumerate the
+# folder and pin each module by name. Drop a new `apps/<slug>.py` and it'll be
+# picked up automatically on next build, no edits to this spec required.
+_APPS_DIR = os.path.join(ROOT, "python", "ctrlapp", "apps")
+hidden += collect_submodules("ctrlapp.apps")
+hidden += [
+    f"ctrlapp.apps.{os.path.splitext(fn)[0]}"
+    for fn in os.listdir(_APPS_DIR)
+    if fn.endswith(".py") and not fn.startswith("_")
+]
 # NOTE: do NOT collect_submodules("openai") — it transitively drags in
 # torch / transformers / tiktoken (>5GB), blowing past WiX / NSIS limits.
 # We only need the OpenAI HTTP client; the chat.completions surface is enough.

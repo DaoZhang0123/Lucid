@@ -216,14 +216,17 @@ UPDATE_LAUNCHER_SCHEMA: dict = {
     "function": {
         "name": "update_launcher",
         "description": (
-            "Persistently update fields of a launcher entry — e.g. when you discovered the global shortcut changed, the exe alias was wrong, or the window title needs a different regex. "
-            "The override is written to `<user data>/launchers.json` and takes precedence over the built-in defaults from this version, and survives across tasks / restarts.\n"
-            "**When to call**: after a `launch_app` / `check_app_running` failure that you traced to a wrong field (e.g. `shortcut` no longer triggers WeChat — try the new combo, then call `update_launcher(name='wechat', shortcut='ctrl+shift+w')`). Don't call for one-off failures (network glitch, app currently broken). After updating, call `launch_app` again to verify, and consider also `learn_tip(app=..., text='shortcut changed from X to Y on YYYY-MM')`."
+            "Create OR update a launcher entry — e.g. when you discovered the global shortcut changed, the exe alias was wrong, the window title needs a different regex, or the user wants to register a brand-new app the agent has never heard of (e.g. `feishu`, `notion`, `obsidian`). "
+            "The override is written to `<user data>/launchers.json` and takes precedence over the built-in defaults from this version, and survives across tasks / restarts. **Unknown slugs are auto-created**, no UI step required.\n"
+            "**When to call**: \n"
+            "  (a) after a `launch_app` / `check_app_running` failure that you traced to a wrong field (e.g. `shortcut` no longer triggers WeChat — try the new combo, then call `update_launcher(name='wechat', shortcut='ctrl+shift+w')`); \n"
+            "  (b) when the user asks to operate an app whose slug is missing from `list_apps()` — figure out its `exe` (alias like `notion` if installed via `start notion`, otherwise the absolute `.exe` path the user can confirm) and `window_title_re`, then call `update_launcher(name='notion', exe='notion', process='Notion.exe', window_title_re='Notion')`. After creating, call `launch_app('notion')` to verify; if it works, also `learn_tip(app='notion', text='registered on YYYY-MM-DD via exe=notion')` so future sessions remember why this entry exists. \n"
+            "Don't call for one-off failures (network glitch, app currently broken)."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "name":            {"type": "string", "description": "Launcher slug to update (must already exist; call `list_apps()` to see slugs). To create a brand-new launcher use the UI."},
+                "name":            {"type": "string", "description": "Launcher slug. Existing slug → patches that entry; new slug → creates a fresh user override (no built-in default required)."},
                 "shortcut":        {"type": "string", "description": "Optional new global hotkey, e.g. 'ctrl+alt+w'. Pass empty string to clear."},
                 "uri":             {"type": "string", "description": "Optional new shell URI, e.g. 'weixin://'. Pass empty string to clear."},
                 "exe":             {"type": "string", "description": "Optional new exe alias / absolute path."},
@@ -299,7 +302,7 @@ SCHEDULE_ADD_SCHEMA: dict = {
                 "instruction": {"type": "string", "description": "The task instruction the agent will receive when this fires."},
                 "spec":        _SPEC_PROP,
                 "autonomy":    {"type": "string", "enum": ["full", "confirm_critical", "confirm_each"], "description": "Default 'confirm_critical'."},
-                "max_steps":   {"type": "integer", "description": "Step budget per fire. Default 25."},
+                "max_steps":   {"type": "integer", "description": "Step budget per fire. Defaults to the global [llm].max_steps from config.toml."},
                 "enabled":     {"type": "boolean", "description": "Default true."},
                 "constraints": _CONSTRAINTS_PROP,
             },
@@ -391,6 +394,56 @@ LOAD_SCREENSHOT_SCHEMA: dict = {
 }
 
 
+READ_WEBPAGE_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "read_webpage",
+        "description": (
+            "Read a webpage as plaintext (markdown-flavoured) — without taking a screenshot. Two backends:\n"
+            "  • `active_tab=true`  → reads the **live tab** of the user's already-open Chrome/Edge via the Chrome DevTools "
+            "Protocol on `localhost:9222`. **Login state is preserved** (sees gmail / wechat-web / private dashboards). "
+            "Requires the browser to have been started with `--remote-debugging-port=9222` — the default `chrome` and `edge` "
+            "launchers in this app already include this flag, so a fresh `launch_app('chrome')` (after closing existing "
+            "windows) enables it. Use `url_match` to pick a specific tab by url/title substring; default = first non-blank "
+            "non-extension page tab.\n"
+            "  • `url=\"https://...\"` (no `active_tab`) → spawns a HEADLESS browser that fetches + renders + dumps the DOM. "
+            "**No login state.** Works on any URL. Slower (~1-3s).\n"
+            "Returns the page title + extracted readable text (links inlined as `[text](href)`, headings as `## ...`, lists "
+            "as `- ...`). The text is **vastly more accurate** than OCR-ing a browser screenshot, AND the screenshot would "
+            "be downscaled later anyway. **Prefer this tool over `screenshot` whenever the goal is to READ webpage text** "
+            "(news, search results, documentation, JSON in browser, etc.). Use `screenshot` only when you need to see the "
+            "visual layout / images / pixel position of a button to click."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Full URL (must include scheme). Required unless `active_tab=true`.",
+                },
+                "active_tab": {
+                    "type": "boolean",
+                    "description": "If true, read the user's live tab via CDP instead of fetching a fresh URL. Default false.",
+                },
+                "url_match": {
+                    "type": "string",
+                    "description": "Optional substring filter on tab url/title (only used with `active_tab=true`).",
+                },
+                "browser": {
+                    "type": "string",
+                    "enum": ["chrome", "edge"],
+                    "description": "Which browser executable to invoke for headless mode. Default 'chrome'.",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Truncate output text to this many characters (default 8000).",
+                },
+            },
+        },
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # Region calibration / lookup
 # ---------------------------------------------------------------------------
@@ -443,6 +496,8 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
     out.append(SCHEDULE_DELETE_SCHEMA)
     # Always-on: re-load any past screenshot from disk (cheaper than re-visiting the App).
     out.append(LOAD_SCREENSHOT_SCHEMA)
+    if getattr(cfg, "webread", None) and cfg.webread.enabled:
+        out.append(READ_WEBPAGE_SCHEMA)
     return out
 
 
@@ -764,10 +819,13 @@ def dispatch_meta_tool(
         return ToolResult(error="failed to crop or save icon (check image bounds)")
 
     if fn_name in ("schedule_list", "schedule_add", "schedule_update", "schedule_delete"):
-        return _dispatch_schedule(fn_name, args)
+        return _dispatch_schedule(fn_name, args, cfg)
 
     if fn_name == "load_screenshot":
         return _dispatch_load_screenshot(args)
+
+    if fn_name == "read_webpage" and getattr(cfg, "webread", None) and cfg.webread.enabled:
+        return _dispatch_read_webpage(args, cfg)
 
     return None
 
@@ -792,7 +850,7 @@ def _fmt_schedule(it: dict) -> str:
     return "\n".join(parts)
 
 
-def _dispatch_schedule(fn_name: str, args: dict[str, Any]) -> ToolResult:
+def _dispatch_schedule(fn_name: str, args: dict[str, Any], cfg: Config) -> ToolResult:
     try:
         if fn_name == "schedule_list":
             items = scheduler_mod.list_schedules()
@@ -809,7 +867,7 @@ def _dispatch_schedule(fn_name: str, args: dict[str, Any]) -> ToolResult:
                 instruction=str(args.get("instruction") or ""),
                 spec=spec,
                 autonomy=str(args.get("autonomy") or "confirm_critical"),
-                max_steps=int(args.get("max_steps") or 25),
+                max_steps=int(args.get("max_steps") or cfg.llm.max_steps),
                 enabled=bool(args.get("enabled", True)),
                 constraints=args.get("constraints"),
             )
@@ -890,3 +948,42 @@ def _dispatch_load_screenshot(args: dict[str, Any]) -> ToolResult:
     # re-loaded image as the same level as the original.
     label = f"[level={level}] re-loaded screenshot from disk: {p.name} ({len(data)} bytes)"
     return ToolResult(output=label, image_png=data)
+
+
+def _dispatch_read_webpage(args: dict[str, Any], cfg: Config) -> ToolResult:
+    """Headless / CDP webpage read; returns text-only ToolResult.
+
+    Output format begins with a single-line header so loop.py logs render the
+    source/url/title legibly, followed by the extracted text body.
+    """
+    from . import webread as webread_mod
+
+    url = (args.get("url") or "").strip() or None
+    active_tab = bool(args.get("active_tab"))
+    url_match = (args.get("url_match") or "").strip() or None
+    browser = (args.get("browser") or "chrome").strip().lower()
+    if browser not in ("chrome", "edge"):
+        browser = "chrome"
+    try:
+        max_chars = int(args.get("max_chars") or cfg.webread.default_max_chars)
+    except Exception:
+        max_chars = cfg.webread.default_max_chars
+    if max_chars <= 0:
+        max_chars = cfg.webread.default_max_chars
+
+    res = webread_mod.read_webpage(
+        url=url,
+        active_tab=active_tab,
+        browser=browser,
+        url_match=url_match,
+        cdp_port=cfg.webread.cdp_port,
+        max_chars=max_chars,
+    )
+    if not res.get("ok"):
+        return ToolResult(error=res.get("error") or "read_webpage failed")
+    header = (
+        f"[read_webpage source={res['source']} url={res.get('url') or '?'!r} "
+        f"title={res.get('title') or '?'!r} raw_html={res.get('raw_html_len', 0)} bytes]"
+    )
+    return ToolResult(output=f"{header}\n\n{res.get('text', '')}")
+

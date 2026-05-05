@@ -202,6 +202,12 @@ class ToolsConfig:
     max_entries: int = 300
     max_entry_chars: int = 500
     max_chars: int = 12000
+    # 任务起手时做一次轻量 LLM 调用，根据 instruction 从已知 app 列表里挑出相关的，
+    # 一次性把这些 app 的 tips 注入。这样 agent 启动 wechat 之前就已经看到过 wechat tips，
+    # 不会先在 file explorer 里乱点。设为 False 则完全按需（仅在 launch_app/load_app_tips 时加载）。
+    plan_app_tips: bool = True
+    # 上限：再相关也最多预加载这么多个 app（防止 LLM 把"全选了"）。
+    plan_app_tips_max: int = 5
 
 
 @dataclass
@@ -220,6 +226,19 @@ class RegionsConfig:
     enabled: bool = True
     # `<user data>/regions/<app-slug>.json` 每个 App 一份。
     dir: str = "regions"
+
+
+@dataclass
+class WebReadConfig:
+    """`read_webpage` meta 工具配置。两个后端：headless dump（任意 URL，无登录态）
+    和 CDP 读取用户现有活动 tab（需要浏览器以 ``--remote-debugging-port=N`` 启动）。"""
+    enabled: bool = True
+    cdp_port: int = 9222
+    # Headless 超时（秒），设多了是为了等重 JS 页面渲染完。
+    headless_timeout_s: float = 25.0
+    # html_to_text 后的输出上限。默认 8000 字符 ≈ 2k tokens，比一张 L2 截图便宜。
+    default_max_chars: int = 8000
+
 
 
 @dataclass
@@ -273,6 +292,7 @@ class Config:
     context: ContextConfig = field(default_factory=ContextConfig)
     launchers: LaunchersConfig = field(default_factory=LaunchersConfig)
     regions: RegionsConfig = field(default_factory=RegionsConfig)
+    webread: WebReadConfig = field(default_factory=WebReadConfig)
 
 
 def _apply(dc: Any, raw: dict[str, Any] | None) -> Any:
@@ -323,4 +343,5 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.context, raw.get("context"))
     _apply(cfg.launchers, raw.get("launchers"))
     _apply(cfg.regions, raw.get("regions"))
+    _apply(cfg.webread, raw.get("webread"))
     return cfg

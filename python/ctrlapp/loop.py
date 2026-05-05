@@ -585,6 +585,97 @@ class Agent:
             # Caller (ContextManager) logs and skips on failure.
             raise
 
+    def _plan_relevant_app_tips(self, instruction: str) -> str:
+        """One-shot LLM call: pick app slugs whose tips are likely useful for
+        this task, then inline their tips bodies. Returns the rendered block
+        (empty string when feature disabled / no tips / planning failed).
+
+        Cheaper than auto-loading on launch_app because the model sees the
+        right tips BEFORE deciding which app to open — a task like "把下载
+        文件夹里最新一张图通过微信发给爸爸" will preload BOTH explorer and
+        wechat tips, so the model knows it can paste images straight into
+        WeChat (no need to click the file icon → dialog → navigate).
+        """
+        cfg_tools = self.cfg.tools
+        if not getattr(cfg_tools, "plan_app_tips", False) or not cfg_tools.enabled:
+            return ""
+        instruction = (instruction or "").strip()
+        if not instruction:
+            return ""
+        apps = [it for it in tooltips_mod.list_app_tips(cfg_tools) if it.get("lines", 0) > 0]
+        if not apps:
+            return ""
+        catalog = "\n".join(f"- {it['slug']}: {it['title']}" for it in apps)
+        valid_slugs = {it["slug"] for it in apps}
+
+        # Extra-fast planner: text-only, tiny output, no tools. Even Opus is
+        # quick at this since we cap output at ~80 tokens.
+        sys_msg = (
+            "You are a planner. Given a user task and a catalog of apps with available tip-files, "
+            "pick the slugs whose tips are likely useful for accomplishing the task. "
+            "Output ONLY a JSON array of slug strings (no prose, no fences). "
+            "Pick at most "
+            f"{int(getattr(cfg_tools, 'plan_app_tips_max', 5) or 5)} slugs. "
+            "If none are obviously relevant, output []."
+        )
+        user_msg = f"Task: {instruction}\n\nCatalog:\n{catalog}\n\nRelevant slugs (JSON array):"
+        try:
+            resp = self.client.chat(
+                messages=[
+                    {"role": "system", "content": sys_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+                tools=[],
+                max_tokens=120,
+                temperature=0.0,
+            )
+        except Exception:
+            return ""
+        raw = (resp.text or "").strip()
+        # Tolerate fenced output anyway.
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            nl = raw.find("\n")
+            if nl >= 0:
+                raw = raw[nl + 1 :]
+            raw = raw.strip()
+        try:
+            picked = json.loads(raw)
+        except Exception:
+            # Fallback: scan catalog slugs as substrings.
+            picked = [s for s in valid_slugs if s in raw]
+        if not isinstance(picked, list):
+            return ""
+        # Preserve LLM ordering, dedupe, drop unknown.
+        seen: set[str] = set()
+        chosen: list[str] = []
+        for s in picked:
+            if not isinstance(s, str):
+                continue
+            slug = s.strip().lower()
+            if slug in valid_slugs and slug not in seen:
+                seen.add(slug)
+                chosen.append(slug)
+        cap = int(getattr(cfg_tools, "plan_app_tips_max", 5) or 5)
+        chosen = chosen[:cap]
+        if not chosen:
+            return ""
+        sections: list[str] = []
+        for slug in chosen:
+            body = tooltips_mod.app_tips_for_prompt(cfg_tools, slug)
+            if body:
+                sections.append(body.strip())
+        if not sections:
+            return ""
+        return (
+            "## Pre-loaded app tips (auto-selected for this task)\n"
+            f"Selected based on the task instruction: {', '.join(chosen)}.\n"
+            "Skim these BEFORE you start — they often contain a one-shot shortcut "
+            "(keyboard / dialog trick / paste-to-input) that beats clicking around.\n\n"
+            + "\n\n".join(sections)
+            + "\n"
+        )
+
     # ---- 点击前预检（pre-click target verification） ----
 
     _CLICK_ACTIONS_FOR_VERIFY = {
@@ -784,6 +875,13 @@ class Agent:
                       and self.cfg.launchers.inject_catalog_in_system_prompt else "")
                 + (regions_mod.regions_for_prompt(self.cfg.regions)
                    if getattr(self.cfg, "regions", None) and self.cfg.regions.enabled else "")
+                + (
+                    "\n\n## Icon memory library status\nCurrently empty. If you click a tray/taskbar icon and confirm "
+                    "success (the corresponding App opened), use `remember_icon` to register it, so future tasks can "
+                    "identify it by reference instead of probing.\n"
+                    if self.cfg.icons.enabled and not icon_mod.list_icons(self.cfg.icons)
+                    else ""
+                )
             )},
         ]
         # 图标合集图（如果有的话）以一对 user/assistant 伪对话的形式注入到 system 之后、
@@ -812,16 +910,22 @@ class Agent:
                 ],
             })
             messages.append({"role": "assistant", "content": "Got it, I've memorised these icons and will identify by atlas number when I see them; for any new icon not in the atlas, I'll register it via remember_icon."})
-        elif self.cfg.icons.enabled:
-            # No icons registered yet: tell the model the library is empty so it knows to start populating.
-            messages.append({
-                "role": "user",
-                "content": (
-                    "[Icon memory library] Currently empty. If you click a tray/taskbar icon and confirm success (the corresponding App opened), "
-                    "please use `remember_icon` to register it, so future tasks can identify it by reference instead of probing."
-                ),
-            })
-            messages.append({"role": "assistant", "content": "Understood, I'll proactively call remember_icon when I encounter an icon worth registering."})
+        # NOTE: the "atlas is empty" notice used to be injected here as a synthetic
+        # user/assistant turn, but that bloated the visible message log AND broke the
+        # "messages should be real conversation" invariant. It's now appended to the
+        # system prompt directly (see _build_system_prompt → empty-atlas hint above).
+        # Planner: pre-load tips for apps the LLM judges relevant to this
+        # specific instruction. Cheap one-shot text-only call. Result is
+        # injected as one extra user message right BEFORE the actual task.
+        try:
+            planned_tips = self._plan_relevant_app_tips(instruction)
+        except Exception as e:
+            log.warning(f"plan_app_tips failed: {type(e).__name__}: {e}")
+            planned_tips = ""
+        if planned_tips:
+            messages.append({"role": "user", "content": planned_tips})
+            messages.append({"role": "assistant", "content": "Got it, I'll consult these app tips before I start clicking."})
+            log.info(f"plan_app_tips: injected {planned_tips.count('## App tips for')} app tip section(s)")
         # 真正的 instruction + (可选)起手 L1 截图（feed_initial 已在 _run 顶部解析）
         instruction_content: list[dict[str, Any]] = [
             {

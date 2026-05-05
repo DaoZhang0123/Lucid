@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +37,65 @@ class AppDef:
 _CACHE: dict[str, AppDef] | None = None
 
 
+def _iter_module_names() -> list[str]:
+    """Return the list of submodule names under this package.
+
+    Works in three environments:
+      1. Source / venv  — ``pkgutil.iter_modules(__path__)`` walks the
+         filesystem.
+      2. PyInstaller frozen bundle — ``pkgutil.iter_modules`` returns nothing
+         because submodules live in the PYZ archive (no physical files under
+         ``__path__``). We fall back to the frozen importer's TOC, walking
+         ``sys.modules`` first (cheap) and then probing PyInstaller's
+         ``_pyi_rthooks`` archive when present.
+      3. Anything weird — last resort: try a hard-coded list of well-known
+         slugs. Adding a new app file requires no list update in environments
+         (1) and (2); the hard-coded list is purely belt-and-suspenders.
+    """
+    names: set[str] = set()
+    for _finder, name, _ispkg in pkgutil.iter_modules(__path__):
+        if not name.startswith("_"):
+            names.add(name)
+    if names:
+        return sorted(names)
+    # Frozen-bundle path: ask PyInstaller's archive for everything starting
+    # with our package prefix.
+    prefix = __name__ + "."
+    try:
+        import pyimod02_importers  # type: ignore[import-not-found]  # PyInstaller runtime helper
+    except Exception:
+        pyimod02_importers = None
+    if pyimod02_importers is not None:
+        # PyInstaller >=6 exposes the TOC via the FrozenImporter on sys.meta_path.
+        for finder in sys.meta_path:
+            toc = getattr(finder, "toc", None)
+            if not toc:
+                continue
+            for mod_name in toc:
+                if isinstance(mod_name, str) and mod_name.startswith(prefix):
+                    tail = mod_name[len(prefix):]
+                    if "." not in tail and not tail.startswith("_"):
+                        names.add(tail)
+    if names:
+        return sorted(names)
+    # Already-imported modules (covers the case where something earlier
+    # explicitly imported a couple of submodules).
+    for mod_name in list(sys.modules):
+        if mod_name.startswith(prefix):
+            tail = mod_name[len(prefix):]
+            if "." not in tail and not tail.startswith("_"):
+                names.add(tail)
+    if names:
+        return sorted(names)
+    # Last-resort static list (kept in sync manually). Used only if both
+    # iter_modules AND the frozen TOC scan came up empty.
+    return [
+        "browser", "calculator", "chrome", "cmd", "edge", "explorer",
+        "notepad", "outlook", "powershell", "run", "save_dialog", "settings",
+        "vscode", "wechat",
+    ]
+
+
 def discover_apps() -> dict[str, AppDef]:
     """Scan this package for app modules and return ``{slug: AppDef}``.
 
@@ -45,9 +105,7 @@ def discover_apps() -> dict[str, AppDef]:
     if _CACHE is not None:
         return _CACHE
     out: dict[str, AppDef] = {}
-    for _finder, name, _ispkg in pkgutil.iter_modules(__path__):
-        if name.startswith("_"):
-            continue
+    for name in _iter_module_names():
         try:
             mod = importlib.import_module(f"{__name__}.{name}")
         except Exception:  # pragma: no cover — broken module shouldn't kill startup

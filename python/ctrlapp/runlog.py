@@ -20,6 +20,7 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import time
 from datetime import datetime
@@ -91,9 +92,22 @@ class ThreadLog:
         root = resolve_logs_root(cfg)
         root.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        thread_id = f"{_THREAD_PREFIX}{ts}-{_slug(title)}"
-        run_dir = root / thread_id
-        run_dir.mkdir(parents=True, exist_ok=True)
+        slug = _slug(title)
+        # Always append a short random suffix so two threads created in the
+        # same second with the same title (or any title at all) get distinct
+        # directories. Using exist_ok=False + retry guarantees uniqueness even
+        # under improbable collision.
+        for _ in range(8):
+            suffix = secrets.token_hex(3)  # 6 hex chars
+            thread_id = f"{_THREAD_PREFIX}{ts}-{suffix}-{slug}"
+            run_dir = root / thread_id
+            try:
+                run_dir.mkdir(parents=True, exist_ok=False)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise RuntimeError("could not allocate unique thread directory")
         obj = cls(cfg, run_dir)
         now_ms = int(time.time() * 1000)
         obj._meta = {
