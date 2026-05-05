@@ -570,6 +570,7 @@ class Sidecar:
             autonomy=params.get("autonomy") or "confirm_critical",
             max_steps=int(params.get("max_steps") or 25),
             enabled=bool(params.get("enabled", True)),
+            constraints=params.get("constraints"),
         )
 
     def _rpc_schedule_update(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -584,6 +585,7 @@ class Sidecar:
             autonomy=params.get("autonomy"),
             max_steps=params.get("max_steps"),
             enabled=params.get("enabled"),
+            constraints=params.get("constraints"),
         )
         if item is None:
             raise ValueError(f"schedule {sid!r} not found")

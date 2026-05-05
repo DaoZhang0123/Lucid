@@ -1,11 +1,19 @@
 """定时任务调度器 schedules.json + 后台 minute tick。
 
-设计取舍：避免引入 cron / apscheduler 依赖，自己写 minute 级 tick。支持三类
-触发：
+设计取舍：避免引入 cron / apscheduler 依赖，自己写 minute 级 tick。支持三类触发：
 
-* ``interval``  : every_minutes 分钟跑一次
+* ``hourly``    : 每小时的第 ``minute`` 分钟跑一次
 * ``daily``     : 每天 ``time`` (HH:MM) 跑一次
 * ``weekly``    : 每周 ``weekday`` (0=周一..6=周日) 的 ``time`` 跑一次
+
+另外每个调度项可携带一个 ``constraints`` 字段（限制项可叠加，取交集）：
+
+* ``hours``        : list[int]，0..23 中允许起跳的小时（缺省等同未启用）
+* ``weekdays``     : list[int]，0=周一..6=周日 中允许的星期几
+* ``date_start_ms``: 起始日期 UTC 毫秒时间戳（0 = 不限）
+* ``date_end_ms``  : 截止日期 UTC 毫秒时间戳（0 = 不限）
+
+到点时若任一限制项不满足，本次则跳过不触发。hours / weekdays 按 ``spec.tz`` （未设则本机）计算。
 
 调度器线程 60 秒醒一次（启动时立刻 tick 一次，可命中错过窗口）。任务到点时，
 通过传入的 ``trigger`` 回调启动一次新任务（``trigger`` 由 sidecar 注入，内部
@@ -87,10 +95,10 @@ def _save(items: list[dict[str, Any]]) -> None:
 
 def _validate(spec: dict[str, Any]) -> None:
     kind = spec.get("kind")
-    if kind == "interval":
-        m = int(spec.get("every_minutes", 0))
-        if m < 1:
-            raise ValueError("every_minutes must be >= 1")
+    if kind == "hourly":
+        m = int(spec.get("minute", 0))
+        if not (0 <= m < 60):
+            raise ValueError("minute must be 0..59")
     elif kind == "daily":
         _ = _parse_hhmm(spec.get("time", ""))
     elif kind == "weekly":
@@ -100,7 +108,6 @@ def _validate(spec: dict[str, Any]) -> None:
         _ = _parse_hhmm(spec.get("time", ""))
     else:
         raise ValueError(f"unknown kind: {kind!r}")
-    # interval 不吃时区（只是增量），但语义上允许传；daily/weekly 会用到。
     _ = _resolve_tz(spec.get("tz"))
 
 
@@ -122,8 +129,6 @@ def _next_run(spec: dict[str, Any], now: datetime) -> datetime:
       * spec.tz=IANA 名 → 在该时区里算 HH:MM 的下一次发生，转成本地 naive 返回。
     """
     kind = spec["kind"]
-    if kind == "interval":
-        return now + timedelta(minutes=int(spec["every_minutes"]))
     tz = _resolve_tz(spec.get("tz"))
     if tz is None:
         base = now
@@ -133,7 +138,12 @@ def _next_run(spec: dict[str, Any], now: datetime) -> datetime:
             base = now.astimezone().astimezone(tz)
         else:
             base = now.astimezone(tz)
-    if kind == "daily":
+    if kind == "hourly":
+        m = int(spec["minute"])
+        cand = base.replace(minute=m, second=0, microsecond=0)
+        if cand <= base:
+            cand += timedelta(hours=1)
+    elif kind == "daily":
         h, m = _parse_hhmm(spec["time"])
         cand = base.replace(hour=h, minute=m, second=0, microsecond=0)
         if cand <= base:
@@ -159,9 +169,69 @@ def list_schedules() -> list[dict[str, Any]]:
     return _load()
 
 
+def _validate_constraints(c: dict[str, Any] | None) -> dict[str, Any]:
+    if not c:
+        return {}
+    out: dict[str, Any] = {}
+    if "hours" in c and c["hours"] is not None:
+        hs = sorted({int(x) for x in c["hours"]})
+        for h in hs:
+            if not (0 <= h < 24):
+                raise ValueError(f"hours item out of range: {h}")
+        # 空列表 = 永远不足，不允许。
+        if not hs:
+            raise ValueError("hours constraint must allow at least one hour")
+        # 24 个全选 等同未启用，不存。
+        if len(hs) < 24:
+            out["hours"] = hs
+    if "weekdays" in c and c["weekdays"] is not None:
+        ws = sorted({int(x) for x in c["weekdays"]})
+        for w in ws:
+            if not (0 <= w < 7):
+                raise ValueError(f"weekdays item out of range: {w}")
+        if not ws:
+            raise ValueError("weekdays constraint must allow at least one weekday")
+        if len(ws) < 7:
+            out["weekdays"] = ws
+    ds = int(c.get("date_start_ms") or 0)
+    de = int(c.get("date_end_ms") or 0)
+    if ds and de and de < ds:
+        raise ValueError("date_end_ms must be >= date_start_ms")
+    if ds:
+        out["date_start_ms"] = ds
+    if de:
+        out["date_end_ms"] = de
+    return out
+
+
+def _allowed(constraints: dict[str, Any] | None, now: datetime) -> bool:
+    """检查调度项在当前时刻是否满足所有限制项。存不在的限制项一律视为允许。"""
+    if not constraints:
+        return True
+    now_ms = int(now.timestamp() * 1000)
+    ds = int(constraints.get("date_start_ms") or 0)
+    de = int(constraints.get("date_end_ms") or 0)
+    if ds and now_ms < ds:
+        return False
+    if de and now_ms > de:
+        return False
+    hours = constraints.get("hours")
+    weekdays = constraints.get("weekdays")
+    if hours or weekdays:
+        # 使用本地时间读小时 / 星期（hourly/daily/weekly 的 spec.tz 已作用于 next_ms。这里是门控判断、
+        # 用本机时区读足够与用户期望一致）。
+        local = now if now.tzinfo is None else now.astimezone()
+        if hours and int(local.hour) not in set(hours):
+            return False
+        if weekdays and int(local.weekday()) not in set(weekdays):
+            return False
+    return True
+
+
 def add_schedule(name: str, instruction: str, spec: dict[str, Any],
                  autonomy: str = "confirm_critical", max_steps: int = 25,
-                 enabled: bool = True) -> dict[str, Any]:
+                 enabled: bool = True,
+                 constraints: dict[str, Any] | None = None) -> dict[str, Any]:
     name = (name or "").strip() or "未命名计划"
     instruction = (instruction or "").strip()
     if not instruction:
@@ -169,6 +239,7 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
     if autonomy not in ("full", "confirm_critical", "confirm_each"):
         raise ValueError(f"invalid autonomy: {autonomy!r}")
     _validate(spec)
+    cons = _validate_constraints(constraints)
     items = _load()
     item = {
         "id": uuid.uuid4().hex[:12],
@@ -181,6 +252,7 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
         "created_ms": int(time.time() * 1000),
         "next_ms": int(_next_run(spec, datetime.now()).timestamp() * 1000),
         "last_run_ms": 0,
+        "constraints": cons,
     }
     items.append(item)
     _save(items)
@@ -198,6 +270,9 @@ def update_schedule(sid: str, **fields: Any) -> dict[str, Any] | None:
             for k in ("name", "instruction", "autonomy", "max_steps", "enabled"):
                 if k in fields and fields[k] is not None:
                     it[k] = fields[k]
+            # constraints 传 None 表示不变，传 {} / dict 表示覆盖。
+            if "constraints" in fields and fields["constraints"] is not None:
+                it["constraints"] = _validate_constraints(fields["constraints"])
             it["updated_ms"] = int(time.time() * 1000)
             _save(items)
             return it
@@ -259,6 +334,12 @@ class Scheduler:
                 dirty = True
                 continue
             if now_ms < next_ms:
+                continue
+            # 限制项门控：任一不满足 → 本次不触发，但 next_ms 仍推进到下一调度点。
+            constraints = it.get("constraints") or {}
+            if not _allowed(constraints, now):
+                it["next_ms"] = int(_next_run(it["spec"], now).timestamp() * 1000)
+                dirty = True
                 continue
             # 触发
             try:

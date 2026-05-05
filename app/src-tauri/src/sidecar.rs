@@ -523,19 +523,21 @@ pub async fn schedule_list() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn schedule_add(name: String, instruction: String, spec: Value, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>) -> Result<Value, String> {
+pub async fn schedule_add(name: String, instruction: String, spec: Value, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>, constraints: Option<Value>) -> Result<Value, String> {
     instance().request("schedule_add", json!({
         "name": name, "instruction": instruction, "spec": spec,
         "autonomy": autonomy, "max_steps": max_steps,
         "enabled": enabled.unwrap_or(true),
+        "constraints": constraints,
     })).await
 }
 
 #[tauri::command]
-pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>) -> Result<Value, String> {
+pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>, constraints: Option<Value>) -> Result<Value, String> {
     instance().request("schedule_update", json!({
         "id": id, "name": name, "instruction": instruction, "spec": spec,
         "autonomy": autonomy, "max_steps": max_steps, "enabled": enabled,
+        "constraints": constraints,
     })).await
 }
 

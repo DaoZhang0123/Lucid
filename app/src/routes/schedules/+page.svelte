@@ -5,14 +5,22 @@
   import { appConfirm } from "$lib/appConfirm.svelte";
 
   type Spec =
-    | { kind: "interval"; every_minutes: number; tz?: string }
+    | { kind: "hourly"; minute: number; tz?: string }
     | { kind: "daily"; time: string; tz?: string }
     | { kind: "weekly"; weekday: number; time: string; tz?: string };
+
+  type Constraints = {
+    hours?: number[];
+    weekdays?: number[];
+    date_start_ms?: number;
+    date_end_ms?: number;
+  };
 
   type Sched = {
     id: string; name: string; instruction: string; spec: Spec;
     autonomy: string; max_steps: number; enabled: boolean;
     next_ms?: number; last_run_ms?: number;
+    constraints?: Constraints;
   };
 
   let items = $state<Sched[]>([]);
@@ -24,11 +32,22 @@
   let autonomy = $state<"full" | "confirm_critical" | "confirm_each">("confirm_critical");
   let maxSteps = $state(25);
   let enabled = $state(true);
-  let kind = $state<"interval" | "daily" | "weekly">("daily");
-  let everyMinutes = $state(60);
+  let kind = $state<"hourly" | "daily" | "weekly">("daily");
+  let hourlyMinute = $state(0);
   let time = $state("09:00");
   let weekday = $state(0);
   let tz = $state(""); // 空 = 本机时间
+
+  // Constraints — each one is opt-in. When the box is unchecked we don't send the field at all.
+  let useHours = $state(false);
+  let useWeekdays = $state(false);
+  let useDateRange = $state(false);
+  // Default: all 24 hours allowed; user unchecks the ones they don't want.
+  let allowedHours = $state<boolean[]>(Array(24).fill(true));
+  // Default: all 7 weekdays allowed.
+  let allowedWeekdays = $state<boolean[]>(Array(7).fill(true));
+  let dateStart = $state("");
+  let dateEnd = $state("");
 
   const WD_KEYS = [
     "schedules.weekday_mon",
@@ -93,10 +112,25 @@
     maxSteps = 25;
     enabled = true;
     kind = "daily";
-    everyMinutes = 60;
+    hourlyMinute = 0;
     time = "09:00";
     weekday = 0;
     tz = "";
+    useHours = false;
+    useWeekdays = false;
+    useDateRange = false;
+    allowedHours = Array(24).fill(true);
+    allowedWeekdays = Array(7).fill(true);
+    dateStart = "";
+    dateEnd = "";
+  }
+
+  // ms -> "YYYY-MM-DDTHH:MM" in local tz, suitable for <input type="datetime-local">.
+  function msToLocal(ms?: number): string {
+    if (!ms) return "";
+    const d = new Date(ms);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
   function startEdit(s: Sched) {
@@ -107,17 +141,74 @@
     maxSteps = s.max_steps ?? 25;
     enabled = !!s.enabled;
     kind = s.spec.kind as any;
-    if (s.spec.kind === "interval") everyMinutes = s.spec.every_minutes;
+    if (s.spec.kind === "hourly") hourlyMinute = s.spec.minute;
     if (s.spec.kind === "daily") time = s.spec.time;
     if (s.spec.kind === "weekly") { time = s.spec.time; weekday = s.spec.weekday; }
     tz = s.spec.tz ?? "";
+    // Hydrate constraint groups. Missing field => not active; default mask all-true.
+    const c = s.constraints ?? {};
+    if (Array.isArray(c.hours) && c.hours.length) {
+      useHours = true;
+      const set = new Set(c.hours);
+      allowedHours = Array.from({ length: 24 }, (_, i) => set.has(i));
+    } else {
+      useHours = false;
+      allowedHours = Array(24).fill(true);
+    }
+    if (Array.isArray(c.weekdays) && c.weekdays.length) {
+      useWeekdays = true;
+      const set = new Set(c.weekdays);
+      allowedWeekdays = Array.from({ length: 7 }, (_, i) => set.has(i));
+    } else {
+      useWeekdays = false;
+      allowedWeekdays = Array(7).fill(true);
+    }
+    if (c.date_start_ms || c.date_end_ms) {
+      useDateRange = true;
+      dateStart = msToLocal(c.date_start_ms);
+      dateEnd = msToLocal(c.date_end_ms);
+    } else {
+      useDateRange = false;
+      dateStart = "";
+      dateEnd = "";
+    }
   }
 
   function buildSpec(): Spec {
     const t = tz.trim();
-    if (kind === "interval") return { kind: "interval", every_minutes: everyMinutes, ...(t ? { tz: t } : {}) };
+    if (kind === "hourly") return { kind: "hourly", minute: hourlyMinute, ...(t ? { tz: t } : {}) };
     if (kind === "daily") return { kind: "daily", time, ...(t ? { tz: t } : {}) };
     return { kind: "weekly", weekday, time, ...(t ? { tz: t } : {}) };
+  }
+
+  // Parse "YYYY-MM-DDTHH:MM" as local time -> ms epoch. Returns null if blank.
+  function localToMs(s: string): number | null {
+    const v = s.trim();
+    if (!v) return null;
+    const ms = Date.parse(v);
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  function buildConstraints(): Constraints {
+    const out: Constraints = {};
+    if (useHours) {
+      const hs = allowedHours.map((on, i) => (on ? i : -1)).filter((x) => x >= 0);
+      if (!hs.length) throw new Error($_("schedules.constraint_hours_empty"));
+      out.hours = hs;
+    }
+    if (useWeekdays) {
+      const ws = allowedWeekdays.map((on, i) => (on ? i : -1)).filter((x) => x >= 0);
+      if (!ws.length) throw new Error($_("schedules.constraint_weekdays_empty"));
+      out.weekdays = ws;
+    }
+    if (useDateRange) {
+      const ds = localToMs(dateStart);
+      const de = localToMs(dateEnd);
+      if (ds !== null && de !== null && de < ds) throw new Error($_("schedules.constraint_daterange_invalid"));
+      if (ds !== null) out.date_start_ms = ds;
+      if (de !== null) out.date_end_ms = de;
+    }
+    return out;
   }
 
   async function save() {
@@ -125,10 +216,11 @@
     try {
       if (!instruction.trim()) { err = $_("schedules.instruction_required"); return; }
       const spec = buildSpec();
+      const constraints = buildConstraints();
       if (editing) {
-        await invoke("schedule_update", { id: editing.id, name, instruction, spec, autonomy, maxSteps, enabled });
+        await invoke("schedule_update", { id: editing.id, name, instruction, spec, autonomy, maxSteps, enabled, constraints });
       } else {
-        await invoke("schedule_add", { name, instruction, spec, autonomy, maxSteps, enabled });
+        await invoke("schedule_add", { name, instruction, spec, autonomy, maxSteps, enabled, constraints });
       }
       reset();
       await load();
@@ -159,9 +251,27 @@
 
   function fmtSpec(s: Spec): string {
     const tzTag = s.tz ? $_("schedules.tz_suffix", { values: { tz: s.tz } }) : "";
-    if (s.kind === "interval") return $_("schedules.fmt_interval", { values: { minutes: s.every_minutes, tz: tzTag } });
+    if (s.kind === "hourly") return $_("schedules.fmt_hourly", { values: { minute: String(s.minute).padStart(2, "0"), tz: tzTag } });
     if (s.kind === "daily") return $_("schedules.fmt_daily", { values: { time: s.time, tz: tzTag } });
     return $_("schedules.fmt_weekly", { values: { weekday: WD[s.weekday] ?? "?", time: s.time, tz: tzTag } });
+  }
+
+  function fmtConstraints(s: Sched): string {
+    const c = s.constraints ?? {};
+    const parts: string[] = [];
+    if (Array.isArray(c.hours) && c.hours.length && c.hours.length < 24) {
+      parts.push($_("schedules.fmt_hours", { values: { hours: c.hours.map((h) => String(h).padStart(2, "0")).join(",") } }));
+    }
+    if (Array.isArray(c.weekdays) && c.weekdays.length && c.weekdays.length < 7) {
+      parts.push($_("schedules.fmt_weekdays", { values: { weekdays: c.weekdays.map((w) => WD[w] ?? "?").join(",") } }));
+    }
+    if (c.date_start_ms || c.date_end_ms) {
+      const a = c.date_start_ms ? new Date(c.date_start_ms).toLocaleDateString() : "…";
+      const b = c.date_end_ms ? new Date(c.date_end_ms).toLocaleDateString() : "…";
+      parts.push($_("schedules.fmt_daterange", { values: { start: a, end: b } }));
+    }
+    if (!parts.length) return "";
+    return " · " + parts.join(" · ");
   }
 
   function fmtTime(ms?: number): string {
@@ -196,13 +306,13 @@
 
     <fieldset class="trigger">
       <legend>{$_("schedules.trigger_legend")}</legend>
-      <label><input type="radio" bind:group={kind} value="interval" /> {$_("schedules.trigger_interval")}</label>
+      <label><input type="radio" bind:group={kind} value="hourly" /> {$_("schedules.trigger_hourly")}</label>
       <label><input type="radio" bind:group={kind} value="daily" /> {$_("schedules.trigger_daily")}</label>
       <label><input type="radio" bind:group={kind} value="weekly" /> {$_("schedules.trigger_weekly")}</label>
 
       <div class="trigger-detail">
-        {#if kind === "interval"}
-          <label>{$_("schedules.every_minutes_prefix")} <input type="number" min="1" max="10080" bind:value={everyMinutes} /> {$_("schedules.every_minutes_suffix")}</label>
+        {#if kind === "hourly"}
+          <label>{$_("schedules.minute_prefix")} <input type="number" min="0" max="59" bind:value={hourlyMinute} /> {$_("schedules.minute_suffix")}</label>
         {:else if kind === "daily"}
           <label>{$_("schedules.time_label")} <input type="time" bind:value={time} /></label>
         {:else}
@@ -213,12 +323,57 @@
           </label>
           <label>{$_("schedules.time_label")} <input type="time" bind:value={time} /></label>
         {/if}
-        {#if kind !== "interval"}
-          <label>{$_("schedules.tz_label")}
-            <select bind:value={tz}>
-              {#each TZS as t}<option value={t.value}>{t.label}</option>{/each}
-            </select>
-          </label>
+        <label>{$_("schedules.tz_label")}
+          <select bind:value={tz}>
+            {#each TZS as t}<option value={t.value}>{t.label}</option>{/each}
+          </select>
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset class="trigger constraints">
+      <legend>{$_("schedules.constraints_legend")}</legend>
+      <p class="sub-hint">{$_("schedules.constraints_hint")}</p>
+
+      <div class="constraint-row">
+        <label class="toggle"><input type="checkbox" bind:checked={useHours} /> {$_("schedules.constraint_hours_label")}</label>
+        {#if useHours}
+          <div class="hours-grid">
+            {#each allowedHours as on, i}
+              <label class="chip"><input type="checkbox" bind:checked={allowedHours[i]} /> {String(i).padStart(2, "0")}</label>
+            {/each}
+          </div>
+          <div class="chip-actions">
+            <button type="button" class="ghost" onclick={() => (allowedHours = Array(24).fill(true))}>{$_("schedules.select_all_button")}</button>
+            <button type="button" class="ghost" onclick={() => (allowedHours = Array(24).fill(false))}>{$_("schedules.select_none_button")}</button>
+            <button type="button" class="ghost" onclick={() => { const a = Array(24).fill(false); for (let i = 9; i < 17; i++) a[i] = true; allowedHours = a; }}>{$_("schedules.workhours_button")}</button>
+          </div>
+        {/if}
+      </div>
+
+      <div class="constraint-row">
+        <label class="toggle"><input type="checkbox" bind:checked={useWeekdays} /> {$_("schedules.constraint_weekdays_label")}</label>
+        {#if useWeekdays}
+          <div class="wd-grid">
+            {#each WD as w, i}
+              <label class="chip"><input type="checkbox" bind:checked={allowedWeekdays[i]} /> {w}</label>
+            {/each}
+          </div>
+          <div class="chip-actions">
+            <button type="button" class="ghost" onclick={() => (allowedWeekdays = Array(7).fill(true))}>{$_("schedules.select_all_button")}</button>
+            <button type="button" class="ghost" onclick={() => (allowedWeekdays = Array(7).fill(false))}>{$_("schedules.select_none_button")}</button>
+            <button type="button" class="ghost" onclick={() => { const a = Array(7).fill(false); for (let i = 0; i < 5; i++) a[i] = true; allowedWeekdays = a; }}>{$_("schedules.weekdays_only_button")}</button>
+          </div>
+        {/if}
+      </div>
+
+      <div class="constraint-row">
+        <label class="toggle"><input type="checkbox" bind:checked={useDateRange} /> {$_("schedules.constraint_daterange_label")}</label>
+        {#if useDateRange}
+          <div class="daterange">
+            <label>{$_("schedules.window_start_label")} <input type="datetime-local" bind:value={dateStart} /></label>
+            <label>{$_("schedules.window_end_label")} <input type="datetime-local" bind:value={dateEnd} /></label>
+          </div>
         {/if}
       </div>
     </fieldset>
@@ -246,7 +401,7 @@
         <div class="info">
           <div class="name">
             {s.enabled ? "🟢" : "⚪"} {s.name}
-            <span class="trigger-tag">{fmtSpec(s.spec)}</span>
+            <span class="trigger-tag">{fmtSpec(s.spec)}{fmtConstraints(s)}</span>
           </div>
           <div class="instr">{s.instruction}</div>
           <div class="meta">
@@ -275,14 +430,32 @@
   .err { color: #b91c1c; }
   .editor label { display: block; margin: 0.4rem 0; }
   .editor input[type="text"], .editor input:not([type]), .editor input[type="number"],
-  .editor input[type="time"], .editor select {
+  .editor input[type="time"], .editor input[type="datetime-local"], .editor select {
     margin-left: 0.4rem; padding: 0.25rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;
   }
   .editor textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 0.2rem;
                      padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; font: inherit; }
   fieldset.trigger { border: 1px solid #e5e7eb; padding: 0.5rem 0.8rem; border-radius: 4px; margin: 0.5rem 0; }
   fieldset.trigger label { display: inline-flex; align-items: center; gap: 0.2rem; margin-right: 0.8rem; }
+  fieldset.trigger button.ghost { background: #fff; color: #2563eb; border: 1px solid #93c5fd;
+                                   padding: 0.2rem 0.6rem; border-radius: 4px; cursor: pointer;
+                                   margin-left: 0.4rem; font-size: 0.85rem; }
   .trigger-detail { margin-top: 0.4rem; }
+  fieldset.constraints .sub-hint { font-size: 0.78rem; color: #6b7280; margin: 0 0 0.5rem; }
+  .constraint-row { padding: 0.3rem 0; border-top: 1px dashed #e5e7eb; }
+  .constraint-row:first-of-type { border-top: 0; }
+  .constraint-row label.toggle { display: inline-flex; align-items: center; gap: 0.3rem;
+                                  font-weight: 500; margin-right: 0; }
+  .hours-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr));
+                gap: 0.25rem 0.4rem; margin: 0.4rem 0 0.3rem 1.2rem; }
+  .wd-grid { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.4rem 0 0.3rem 1.2rem; }
+  .chip { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0.1rem 0.4rem;
+          border: 1px solid #e5e7eb; border-radius: 3px; font-size: 0.78rem;
+          background: #f9fafb; cursor: pointer; user-select: none; }
+  .chip input { margin: 0; }
+  .chip-actions { margin: 0.2rem 0 0.3rem 1.2rem; }
+  .daterange { margin: 0.4rem 0 0.3rem 1.2rem; }
+  .daterange label { display: inline-block; margin-right: 0.8rem; }
   .actions button { padding: 0.4rem 1rem; background: #2563eb; color: #fff; border: 0;
                     border-radius: 4px; cursor: pointer; margin-right: 0.4rem; }
   .actions button.ghost { background: #fff; color: #2563eb; border: 1px solid #93c5fd; }
