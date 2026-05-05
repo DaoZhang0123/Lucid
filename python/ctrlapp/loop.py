@@ -1297,26 +1297,51 @@ class Agent:
                             self.tool.set_active_app_rect(None)
                             tag = "动作后截图 (L1)"
                     else:
+                        # If the cursor has wandered outside the active app's
+                        # rect (focus stolen by another app, modal popup, click
+                        # missed, …) the L3 cursor-local tile would just show
+                        # unrelated pixels — useless for the model. Detect that
+                        # and fall back to a fresh L2 of the active app rect.
                         try:
-                            # L3 is around the current cursor. Don't overwrite
-                            # last_capture — the L2-of-rect remains the active
-                            # coordinate frame for the next click.
-                            post = self.sensor.capture(ScreenLevel.L3)
-                            tag = "动作后截图 (L3 cursor-local; coordinate frame still = L2 active app)"
-                        except Exception as e:
-                            log.warning(f"L3 post capture failed, falling back to active-app L2: {e}")
-                            left, top, right, bottom = self.tool.active_app_rect
+                            from .window import cursor_pos as _cursor_pos
+                            cx, cy = _cursor_pos()
+                        except Exception:
+                            cx, cy = (-1, -1)
+                        left, top, right, bottom = self.tool.active_app_rect
+                        cursor_in_app = (left <= cx < right) and (top <= cy < bottom)
+                        if not cursor_in_app:
                             w, h = max(1, right - left), max(1, bottom - top)
                             try:
                                 post = self.sensor.capture_region(left, top, w, h)
                                 self.tool.last_capture = post
-                                tag = "动作后截图 (L2 active app, L3 fallback)"
-                            except Exception as e2:
-                                log.warning(f"active_app_rect L2 capture also failed: {e2}")
+                                tag = ("动作后截图 (L2 active app, cursor outside app rect "
+                                       f"→ L3 skipped; cursor=({cx},{cy}) rect=({left},{top})-({right},{bottom}))")
+                            except Exception as e:
+                                log.warning(f"active_app_rect L2 capture (cursor-outside) failed, falling back to L1: {e}")
                                 post = self.sensor.capture(ScreenLevel.L1)
                                 self.tool.last_capture = post
                                 self.tool.set_active_app_rect(None)
                                 tag = "动作后截图 (L1)"
+                        else:
+                            try:
+                                # L3 is around the current cursor. Don't overwrite
+                                # last_capture — the L2-of-rect remains the active
+                                # coordinate frame for the next click.
+                                post = self.sensor.capture(ScreenLevel.L3)
+                                tag = "动作后截图 (L3 cursor-local; coordinate frame still = L2 active app)"
+                            except Exception as e:
+                                log.warning(f"L3 post capture failed, falling back to active-app L2: {e}")
+                                w, h = max(1, right - left), max(1, bottom - top)
+                                try:
+                                    post = self.sensor.capture_region(left, top, w, h)
+                                    self.tool.last_capture = post
+                                    tag = "动作后截图 (L2 active app, L3 fallback)"
+                                except Exception as e2:
+                                    log.warning(f"active_app_rect L2 capture also failed: {e2}")
+                                    post = self.sensor.capture(ScreenLevel.L1)
+                                    self.tool.last_capture = post
+                                    self.tool.set_active_app_rect(None)
+                                    tag = "动作后截图 (L1)"
             else:
                 post = self.sensor.capture(ScreenLevel.L1)
                 self.tool.last_capture = post
