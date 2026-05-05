@@ -24,6 +24,7 @@ from . import tooltips as tooltips_mod
 from . import icon_memory as icon_mod
 from . import launchers as launchers_mod
 from . import regions as regions_mod
+from . import scheduler as scheduler_mod
 
 
 REMEMBER_SCHEMA: dict = {
@@ -237,6 +238,121 @@ UPDATE_LAUNCHER_SCHEMA: dict = {
 
 
 # ---------------------------------------------------------------------------
+# Scheduled tasks (`schedule_*`) — let the agent create / inspect / edit
+# the user's scheduled instructions through conversation.
+# ---------------------------------------------------------------------------
+
+SCHEDULE_LIST_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "schedule_list",
+        "description": (
+            "List all scheduled tasks the user has registered. Each entry: id, name, instruction, spec "
+            "(kind=hourly/daily/weekly + minute/time/weekday/tz), autonomy, max_steps, enabled, optional constraints "
+            "(hours/weekdays/date_start_ms/date_end_ms), next_ms, last_run_ms. Use this before adding a new schedule "
+            "to avoid duplicates, and before update/delete to find the target id."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+# A shared shape for the spec / constraints arguments. Repeated in add + update.
+_SPEC_PROP = {
+    "type": "object",
+    "description": (
+        "Trigger spec. One of: "
+        "{\"kind\":\"hourly\", \"minute\":0..59, \"tz\"?:\"IANA\"} fires every hour at that minute; "
+        "{\"kind\":\"daily\", \"time\":\"HH:MM\", \"tz\"?:\"IANA\"} fires once per day at that local time; "
+        "{\"kind\":\"weekly\", \"weekday\":0..6 (0=Mon), \"time\":\"HH:MM\", \"tz\"?:\"IANA\"} fires once per week. "
+        "tz is optional; omit / empty for the user's local time."
+    ),
+}
+
+_CONSTRAINTS_PROP = {
+    "type": "object",
+    "description": (
+        "Optional active-window constraints (AND-combined). Omit to mean 'no limit'. Fields: "
+        "hours: list[int] of 0..23 hours allowed (omit / 24 items = no limit); "
+        "weekdays: list[int] of 0..6 (0=Mon) weekdays allowed (omit / 7 items = no limit); "
+        "date_start_ms: epoch ms for earliest allowed fire (0 = unset); "
+        "date_end_ms: epoch ms for latest allowed fire (0 = unset). "
+        "Example 'weekday 9-17 only': {\"hours\":[9,10,11,12,13,14,15,16], \"weekdays\":[0,1,2,3,4]}."
+    ),
+}
+
+SCHEDULE_ADD_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "schedule_add",
+        "description": (
+            "Create a new scheduled task that, when its trigger fires, runs `instruction` as a fresh agent task. "
+            "**Use this when the user asks for anything recurring**: 每小时/每天/每周提醒 X、定时给 Y 发消息、定时检查邮件 等等. "
+            "Before calling, briefly summarise to the user what you're about to register (name + spec + instruction). "
+            "Tip: if the user wants 'don't repeat the same content', encode that into `instruction` itself "
+            "(e.g. ask the agent to read/write a small notes file, or check chat history before sending) — "
+            "the scheduler itself has no de-dup memory across runs."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name":        {"type": "string", "description": "Short human-readable name (<=40 chars)."},
+                "instruction": {"type": "string", "description": "The task instruction the agent will receive when this fires."},
+                "spec":        _SPEC_PROP,
+                "autonomy":    {"type": "string", "enum": ["full", "confirm_critical", "confirm_each"], "description": "Default 'confirm_critical'."},
+                "max_steps":   {"type": "integer", "description": "Step budget per fire. Default 25."},
+                "enabled":     {"type": "boolean", "description": "Default true."},
+                "constraints": _CONSTRAINTS_PROP,
+            },
+            "required": ["name", "instruction", "spec"],
+        },
+    },
+}
+
+SCHEDULE_UPDATE_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "schedule_update",
+        "description": (
+            "Update fields of an existing scheduled task. Pass only the fields you want to change. "
+            "Use schedule_list first to find the id."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "id":          {"type": "string", "description": "Schedule id (from schedule_list)."},
+                "name":        {"type": "string"},
+                "instruction": {"type": "string"},
+                "spec":        _SPEC_PROP,
+                "autonomy":    {"type": "string", "enum": ["full", "confirm_critical", "confirm_each"]},
+                "max_steps":   {"type": "integer"},
+                "enabled":     {"type": "boolean"},
+                "constraints": _CONSTRAINTS_PROP,
+            },
+            "required": ["id"],
+        },
+    },
+}
+
+SCHEDULE_DELETE_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "schedule_delete",
+        "description": (
+            "Delete a scheduled task by id. **Confirm with the user before calling** (deletion is permanent). "
+            "Use schedule_list first to find the id."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Schedule id to delete."},
+            },
+            "required": ["id"],
+        },
+    },
+}
+
+
+# ---------------------------------------------------------------------------
 # Region calibration / lookup
 # ---------------------------------------------------------------------------
 
@@ -281,6 +397,11 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
         out.append(UPDATE_LAUNCHER_SCHEMA)
     if getattr(cfg, "regions", None) and cfg.regions.enabled:
         out.append(REGION_SCHEMA)
+    # Scheduler tools are always on — the scheduler thread is part of the sidecar core.
+    out.append(SCHEDULE_LIST_SCHEMA)
+    out.append(SCHEDULE_ADD_SCHEMA)
+    out.append(SCHEDULE_UPDATE_SCHEMA)
+    out.append(SCHEDULE_DELETE_SCHEMA)
     return out
 
 
@@ -601,4 +722,74 @@ def dispatch_meta_tool(
             )
         return ToolResult(error="failed to crop or save icon (check image bounds)")
 
+    if fn_name in ("schedule_list", "schedule_add", "schedule_update", "schedule_delete"):
+        return _dispatch_schedule(fn_name, args)
+
     return None
+
+
+def _fmt_schedule(it: dict) -> str:
+    spec = it.get("spec") or {}
+    parts = [f"#{it.get('id')} {it.get('name')!r} ({'on' if it.get('enabled') else 'off'})",
+             f"  spec: {spec}"]
+    cons = it.get("constraints") or {}
+    if cons:
+        parts.append(f"  constraints: {cons}")
+    parts.append(f"  instruction: {(it.get('instruction') or '')[:120]}")
+    parts.append(f"  autonomy={it.get('autonomy')} max_steps={it.get('max_steps')}")
+    nm = it.get("next_ms") or 0
+    lm = it.get("last_run_ms") or 0
+    if nm:
+        from datetime import datetime as _dt
+        parts.append(f"  next: {_dt.fromtimestamp(nm/1000).isoformat(timespec='seconds')}")
+    if lm:
+        from datetime import datetime as _dt
+        parts.append(f"  last: {_dt.fromtimestamp(lm/1000).isoformat(timespec='seconds')}")
+    return "\n".join(parts)
+
+
+def _dispatch_schedule(fn_name: str, args: dict[str, Any]) -> ToolResult:
+    try:
+        if fn_name == "schedule_list":
+            items = scheduler_mod.list_schedules()
+            if not items:
+                return ToolResult(output="No scheduled tasks.")
+            return ToolResult(output=f"{len(items)} schedule(s):\n\n" + "\n\n".join(_fmt_schedule(it) for it in items))
+
+        if fn_name == "schedule_add":
+            spec = args.get("spec") or {}
+            if not isinstance(spec, dict):
+                return ToolResult(error="spec must be an object")
+            it = scheduler_mod.add_schedule(
+                name=str(args.get("name") or ""),
+                instruction=str(args.get("instruction") or ""),
+                spec=spec,
+                autonomy=str(args.get("autonomy") or "confirm_critical"),
+                max_steps=int(args.get("max_steps") or 25),
+                enabled=bool(args.get("enabled", True)),
+                constraints=args.get("constraints"),
+            )
+            return ToolResult(output="Schedule created:\n" + _fmt_schedule(it))
+
+        if fn_name == "schedule_update":
+            sid = str(args.get("id") or "").strip()
+            if not sid:
+                return ToolResult(error="id required")
+            fields: dict[str, Any] = {}
+            for k in ("name", "instruction", "spec", "autonomy", "max_steps", "enabled", "constraints"):
+                if k in args and args[k] is not None:
+                    fields[k] = args[k]
+            it = scheduler_mod.update_schedule(sid, **fields)
+            if it is None:
+                return ToolResult(error=f"no schedule with id {sid!r}")
+            return ToolResult(output="Schedule updated:\n" + _fmt_schedule(it))
+
+        if fn_name == "schedule_delete":
+            sid = str(args.get("id") or "").strip()
+            if not sid:
+                return ToolResult(error="id required")
+            ok = scheduler_mod.delete_schedule(sid)
+            return ToolResult(output=f"deleted: {ok}", error=None if ok else f"no schedule with id {sid!r}")
+    except Exception as e:
+        return ToolResult(error=f"{type(e).__name__}: {e}")
+    return ToolResult(error=f"unknown schedule op: {fn_name}")
