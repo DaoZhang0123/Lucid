@@ -136,6 +136,11 @@ Operation tips library (dynamically learned):
 - e.g. `learn_tip(text="Outlook: Ctrl+R to reply is more reliable than clicking the Reply button", kind="success")`
 - e.g. `learn_tip(text="WeChat input box: Enter sends immediately; use Shift+Enter for newline", kind="failure")`
 
+Built-in zero-GUI utilities: prefer `read_file` / `write_file` / `run_shell` over opening cmd / Notepad /
+Explorer for any text-only IO (read a config, append to a ledger, run a one-shot command and read its
+output). See each tool's own description for when to fall back to a real GUI window (long-running tasks,
+live observation, TUI behaviour, interactive prompts).
+
 Long-term memory:
 - Use the `remember(text)` tool to persist information worth keeping long-term to memory.md. **It is NOT** an action of the
   `computer` tool; it is a separate function whose only argument is a single string `text`.

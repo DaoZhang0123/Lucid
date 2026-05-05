@@ -39,11 +39,35 @@
 |------|------|------|--------|--------|
 | **L1** | `fullscreen` | 整个虚拟桌面（跨多显示器） | `l1_max_long_edge = 1568` | 起手识局、找窗口 |
 | **L2** | `active_window` | 当前前台窗口的客户区 | `l2_max_long_edge = 1568` | 在 App 内部操作 |
-| **L3** | `cursor_local` | 鼠标周围 `2*l3_radius_px` 见方（默认 200×200） | `l3_max_long_edge = 0`（不缩放） | 看小按钮 / 文字 |
+| **L3** | `cursor_local` | 默认 = UIA 拿到的鼠标下最小 UI 元素的 bounding rect（加 16px padding）；退化为鼠标周围 `2*l3_radius_px` 见方（默认 200×200） | `l3_max_long_edge = 0`（不缩放） | 看小按钮 / 文字 |
 
 > L0 是逻辑上的"教学图"层，**不是 ScreenSensor 拍的**；它是 `icon_memory.py` 拼出来
 > 的图标合集（"icon atlas"），永久跟随 system prompt 注入。
 
+### 2.1 L3 smart sizing（UIA-驱动的动态 crop）
+
+默认开启（`[screenshot] l3_smart_enabled = true`）。L3 不再是固定 200×200：
+
+```
+_capture_cursor_local(cx, cy):
+    rect = uia.element_rect_at(cx, cy)        # 调 IUIAutomation::ElementFromPoint
+    if rect is None:                           # UIA 失败 / 远程桌面 / 受保护进程
+        → 退化 fixed 200×200
+    if rect 太大 (超屏幕 l3_smart_max_ratio = 40%):
+        → 退化 fixed                          # 命中了顶层窗口 / 容器
+    if rect.w < l3_smart_min_w (=160):
+        以鼠标为中心拓到 min_w                 # 防像素级 element
+    if rect.h < l3_smart_min_h (=80):
+        拓到 min_h
+    rect 四周外拓 l3_smart_padding_px (=16)
+    clamp 到屏幕边界
+```
+
+实现：[python/ctrlapp/uia.py](../python/ctrlapp/uia.py) 是一个纯 `ctypes` COM 包装（~150 行，不引入新依赖），第一次调用 ~60ms（COM 初始化），后续 <5ms。
+
+为什么引入这个：原固定 200×200 遇到计算器显示区这种细长控件（约 280×60）会拍不全上下文；遇到侧边栏这种细高窓口也一样。参考 Snipaste “鼠标隐居 UI 元素 bbox” 的交互，UIA 取到的 rect 往往是“语义上最小有意义的 widget”，拍下来后上下文完整。这不破坏“纯视觉”原则——L3 **给模型的仍然只是像素**，UIA 只决定 crop 矩形。
+
+---
 每张 `Capture` 携带：
 
 - `image: PIL.Image`（已下采样）
@@ -79,17 +103,22 @@ LLM 给 `coordinate` 时必须用**当前 `last_capture` 的 sent_size 坐标系
               │     更新 last_capture（坐标系基准）
               │     active_app_l2_shown = True
               └─ active_app_l2_shown == True（后续每一步）：
-                    拍 L3 cursor-local
-                    **不覆盖 last_capture** —— L2 map 仍是坐标系基准
+                    检查鼠标是否还在 active_app_rect 内？
+                    ├─ 在  → 拍 L3 cursor-local
+                    │       **不覆盖 last_capture** —— L2 map 仍是坐标系基准
+                    └─ 不在 → 跳过 L3，重拍 active_app_rect 的 L2
+                              更新 last_capture（坐标系基准刷新）
+                              tag 注明 "cursor outside app rect → L3 skipped"
 ```
 
 要点：
-- **同一个 pin 下，post-step 的 L2 只拍一次。** 之后每一步 post 都是小尺寸 L3 cursor-local，省 token、省网络、省模型 vision pass。
+- **同一个 pin 下，post-step 的 L2 通常只拍一次。** 之后每一步 post 默认是小尺寸 L3 cursor-local，省 token、省网络、省模型 vision pass。
 - L3 拍完**不覆盖** `last_capture`，所以模型下一步给的坐标继续按 L2 map 的尺寸算。
+- **鼠标越界守卫**（[loop.py L1283-1326](../python/ctrlapp/loop.py#L1283-L1326)）：拍 L3 之前会用 `window.cursor_pos()` 校验当前光标位置是否还在 `active_app_rect` 矩形内。如果不在（典型场景：点击意外把焦点切到别的 app、模态弹窗抢焦点、`focus_window` 把目标窗口移到新位置但鼠标仍停在旧坐标），L3 cursor-local 拍出来全是无关像素——这种时候直接降级到"重拍一张 active_app_rect 的 L2"，并刷新 `last_capture` 让坐标系重新对齐。tag 文本里会注明 `cursor outside app rect → L3 skipped; cursor=(cx,cy) rect=(...)`，方便事后排查。
 - 想刷新 L2 map：模型显式 `screenshot(level="active_window")`，会同时把 `active_app_l2_shown` 置 True，下一步仍走 L3。
 - 离开 App / 释放 pin：模型显式 `screenshot(level="fullscreen")`，`active_app_rect` 被清掉，恢复到无 pin 的 L1 默认。
 - L2 / L3 两条路径任何一步异常都会回退到 L1（并清掉 pin），保证至少有图。
-- **可选关闭 L3 降级**：`[screenshot] post_step_use_l3 = false` 时，pin 之后每一步都重新拍 active_app_rect 的 L2，不再降级到 L3 cursor-local。代价是每步多一张大图，收益是适合"点击常导致焦点跳到远离鼠标位置"的 App——典型例子 **微信点联系人**：点中后焦点跳到右下输入框，鼠标仍停在左侧联系人列表上，L3 cursor-local 只拍到联系人 hover 状态变化（<1%），跟"没点中"长得一模一样，模型容易卡在反复点同一个联系人。如果你的工作流里这种 App 占主要部分，可以打开这个开关。
+- **可选关闭 L3 降级**：`[screenshot] post_step_use_l3 = false` 时，pin 之后每一步都重新拍 active_app_rect 的 L2，不再降级到 L3 cursor-local。代价是每步多一张大图，收益是适合"点击常导致焦点跳到远离鼠标位置"的 App——典型例子 **微信点联系人**：点中后焦点跳到右下输入框，鼠标仍停在左侧联系人列表上，L3 cursor-local 只拍到联系人 hover 状态变化（<1%），跟"没点中"长得一模一样，模型容易卡在反复点同一个联系人。如果你的工作流里这种 App 占主要部分，可以打开这个开关。注意：上面那条"鼠标越界守卫"已经能解决"焦点完全切到另一个 app"的退化场景；`post_step_use_l3 = false` 解决的是"焦点没跑出 rect、但跳到 rect 内远离鼠标的位置"。
 
 ### 3.3.1 例外：click_verify 判定 miss 会附一张 L3 提醒
 
@@ -233,7 +262,9 @@ step N 开始
   │     if had_screenshot:           post = tool.last_capture     (复用)
   │     elif active_app_rect pinned:
   │           if not l2_shown:       [拍] L2 of rect; last_capture=post; l2_shown=True
-  │           else:                  [拍] L3 cursor-local; **不覆盖 last_capture**
+  │           else:
+  │             if cursor in rect:   [拍] L3 cursor-local; **不覆盖 last_capture**
+  │             else:                [拍] L2 of rect; last_capture=post   (越界守卫)
   │     else:                         [拍] L1                     (兜底)
   │     落盘 step-NNN-post-<level>.png
   │
@@ -263,7 +294,12 @@ step N 开始
 l1_max_long_edge = 1568
 l2_max_long_edge = 1568
 l3_max_long_edge = 0          # L3 不缩放
-l3_radius_px     = 100        # L3 视野 = 200x200
+l3_radius_px     = 100        # 退化 fixed L3 时的视野 = 200x200
+l3_smart_enabled = true       # UIA 驱动的动态 L3 crop（§2.1）
+l3_smart_padding_px = 16
+l3_smart_min_w   = 160
+l3_smart_min_h   = 80
+l3_smart_max_ratio = 0.4      # rect 超过 40% 屏幕 → 退化 fixed
 keep_recent_l1   = 1
 keep_recent_l2   = 1
 keep_recent_l3   = 2
@@ -286,6 +322,34 @@ verify_click_with_l3            = true   # 点击后自动补 L3 取证
 verify_click_target_before      = true   # 两阶段点击预览
 verify_click_target_radius_px   = 60
 ```
+
+---
+
+## 10.1 键盘焦点 ≠ 鼠标位置 ≠ L3 中心（重要）
+
+经常遇到的疑问："`launch_app("calculator")` 后我没动鼠标，直接 `keyboard.type("1+1=")` 就能在显示框里出现 `1+1=`，那 L3 是不是也能拍到这个显示框？"
+
+**不能。** 三件事是 Windows 里完全独立的状态：
+
+| 状态 | 谁维护 | 怎么查 | 谁改它 |
+|------|--------|--------|--------|
+| **cursor position** | 显示驱动 | `GetCursorPos` / `window.cursor_pos()` | 物理鼠标移动 / `mouse_move` 动作 |
+| **foreground window** | win32k | `GetForegroundWindow` | 用户点击 / `SetForegroundWindow` / 新进程显示主窗口 |
+| **keyboard focus**（focused control） | 当前 foreground 进程内部 | `GetFocus`（仅同进程） / UIA `GetFocusedElement` | 进程自己（Tab 切换、控件 click、初始化默认焦点） |
+
+所以：
+
+- `launch_app("calculator")` 启动后，计算器**自己**把窗口推到 foreground，并把焦点放在显示框（默认行为）。键盘事件 `WM_KEYDOWN`/`WM_CHAR` 通过 foreground → focused control 路由，**整个过程不读 cursor**。
+- 相应地 `keyboard.type("1+1=")` 注入的按键直接命中显示框，与鼠标在哪无关。
+- **但 L3 = `_capture_cursor_local`，crop 中心是 `cursor_pos()`**，不是焦点控件。鼠标没动，L3 还停在原来的位置（很可能在另一个 App 的角落），跟键盘输入毫无关系。
+
+想"看到 1+1= 的显示框"，三种思路：
+
+- **A. 退回 L2（零代码）。** 计算器整窗 ~320×500，L2 active_window 完全够看清显示框。在 [calculator.py](../python/ctrlapp/apps/calculator.py) 的 tip 里加一条「输入完用 L2 校验结果」即可。当前 §3.3 的 post-step 状态机在第一次 pin 时拍的就是 L2，模型显式 `screenshot(level="active_window")` 也能强制刷新。
+- **B. 用 UIA 直接读结果文本（不截图）。** [uia.py](../python/ctrlapp/uia.py) 已有 IUIAutomation 实例，扩展一个 `find_element_by_automation_id(hwnd, "CalculatorResults")` 就能把 Win11 计算器结果框的字符串原样取出来（Name 属性形如 `"显示为 2"`）。比让 LLM 看像素更准、更快、Token 更少。
+- **C. 让 L3 中心 = 焦点控件中心。** 扩展 [uia.py](../python/ctrlapp/uia.py) 加 `focused_element_rect()`（`IUIAutomation::GetFocusedElement` vtable 第 8 槽 + `CurrentBoundingRectangle`），在 `_capture_cursor_local` 里加 `cfg.l3_follow_focus` 开关：开启时优先用 focused element 的 rect，没有再退回 cursor。这样 `keyboard.type` 后续步骤的 L3 自动落在显示框上。
+
+目前**未实现**任何一种，留作后续可选改进。三个方向取舍：A 最省事，B 最准（适合数值/文本类 App，写进 [meta_tools.py](../python/ctrlapp/meta_tools.py) 当独立工具更合适），C 改动小但只解决"看清焦点控件"这一个 use case。
 
 ---
 

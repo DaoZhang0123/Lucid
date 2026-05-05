@@ -110,6 +110,17 @@ class ScreenshotConfig:
     # 仍停在左侧联系人列表，L3 cursor-local 看不到右侧新打开的聊天视图，
     # 容易被模型误读为"点击没生效"）。
     post_step_use_l3: bool = True
+    # ---- L3 smart sizing via UIA (Snipaste-style) ----
+    # When True, L3 cursor-local first asks Windows UI Automation for the
+    # bounding rect of the smallest UI element under the cursor and crops to
+    # that. Falls back to the fixed 2*l3_radius_px square when UIA fails or
+    # the element is degenerate (too large/too small). Improves L3 usefulness
+    # on tall/wide thin controls (e.g. Calculator's display: 280x60).
+    l3_smart_enabled: bool = True
+    l3_smart_padding_px: int = 16          # outset around the UIA rect
+    l3_smart_min_w: int = 160              # auto-grow rect to at least this size
+    l3_smart_min_h: int = 80
+    l3_smart_max_ratio: float = 0.4        # if rect covers >40% of screen → fixed
     # ---- R3: click pre/post pixel-diff verify (Docs/screenshot.md §13.4) ----
     click_verify_enabled: bool = True
     # Below this fraction of pixels changed near the cursor → "didn't click".
@@ -242,6 +253,42 @@ class WebReadConfig:
 
 
 @dataclass
+class FileIOConfig:
+    """`read_file` / `write_file` meta tool config. Bypasses the cmd-screenshot
+    round-trip when the agent just needs to read or append small text files.
+    The agent already has full keyboard/mouse control — direct file IO doesn't
+    expand the attack surface, but we still cap sizes to protect the request body.
+    """
+    enabled: bool = True
+    # Read: hard cap on bytes returned in a single read_file call. Anything
+    # larger returns the head + tail with a "truncated" notice.
+    read_max_bytes: int = 65_536
+    # Read: refuse outright if the file is bigger than this (bytes). Prevents
+    # accidentally tailing a 2 GB log.
+    read_refuse_bytes: int = 5 * 1024 * 1024
+    # Write: hard cap on bytes per write_file call. CJK text is ~3 bytes/char.
+    write_max_bytes: int = 256 * 1024
+
+
+@dataclass
+class ShellConfig:
+    """`run_shell` meta tool config. Spawns cmd.exe / powershell.exe via
+    subprocess (NO console window), captures stdout+stderr, returns text +
+    exit code. Beats `launch_app('cmd') → type → screenshot → OCR` for any
+    task whose output is plain text (read a file, list a dir, query a process)."""
+    enabled: bool = True
+    # Default shell when the model omits the `shell` parameter.
+    # 'cmd' = cmd.exe /c, 'powershell' = powershell.exe -NoProfile -Command, 'pwsh' = PowerShell 7
+    default_shell: str = "powershell"
+    # Hard timeout per command (seconds). Long-running stuff (servers, builds)
+    # should NOT use this tool — open a real terminal instead.
+    timeout_s: float = 20.0
+    # Cap on captured stdout+stderr returned to the model (chars). Larger
+    # output is truncated head+tail with a notice.
+    max_output_chars: int = 16_000
+
+
+@dataclass
 class IconMemoryConfig:
     """图标记忆 icons/ 的配置。每个图标 = PNG 文件 + 标签描述，
     任务起手时拼成一张合集图注入 prompt，让模型能识别小图标。"""
@@ -293,6 +340,8 @@ class Config:
     launchers: LaunchersConfig = field(default_factory=LaunchersConfig)
     regions: RegionsConfig = field(default_factory=RegionsConfig)
     webread: WebReadConfig = field(default_factory=WebReadConfig)
+    fileio: FileIOConfig = field(default_factory=FileIOConfig)
+    shell: ShellConfig = field(default_factory=ShellConfig)
 
 
 def _apply(dc: Any, raw: dict[str, Any] | None) -> Any:
@@ -344,4 +393,6 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.launchers, raw.get("launchers"))
     _apply(cfg.regions, raw.get("regions"))
     _apply(cfg.webread, raw.get("webread"))
+    _apply(cfg.fileio, raw.get("fileio"))
+    _apply(cfg.shell, raw.get("shell"))
     return cfg

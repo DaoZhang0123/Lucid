@@ -448,6 +448,132 @@ READ_WEBPAGE_SCHEMA: dict = {
 # Region calibration / lookup
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Region calibration / lookup
+# ---------------------------------------------------------------------------
+
+READ_FILE_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "read_file",
+        "description": (
+            "Read a small text file from disk and return its contents — **without** opening cmd / Notepad / "
+            "any GUI app. Use this whenever the goal is just to look at file contents (config files, "
+            "markdown, tip ledgers like baby_tips_sent.txt, .env, json, log tails, etc.). "
+            "It is **dramatically faster and cheaper** than `launch_app('cmd') → type 'type X' → screenshot → OCR`: "
+            "one tool call, no screenshot, no token-heavy console image.\n"
+            "Returns plain text. If the file is missing, returns an explicit 'file not found' error (NOT an "
+            "exception) — safe to use as 'create-if-missing' precheck before write_file.\n"
+            "Encoding auto-detection: tries utf-8, utf-8-sig (BOM), then gbk; binary files are rejected.\n"
+            "Size limits: files larger than read_max_bytes (default 64 KB) are returned head+tail with a "
+            "truncation notice; files larger than read_refuse_bytes (default 5 MB) are refused outright — "
+            "use a real terminal for those."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the file. Forward or back slashes both work. Env vars (%USERPROFILE%, $env:LOCALAPPDATA, ~) are expanded.",
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "description": "Override the per-call byte cap (default = read_max_bytes from config). Useful for 'just give me the first 200 bytes'.",
+                },
+                "encoding": {
+                    "type": "string",
+                    "description": "Force a specific encoding (e.g. 'utf-8', 'gbk', 'cp936', 'latin-1'). Default 'auto' tries utf-8/utf-8-sig/gbk in order.",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+}
+
+WRITE_FILE_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "write_file",
+        "description": (
+            "Write text to a file on disk — **without** opening Notepad / cmd. Use for: appending a new entry "
+            "to a tip-ledger / dedupe list (the canonical case: `baby_tips_sent.txt`), creating a small config "
+            "file, dumping a generated message to disk before sending. Always **prefer this over** "
+            "`echo X >> Y` in a shell — no quoting headaches, no console window, single tool call.\n"
+            "Default mode is 'append' with a trailing newline auto-inserted (so each call adds exactly one line). "
+            "Use mode='overwrite' to replace the whole file; the response then includes the previous file size as "
+            "a safety hint so you can spot accidental clobbers.\n"
+            "Parent directories are auto-created. The file is written as UTF-8 (no BOM). Size cap per call is "
+            "write_max_bytes (default 256 KB)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path. Env vars are expanded (see read_file).",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Text to write. CJK / paths / newlines all OK; no escaping needed.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["append", "overwrite"],
+                    "description": "Default 'append'. 'overwrite' replaces the whole file (response will warn with the old size).",
+                },
+                "ensure_trailing_newline": {
+                    "type": "boolean",
+                    "description": "If true (default) and content does not already end with \\n, one is added. Helpful for line-per-entry ledgers.",
+                },
+            },
+            "required": ["path", "content"],
+        },
+    },
+}
+
+RUN_SHELL_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "run_shell",
+        "description": (
+            "Run a one-shot command in cmd.exe or PowerShell **without opening a visible terminal window**. "
+            "Captures stdout + stderr + exit code and returns them as text. Use this whenever you want to run "
+            "a quick command and **read** its output — `dir`, `where`, `tasklist`, `findstr`, `Get-Process`, "
+            "`Get-ChildItem -Recurse | Measure-Object`, anything piping to text.\n"
+            "**Strongly preferred over** `launch_app('cmd' / 'powershell') → type → screenshot → OCR` for any "
+            "task whose only output is text — it skips: window opening, focus juggling, console rendering, image "
+            "capture, JPEG encoding, OCR. One tool call, no screenshot, accurate verbatim output.\n"
+            "Hard-capped by `[shell] timeout_s` (default 20s). For long-running stuff (servers, builds, watch "
+            "loops, REPLs) DO open a real `launch_app('cmd')` window so you can leave it running.\n"
+            "Output is truncated to `[shell] max_output_chars` (default 16 000) head+tail with a truncation notice."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The command line to run, as a single string. cmd: `dir /b C:\\\\Users\\\\Public`. powershell: `Get-Content 'C:\\\\Users\\\\Public\\\\baby_tips_sent.txt' -ErrorAction SilentlyContinue`. Multi-line PowerShell scripts are OK (use `\\n`).",
+                },
+                "shell": {
+                    "type": "string",
+                    "enum": ["cmd", "powershell", "pwsh"],
+                    "description": "Default = `[shell] default_shell` (powershell). 'cmd' = cmd.exe /c, 'powershell' = built-in Windows PowerShell 5.1, 'pwsh' = PowerShell 7+ (must be on PATH).",
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Working directory. Default = sidecar's cwd. Env vars expanded.",
+                },
+                "timeout_s": {
+                    "type": "number",
+                    "description": "Override the default timeout (seconds). Capped at 120s no matter what — for longer tasks use a real terminal.",
+                },
+            },
+            "required": ["command"],
+        },
+    },
+}
+
+
 REGION_SCHEMA: dict = {
     "type": "function",
     "function": {
@@ -498,6 +624,11 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
     out.append(LOAD_SCREENSHOT_SCHEMA)
     if getattr(cfg, "webread", None) and cfg.webread.enabled:
         out.append(READ_WEBPAGE_SCHEMA)
+    if getattr(cfg, "fileio", None) and cfg.fileio.enabled:
+        out.append(READ_FILE_SCHEMA)
+        out.append(WRITE_FILE_SCHEMA)
+    if getattr(cfg, "shell", None) and cfg.shell.enabled:
+        out.append(RUN_SHELL_SCHEMA)
     return out
 
 
@@ -653,6 +784,21 @@ def dispatch_meta_tool(
                 out_lines.append(f"  {k}: {result[k]}")
         if result.get("ok") and cfg.tools.enabled:
             slug = result.get("slug") or name
+            # NOTE: re-attaching tips here even when the same slug was already
+            # preloaded by `_plan_relevant_app_tips` at task startup is INTENTIONAL,
+            # not a bug. Two reasons:
+            #   1) Recency. The preloaded tips sit in the very first user message
+            #      and quickly drift up the history; by the time the model has
+            #      done a few screenshots + clicks they're 5-10 messages back and
+            #      may have been recompressed away. Re-injecting them next to the
+            #      `launch_app` result keeps the right tips ADJACENT to the model's
+            #      next decision (which control to click, which shortcut to press).
+            #   2) launch_app may be called WITHOUT a planning preload (e.g. the
+            #      task instruction didn't mention the app by name, the planner
+            #      missed it, or `tools.plan_app_tips=false`). In those cases
+            #      this is the only place tips get loaded at all.
+            # The duplication cost is small (tips are ~1-2 KB of text) and the
+            # context-manager will dedupe / recompress old copies anyway.
             tips_body = tooltips_mod.app_tips_for_prompt(cfg.tools, slug)
             if tips_body:
                 out_lines.append("")
@@ -827,6 +973,15 @@ def dispatch_meta_tool(
     if fn_name == "read_webpage" and getattr(cfg, "webread", None) and cfg.webread.enabled:
         return _dispatch_read_webpage(args, cfg)
 
+    if fn_name == "read_file" and getattr(cfg, "fileio", None) and cfg.fileio.enabled:
+        return _dispatch_read_file(args, cfg)
+
+    if fn_name == "write_file" and getattr(cfg, "fileio", None) and cfg.fileio.enabled:
+        return _dispatch_write_file(args, cfg)
+
+    if fn_name == "run_shell" and getattr(cfg, "shell", None) and cfg.shell.enabled:
+        return _dispatch_run_shell(args, cfg)
+
     return None
 
 
@@ -986,4 +1141,253 @@ def _dispatch_read_webpage(args: dict[str, Any], cfg: Config) -> ToolResult:
         f"title={res.get('title') or '?'!r} raw_html={res.get('raw_html_len', 0)} bytes]"
     )
     return ToolResult(output=f"{header}\n\n{res.get('text', '')}")
+
+
+# ---------------------------------------------------------------------------
+# read_file / write_file / run_shell — built-in zero-GUI utilities
+# ---------------------------------------------------------------------------
+
+def _expand_path(raw: str) -> str:
+    """Expand %ENV%, $env:NAME (PowerShell-style), and ~ in a path."""
+    import os
+    import re
+    s = raw.strip().strip('"').strip("'")
+    # PowerShell-style $env:NAME → %NAME%
+    s = re.sub(r"\$env:([A-Za-z_][A-Za-z0-9_]*)", lambda m: "%" + m.group(1) + "%", s)
+    s = os.path.expandvars(s)
+    s = os.path.expanduser(s)
+    return s
+
+
+def _truncate_text(text: str, max_chars: int) -> tuple[str, bool]:
+    """Return (possibly-truncated text, was_truncated)."""
+    if len(text) <= max_chars:
+        return text, False
+    half = max(256, max_chars // 2 - 64)
+    head = text[:half]
+    tail = text[-half:]
+    notice = f"\n\n[... truncated {len(text) - 2 * half} chars; total = {len(text)} chars ...]\n\n"
+    return head + notice + tail, True
+
+
+def _dispatch_read_file(args: dict[str, Any], cfg: Config) -> ToolResult:
+    """Pure-Python file read; bypasses cmd+screenshot+OCR for plain-text reads."""
+    import os
+    raw = (args.get("path") or "").strip()
+    if not raw:
+        return ToolResult(error="path required")
+    path = _expand_path(raw)
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return ToolResult(error=f"file not found: {path}")
+    except PermissionError as e:
+        return ToolResult(error=f"permission denied: {path} ({e})")
+    except OSError as e:
+        return ToolResult(error=f"stat failed: {path} ({type(e).__name__}: {e})")
+    if not (st.st_mode & 0o170000) or os.path.isdir(path):
+        return ToolResult(error=f"not a regular file: {path}")
+
+    refuse_bytes = int(getattr(cfg.fileio, "read_refuse_bytes", 5 * 1024 * 1024))
+    if st.st_size > refuse_bytes:
+        return ToolResult(error=(
+            f"file too large ({st.st_size} bytes > read_refuse_bytes={refuse_bytes}); "
+            f"use run_shell with `Get-Content -TotalCount N` or open it in a real editor"
+        ))
+
+    max_bytes = args.get("max_bytes")
+    try:
+        max_bytes = int(max_bytes) if max_bytes is not None else int(cfg.fileio.read_max_bytes)
+    except (TypeError, ValueError):
+        max_bytes = int(cfg.fileio.read_max_bytes)
+    max_bytes = max(256, min(max_bytes, refuse_bytes))
+
+    # Read raw bytes (capped) then decode.
+    try:
+        with open(path, "rb") as f:
+            data = f.read(max_bytes + 1)
+    except Exception as e:
+        return ToolResult(error=f"read failed: {type(e).__name__}: {e}")
+    truncated_bytes = len(data) > max_bytes
+    if truncated_bytes:
+        data = data[:max_bytes]
+
+    enc_arg = (args.get("encoding") or "auto").strip().lower() or "auto"
+    encodings = [enc_arg] if enc_arg != "auto" else ["utf-8", "utf-8-sig", "gbk"]
+    text: str | None = None
+    used_enc: str = ""
+    last_err: str = ""
+    for enc in encodings:
+        try:
+            text = data.decode(enc)
+            used_enc = enc
+            break
+        except UnicodeDecodeError as e:
+            last_err = f"{enc}: {e}"
+            continue
+        except LookupError as e:
+            last_err = f"{enc}: unknown encoding ({e})"
+            continue
+    if text is None:
+        return ToolResult(error=(
+            f"could not decode {path} as text ({last_err}); "
+            f"file is likely binary. Use run_shell to inspect it."
+        ))
+
+    notice_parts = [f"path={path}", f"size={st.st_size}", f"encoding={used_enc}"]
+    if truncated_bytes:
+        notice_parts.append(f"truncated_to_first={max_bytes}_bytes")
+    header = "[read_file " + " ".join(notice_parts) + "]"
+    body = text
+    if truncated_bytes:
+        body += f"\n\n[... {st.st_size - max_bytes} more bytes not shown; raise max_bytes to see them]"
+    return ToolResult(output=f"{header}\n{body}")
+
+
+def _dispatch_write_file(args: dict[str, Any], cfg: Config) -> ToolResult:
+    """Pure-Python file write; default mode = append + ensure trailing newline."""
+    import os
+    raw = (args.get("path") or "").strip()
+    if not raw:
+        return ToolResult(error="path required")
+    if "content" not in args:
+        return ToolResult(error="content required")
+    content = args.get("content")
+    if not isinstance(content, str):
+        return ToolResult(error="content must be a string")
+    mode = (args.get("mode") or "append").strip().lower()
+    if mode not in ("append", "overwrite"):
+        return ToolResult(error="mode must be 'append' or 'overwrite'")
+    ensure_nl = bool(args.get("ensure_trailing_newline", True))
+
+    payload = content
+    if ensure_nl and not payload.endswith("\n"):
+        payload += "\n"
+    encoded = payload.encode("utf-8")
+    cap = int(getattr(cfg.fileio, "write_max_bytes", 256 * 1024))
+    if len(encoded) > cap:
+        return ToolResult(error=(
+            f"content too large ({len(encoded)} bytes > write_max_bytes={cap}); "
+            f"split it across multiple write_file calls or use run_shell with redirection"
+        ))
+
+    path = _expand_path(raw)
+    parent = os.path.dirname(path)
+    if parent:
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except Exception as e:
+            return ToolResult(error=f"failed to create parent dir {parent}: {type(e).__name__}: {e}")
+
+    prev_size: int | None = None
+    if mode == "overwrite":
+        try:
+            prev_size = os.path.getsize(path)
+        except OSError:
+            prev_size = None
+
+    open_mode = "ab" if mode == "append" else "wb"
+    try:
+        with open(path, open_mode) as f:
+            f.write(encoded)
+    except Exception as e:
+        return ToolResult(error=f"write failed: {type(e).__name__}: {e}")
+
+    msg_parts = [f"wrote {len(encoded)} bytes to {path} (mode={mode})"]
+    if mode == "overwrite" and prev_size is not None:
+        msg_parts.append(f"previous file was {prev_size} bytes (now replaced)")
+    return ToolResult(output="; ".join(msg_parts))
+
+
+def _dispatch_run_shell(args: dict[str, Any], cfg: Config) -> ToolResult:
+    """Run cmd / powershell command via subprocess, no console window, capture text."""
+    import os
+    import subprocess
+    cmd = args.get("command")
+    if not isinstance(cmd, str) or not cmd.strip():
+        return ToolResult(error="command required")
+    shell = (args.get("shell") or cfg.shell.default_shell or "powershell").strip().lower()
+    if shell not in ("cmd", "powershell", "pwsh"):
+        return ToolResult(error="shell must be 'cmd', 'powershell', or 'pwsh'")
+
+    if shell == "cmd":
+        argv = ["cmd.exe", "/d", "/c", cmd]
+    elif shell == "powershell":
+        argv = ["powershell.exe", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-Command", cmd]
+    else:  # pwsh
+        argv = ["pwsh.exe", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-Command", cmd]
+
+    cwd_arg = args.get("cwd")
+    cwd: str | None = None
+    if cwd_arg:
+        cwd = _expand_path(str(cwd_arg))
+        if not os.path.isdir(cwd):
+            return ToolResult(error=f"cwd does not exist or is not a dir: {cwd}")
+
+    try:
+        timeout = float(args.get("timeout_s") or cfg.shell.timeout_s)
+    except (TypeError, ValueError):
+        timeout = float(cfg.shell.timeout_s)
+    timeout = max(0.5, min(timeout, 120.0))  # hard cap
+
+    # CREATE_NO_WINDOW = 0x08000000 — hides any console window the child would
+    # otherwise spawn. On Windows only; harmless flag elsewhere.
+    creationflags = 0x08000000 if os.name == "nt" else 0
+
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=cwd,
+            timeout=timeout,
+            capture_output=True,
+            creationflags=creationflags,
+            shell=False,  # argv is already split; do NOT let cmd re-parse
+        )
+    except FileNotFoundError as e:
+        return ToolResult(error=f"shell executable not found: {argv[0]} ({e})")
+    except subprocess.TimeoutExpired as e:
+        # Best-effort: include any partial output captured before the timeout.
+        partial_out = (e.stdout or b"").decode("utf-8", "replace")[-2000:]
+        partial_err = (e.stderr or b"").decode("utf-8", "replace")[-2000:]
+        return ToolResult(error=(
+            f"command timed out after {timeout}s. "
+            f"For long-running tasks open a real terminal via launch_app('{shell}'). "
+            f"\n--- partial stdout (last 2000 chars) ---\n{partial_out}"
+            f"\n--- partial stderr (last 2000 chars) ---\n{partial_err}"
+        ))
+    except Exception as e:
+        return ToolResult(error=f"subprocess failed: {type(e).__name__}: {e}")
+
+    # Decode (Windows console is often gbk/cp936 for cmd, utf-8 for PowerShell 7+).
+    def _dec(b: bytes) -> str:
+        for enc in ("utf-8", "gbk", "latin-1"):
+            try:
+                return b.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        return b.decode("utf-8", "replace")
+
+    out = _dec(proc.stdout or b"")
+    err = _dec(proc.stderr or b"")
+
+    max_chars = int(getattr(cfg.shell, "max_output_chars", 16_000))
+    combined = ""
+    if out:
+        combined += f"--- stdout ({len(out)} chars) ---\n{out}"
+    if err:
+        if combined:
+            combined += "\n"
+        combined += f"--- stderr ({len(err)} chars) ---\n{err}"
+    if not combined:
+        combined = "(no output)"
+    combined, _ = _truncate_text(combined, max_chars)
+
+    header = f"[run_shell shell={shell} exit_code={proc.returncode} timeout_s={timeout}]"
+    text = f"{header}\n{combined}"
+    # exit code != 0 is informational, not necessarily an error worth signalling
+    # via tr.error (the model needs to see stdout/stderr to decide). We surface
+    # it via the header line.
+    return ToolResult(output=text)
 

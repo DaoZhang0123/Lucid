@@ -143,8 +143,16 @@ class ScreenSensor:
 
     def _capture_cursor_local(self) -> Capture:
         cx, cy = cursor_pos()
-        r = self.cfg.l3_radius_px
-        region = {"left": cx - r, "top": cy - r, "width": r * 2, "height": r * 2}
+        # Smart sizing: ask UIA for the smallest UI element under the cursor
+        # and crop to its bounding rect (Snipaste-style). Fixed-radius square
+        # falls back when UIA fails or the rect is degenerate.
+        rect = self._smart_l3_rect(cx, cy) if getattr(self.cfg, "l3_smart_enabled", True) else None
+        if rect is None:
+            r = self.cfg.l3_radius_px
+            region = {"left": cx - r, "top": cy - r, "width": r * 2, "height": r * 2}
+        else:
+            left, top, right, bottom = rect
+            region = {"left": left, "top": top, "width": right - left, "height": bottom - top}
         img = self._grab(region)
         raw = img.size
         sent = _shrink(img, self.cfg.l3_max_long_edge)
@@ -152,6 +160,73 @@ class ScreenSensor:
             level=ScreenLevel.L3, image=sent, raw_size=raw, sent_size=sent.size,
             offset=(region["left"], region["top"]), phash=_phash(sent),
         )
+
+    def _smart_l3_rect(self, cx: int, cy: int) -> tuple[int, int, int, int] | None:
+        """Snipaste-style smart L3 crop: ask UIA for the bounding rect of the
+        smallest UI element under (cx, cy), then sanity-clamp.
+
+        Returns ``(left, top, right, bottom)`` in virtual-screen coordinates,
+        or ``None`` to signal "fallback to fixed radius".
+
+        Strategy:
+        - Element rect too big (covers >max_ratio of the screen)? Useless —
+          probably hit a top-level container. Fallback.
+        - Element rect tiny (e.g. a 1px border)? Auto-grow to (min_w, min_h)
+          centred on the cursor.
+        - Otherwise outset by ``smart_padding_px`` and clamp to the screen.
+        """
+        try:
+            from . import uia as uia_mod
+        except Exception:
+            return None
+        try:
+            r = uia_mod.element_rect_at(cx, cy)
+        except Exception:
+            r = None
+        if r is None:
+            return None
+        left, top, right, bottom = r
+        w, h = right - left, bottom - top
+        if w <= 0 or h <= 0:
+            return None
+
+        # Reject overly large rects (top-level windows, full-screen views).
+        try:
+            with mss.mss() as sct:
+                mon = sct.monitors[0]
+                screen_w, screen_h = int(mon["width"]), int(mon["height"])
+                screen_left, screen_top = int(mon["left"]), int(mon["top"])
+        except Exception:
+            screen_w, screen_h, screen_left, screen_top = 1920, 1080, 0, 0
+        max_ratio = float(getattr(self.cfg, "l3_smart_max_ratio", 0.4))
+        if (w * h) > (screen_w * screen_h) * max_ratio:
+            return None
+
+        # Auto-grow tiny rects so the model has visual context.
+        min_w = int(getattr(self.cfg, "l3_smart_min_w", 160))
+        min_h = int(getattr(self.cfg, "l3_smart_min_h", 80))
+        pad = int(getattr(self.cfg, "l3_smart_padding_px", 16))
+        if w < min_w:
+            grow = (min_w - w + 1) // 2
+            left -= grow
+            right = left + max(w + 2 * grow, min_w)
+        if h < min_h:
+            grow = (min_h - h + 1) // 2
+            top -= grow
+            bottom = top + max(h + 2 * grow, min_h)
+        # Outset by padding.
+        left -= pad
+        top -= pad
+        right += pad
+        bottom += pad
+        # Clamp to virtual-screen bounds.
+        left = max(left, screen_left)
+        top = max(top, screen_top)
+        right = min(right, screen_left + screen_w)
+        bottom = min(bottom, screen_top + screen_h)
+        if right <= left or bottom <= top:
+            return None
+        return (left, top, right, bottom)
 
     def capture_around(self, sx: int, sy: int, radius: int) -> Capture:
         """Grab a square tile around an arbitrary virtual-screen coordinate.
