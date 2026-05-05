@@ -896,6 +896,7 @@ class Agent:
                     "L3": self.cfg.screenshot.keep_recent_l3,
                 },
                 keep_recent_global=self.cfg.llm.keep_recent_screenshots,
+                min_per_l2_app=self.cfg.screenshot.min_per_l2_app,
                 image_names=self._image_names,
                 run_dir=(log.run_dir if log else None),
             )
@@ -1056,6 +1057,12 @@ class Agent:
                     if fn_name == "launch_app":
                         label = f"launch_app({args.get('name','?')}) L2"
                         save_tag = f"step-{step + 1:03d}-launch_app-l2"
+                    elif fn_name == "load_screenshot":
+                        # The tool itself stamps `[level=L?]` into tr.output so
+                        # the keep-recent policy classifies the re-loaded image
+                        # at its original level. Just forward that as the label.
+                        label = tr.output or f"load_screenshot({args.get('path','?')})"
+                        save_tag = f"step-{step + 1:03d}-load_screenshot"
                     elif fn_name == "computer":
                         label = f"{action} post-click L3 around cursor (low pixel-change → likely miss; coordinate frame unchanged)"
                         save_tag = f"step-{step + 1:03d}-{action}-postverify-l3"

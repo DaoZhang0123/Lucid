@@ -86,8 +86,11 @@ class ScreenshotConfig:
     # 对话历史里每个 level 保留最近 K 张截图（装入发给 LLM 的 prompt 里）。
     # 超出部分会被替换为占位文本（携带本地文件名/路径，需要时可反查）。
     keep_recent_l1: int = 1
-    keep_recent_l2: int = 1
+    keep_recent_l2: int = 3
     keep_recent_l3: int = 2
+    # 每个不同的 active app（按最近 launch_app/focus_window 的 slug 区分）至少保留多少张
+    # 最近的 L2，避免跨 App 任务里旧 App 的 L2 被新 App 的 L2 一次性挤掉。
+    min_per_l2_app: int = 1
     skip_if_similarity_above: float = 0.985
     # ---- R2: launch_app diff → L2 (Docs/screenshot.md §13.3) ----
     # When launch_app actually starts a new instance (method != activate-existing),

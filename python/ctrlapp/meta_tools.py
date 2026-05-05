@@ -352,6 +352,45 @@ SCHEDULE_DELETE_SCHEMA: dict = {
 }
 
 
+LOAD_SCREENSHOT_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "load_screenshot",
+        "description": (
+            "Re-load a previously taken screenshot from disk and re-attach it to the next request, "
+            "instead of re-visiting the App and taking a fresh shot. "
+            "**When to use:** an old user message has been replaced by a placeholder like "
+            "`[old screenshot omitted ...; level=L2; file=step-005-post-active_window.png; "
+            "path=C:\\Users\\you\\AppData\\Local\\dev.ctrlapp\\logs\\thread-...\\step-005-post-active_window.png]` "
+            "and you still need the visual content (e.g. you saw a webpage, switched to another App, and now need to "
+            "transcribe the page text). Pass the **exact `path`** from that placeholder. "
+            "**Do NOT** invent paths or try to read arbitrary files — only paths emitted by the placeholder lines are valid. "
+            "**Coordinate frame:** re-loaded screenshots are for **reading content only** (text, prices, news headlines, etc.); "
+            "the active App's input focus / window rect may have moved since then, so do not derive new click coordinates "
+            "from a re-loaded shot — take a fresh `screenshot(level='active_window')` for that."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the PNG/JPG file (must come from a placeholder's `path=...` field).",
+                },
+                "level": {
+                    "type": "string",
+                    "enum": ["L1", "L2", "L3"],
+                    "description": (
+                        "Original level of the screenshot (copy it from the placeholder's `level=...` field). "
+                        "Used so the keep-recent policy treats the re-loaded image as the same level. Defaults to L2."
+                    ),
+                },
+            },
+            "required": ["path"],
+        },
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # Region calibration / lookup
 # ---------------------------------------------------------------------------
@@ -402,6 +441,8 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
     out.append(SCHEDULE_ADD_SCHEMA)
     out.append(SCHEDULE_UPDATE_SCHEMA)
     out.append(SCHEDULE_DELETE_SCHEMA)
+    # Always-on: re-load any past screenshot from disk (cheaper than re-visiting the App).
+    out.append(LOAD_SCREENSHOT_SCHEMA)
     return out
 
 
@@ -725,6 +766,9 @@ def dispatch_meta_tool(
     if fn_name in ("schedule_list", "schedule_add", "schedule_update", "schedule_delete"):
         return _dispatch_schedule(fn_name, args)
 
+    if fn_name == "load_screenshot":
+        return _dispatch_load_screenshot(args)
+
     return None
 
 
@@ -793,3 +837,56 @@ def _dispatch_schedule(fn_name: str, args: dict[str, Any]) -> ToolResult:
     except Exception as e:
         return ToolResult(error=f"{type(e).__name__}: {e}")
     return ToolResult(error=f"unknown schedule op: {fn_name}")
+
+
+def _dispatch_load_screenshot(args: dict[str, Any]) -> ToolResult:
+    """Read a previously-saved screenshot from disk and re-attach it to the
+    next request. Validates that the path looks like one of our log files
+    (under ``%LOCALAPPDATA%\\dev.ctrlapp\\logs``) so a model can't use this to
+    exfiltrate arbitrary local files.
+    """
+    import os
+    from pathlib import Path
+
+    raw_path = (args.get("path") or "").strip()
+    if not raw_path:
+        return ToolResult(error="path required")
+    level = (args.get("level") or "L2").strip().upper()
+    if level not in ("L1", "L2", "L3"):
+        level = "L2"
+
+    try:
+        p = Path(os.path.expandvars(raw_path)).resolve()
+    except Exception as e:
+        return ToolResult(error=f"invalid path: {e}")
+
+    if not p.exists() or not p.is_file():
+        return ToolResult(error=f"file not found: {p}")
+    if p.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+        return ToolResult(error=f"unsupported file type {p.suffix!r}; expected .png/.jpg")
+
+    # Allowlist: must live under %LOCALAPPDATA%\dev.ctrlapp\logs (or any platform's equivalent).
+    allowed_root: Path | None = None
+    local_app = os.environ.get("LOCALAPPDATA")
+    if local_app:
+        allowed_root = (Path(local_app) / "dev.ctrlapp" / "logs").resolve()
+    if allowed_root is not None:
+        try:
+            p.relative_to(allowed_root)
+        except ValueError:
+            return ToolResult(
+                error=f"path must be under {allowed_root} (only screenshots saved by this app can be re-loaded)"
+            )
+
+    try:
+        data = p.read_bytes()
+    except Exception as e:
+        return ToolResult(error=f"failed to read {p}: {e}")
+    if not data:
+        return ToolResult(error=f"empty file: {p}")
+
+    # Loop.py uses tr.output as the follow-up image label for load_screenshot;
+    # embedding `[level=L?]` here makes the keep-recent policy treat the
+    # re-loaded image as the same level as the original.
+    label = f"[level={level}] re-loaded screenshot from disk: {p.name} ({len(data)} bytes)"
+    return ToolResult(output=label, image_png=data)

@@ -26,6 +26,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 from typing import Any, Callable, Iterable
 
 from PIL import Image
@@ -74,6 +75,30 @@ def _data_url_to_bytes(url: str) -> bytes | None:
         return base64.b64decode(url.split(",", 1)[1])
     except Exception:
         return None
+
+
+_SLUG_RE = re.compile(r"slug:\s*([A-Za-z0-9_\-\.]+)")
+
+
+def _l2_app_slug_for(messages: list[dict[str, Any]], img_msg_idx: int) -> str | None:
+    """Walk back from ``img_msg_idx`` to find the app slug for an L2 image.
+
+    The image typically rides in a ``user`` message right after the ``tool``
+    message produced by ``launch_app`` / ``focus_window``; that tool message's
+    plain-string ``content`` includes a line like ``slug: edge``. We scan
+    backwards a few messages to find it. Returns ``None`` if not found.
+    """
+    # Look back at most 6 messages to handle interleaving narration / hints.
+    for j in range(img_msg_idx, max(-1, img_msg_idx - 7), -1):
+        m = messages[j]
+        if m.get("role") != "tool":
+            continue
+        c = m.get("content")
+        if isinstance(c, str):
+            mt = _SLUG_RE.search(c)
+            if mt:
+                return mt.group(1)
+    return None
 
 
 def _bytes_to_jpeg_data_url(png_or_jpeg: bytes, quality: int, max_long_edge: int) -> bytes | None:
@@ -151,6 +176,7 @@ class ContextManager:
         *,
         keep_per_level: dict[str, int],
         keep_recent_global: int,
+        min_per_l2_app: int = 0,
         image_names: dict[str, str] | None = None,
         run_dir: Any = None,
     ) -> tuple[int, int]:
@@ -161,6 +187,12 @@ class ContextManager:
         Keep policy (image survives untouched):
           * level == "L0" (icon atlases): always.
           * each of L1/L2/L3: most recent ``keep_per_level[level]`` blocks.
+          * for L2 specifically: additionally keep the most recent
+            ``min_per_l2_app`` blocks **per active-app slug** (sniffed from the
+            preceding ``tool`` message of ``launch_app`` / ``focus_window``),
+            so a long task that hops across multiple Apps doesn't lose the
+            earlier App's L2 just because the newer Apps' L2s filled the
+            global L2 budget.
           * additionally: most recent ``keep_recent_global`` blocks overall.
 
         Everything else is recompressed to JPEG @ ``image_recompress_quality``
@@ -188,6 +220,19 @@ class ContextManager:
                     seen += 1
                     if seen >= k:
                         break
+        # Per-app L2 retention: for every distinct app slug that ever showed an
+        # L2, keep at least ``min_per_l2_app`` of its most recent L2 frames.
+        if min_per_l2_app > 0:
+            by_app: dict[str, list[int]] = {}
+            for i, (mi, _ci, tag) in enumerate(entries):
+                if tag != "L2":
+                    continue
+                slug = _l2_app_slug_for(messages, mi) or "(unknown)"
+                by_app.setdefault(slug, []).append(i)
+            for _slug, idxs in by_app.items():
+                # idxs already in ascending order; take the last K.
+                for i in idxs[-min_per_l2_app:]:
+                    keep_idx.add(i)
         if keep_recent_global > 0:
             for i in range(max(0, len(entries) - keep_recent_global), len(entries)):
                 keep_idx.add(i)
@@ -230,13 +275,21 @@ class ContextManager:
                 name = None
                 if image_names is not None:
                     name = image_names.get(hashlib.md5(raw).hexdigest())
+                hint = (
+                    " To re-load this exact frame into the next request, call "
+                    "`load_screenshot(path=\"<full path above>\", level=\"" + tag + "\")` "
+                    "instead of re-visiting the App and taking a fresh shot."
+                )
                 if name and run_dir is not None:
                     placeholder = (
                         f"[old screenshot omitted to control request size; "
                         f"level={tag}; file={name}; path={run_dir}\\{name}]"
+                        + hint
                     )
                 elif name:
-                    placeholder = f"[old screenshot omitted; level={tag}; file={name}]"
+                    placeholder = (
+                        f"[old screenshot omitted; level={tag}; file={name}]" + hint
+                    )
                 else:
                     placeholder = f"[old screenshot omitted; level={tag}]"
                 messages[mi]["content"][ci] = {"type": "text", "text": placeholder}
