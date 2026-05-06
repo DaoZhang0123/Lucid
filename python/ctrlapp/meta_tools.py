@@ -251,7 +251,7 @@ SCHEDULE_LIST_SCHEMA: dict = {
         "name": "schedule_list",
         "description": (
             "List all scheduled tasks the user has registered. Each entry: id, name, instruction, spec "
-            "(kind=hourly/daily/weekly + minute/time/weekday/tz), autonomy, max_steps, enabled, optional constraints "
+            "(kind=secondly/minutely/hourly/daily/weekly + every/minute/time/weekday/tz), autonomy, max_steps, enabled, optional constraints "
             "(hours/weekdays/date_start_ms/date_end_ms), next_ms, last_run_ms. Use this before adding a new schedule "
             "to avoid duplicates, and before update/delete to find the target id."
         ),
@@ -264,6 +264,8 @@ _SPEC_PROP = {
     "type": "object",
     "description": (
         "Trigger spec. One of: "
+        "{\"kind\":\"secondly\", \"every\":1..3600} fires every N seconds; "
+        "{\"kind\":\"minutely\", \"every\":1..1440} fires every N minutes; "
         "{\"kind\":\"hourly\", \"minute\":0..59, \"tz\"?:\"IANA\"} fires every hour at that minute; "
         "{\"kind\":\"daily\", \"time\":\"HH:MM\", \"tz\"?:\"IANA\"} fires once per day at that local time; "
         "{\"kind\":\"weekly\", \"weekday\":0..6 (0=Mon), \"time\":\"HH:MM\", \"tz\"?:\"IANA\"} fires once per week. "

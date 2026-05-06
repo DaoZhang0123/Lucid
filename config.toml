@@ -127,3 +127,32 @@ enabled = true
 max_icons = 60          # 超过则丢最早的
 tile_size = 96          # 单图标在合集图里的最大渲染边长
 atlas_cols = 4          # 合集图每行多少个图标
+
+[visual_notify]
+# 任务栏视觉通知两步法：先截图 diff，有变化再调 LLM 确认是否有新消息。
+enabled = true
+# 每隔多少秒截一次任务栏（必须 >= 1）
+poll_interval_sec = 2.0
+# 检测区域：底部 strip_height_px 像素，中间 strip_center_width_ratio 比例宽度
+strip_height_px = 120
+# 是否自动使用系统任务栏实际高度（开启后会覆盖 strip_height_px）
+auto_detect_taskbar_height = true
+strip_center_width_ratio = 0.50
+# Step 1 diff：dHash 汉明距离超过此阈值才触发 Step 2（越小越灵敏，建议 6-12）
+diff_method = "dhash"
+diff_threshold = 8.0
+# Step 2 LLM 确认
+llm_confirm_enabled = true
+llm_confirm_on_diff_only = true
+# LLM 确认冷却时间（秒），防止短时间内重复触发
+llm_confirm_cooldown_sec = 5.0
+# LLM 确认最大输出 token
+llm_confirm_max_tokens = 300
+# 是否保存监听截图；recent 目录只保留最近 N 张，key 目录保留触发时的关键截图
+save_screenshots = true
+recent_screenshot_keep = 100
+key_screenshot_keep = 200
+# 确认有新消息后，是否自动发起一轮任务查看并回复
+auto_chat_enabled = true
+auto_chat_instruction = "检测到任务栏可能有新消息。请先查看 Teams/WeChat 最近未读消息，基于上下文给出简短自然回复并发送。完成后返回继续监听。"
+

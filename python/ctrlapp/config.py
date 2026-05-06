@@ -302,6 +302,41 @@ class IconMemoryConfig:
 
 
 @dataclass
+class VisualNotifyConfig:
+    """任务栏视觉通知两步法配置：先 diff，再按需调用 LLM 确认。"""
+    enabled: bool = False
+    poll_interval_sec: float = 2.0
+    strip_height_px: int = 120
+    auto_detect_taskbar_height: bool = True  # 自动检测系统任务栏高度，覆盖 strip_height_px
+    strip_center_width_ratio: float = 0.50
+    diff_method: str = "dhash"         # dhash | pixel
+    diff_threshold: float = 8.0
+    # Step1 横向分段：基于像素差分在 x 轴投影自动切分候选区域，
+    # 再对每段计算 diff 分数并聚合（默认取最大），避免整条任务栏被时钟/托盘噪声干扰。
+    x_projection_enabled: bool = True
+    x_projection_pixel_threshold: int = 20
+    x_projection_active_ratio: float = 0.08
+    x_projection_min_segment_width_px: int = 20
+    x_projection_pad_px: int = 4
+    x_projection_merge_gap_px: int = 4
+    x_projection_max_segments: int = 10
+    x_projection_score_agg: str = "max"  # max | sum_top2
+    llm_confirm_enabled: bool = True
+    llm_confirm_on_diff_only: bool = True
+    llm_confirm_cooldown_sec: float = 5.0
+    llm_confirm_max_tokens: int = 300
+    save_screenshots: bool = True
+    recent_screenshot_keep: int = 100
+    key_screenshot_keep: int = 200
+    # 检测到新消息后，是否自动发起一轮任务（查看消息并回复）。
+    auto_chat_enabled: bool = False
+    auto_chat_instruction: str = (
+        "检测到任务栏可能有新消息。请先查看 Teams/WeChat 最近未读消息，"
+        "基于上下文给出简短自然回复并发送。完成后返回继续监听。"
+    )
+
+
+@dataclass
 class ContextConfig:
     """Context Manager: image recompression + adaptive history summarisation."""
     # --- image recompression (no LLM, pure code) ---
@@ -342,6 +377,7 @@ class Config:
     webread: WebReadConfig = field(default_factory=WebReadConfig)
     fileio: FileIOConfig = field(default_factory=FileIOConfig)
     shell: ShellConfig = field(default_factory=ShellConfig)
+    visual_notify: VisualNotifyConfig = field(default_factory=VisualNotifyConfig)
 
 
 def _apply(dc: Any, raw: dict[str, Any] | None) -> Any:
@@ -395,4 +431,5 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.webread, raw.get("webread"))
     _apply(cfg.fileio, raw.get("fileio"))
     _apply(cfg.shell, raw.get("shell"))
+    _apply(cfg.visual_notify, raw.get("visual_notify"))
     return cfg

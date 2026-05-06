@@ -5,6 +5,8 @@
   import { appConfirm } from "$lib/appConfirm.svelte";
 
   type Spec =
+    | { kind: "secondly"; every: number }
+    | { kind: "minutely"; every: number }
     | { kind: "hourly"; minute: number; tz?: string }
     | { kind: "daily"; time: string; tz?: string }
     | { kind: "weekly"; weekday: number; time: string; tz?: string };
@@ -18,6 +20,7 @@
 
   type Sched = {
     id: string; name: string; instruction: string; spec: Spec;
+    action?: "task" | "visual_notify";
     autonomy: string; max_steps: number; enabled: boolean;
     next_ms?: number; last_run_ms?: number;
     constraints?: Constraints;
@@ -32,10 +35,13 @@
 
   let name = $state("");
   let instruction = $state("");
+  let action = $state<"task" | "visual_notify">("task");
   let autonomy = $state<"full" | "confirm_critical" | "confirm_each">("confirm_critical");
   let maxSteps = $state(25);
   let enabled = $state(true);
-  let kind = $state<"hourly" | "daily" | "weekly">("daily");
+  let kind = $state<"secondly" | "minutely" | "hourly" | "daily" | "weekly">("daily");
+  let everySeconds = $state(2);
+  let everyMinutes = $state(1);
   let hourlyMinute = $state(0);
   let time = $state("09:00");
   let weekday = $state(0);
@@ -111,10 +117,13 @@
     editing = null;
     name = "";
     instruction = "";
+    action = "task";
     autonomy = "confirm_critical";
     maxSteps = defaultMaxSteps;
     enabled = true;
     kind = "daily";
+    everySeconds = 2;
+    everyMinutes = 1;
     hourlyMinute = 0;
     time = "09:00";
     weekday = 0;
@@ -140,14 +149,17 @@
     editing = s;
     name = s.name;
     instruction = s.instruction;
+    action = (s.action as "task" | "visual_notify") ?? "task";
     autonomy = (s.autonomy as any) ?? "confirm_critical";
     maxSteps = s.max_steps ?? defaultMaxSteps;
     enabled = !!s.enabled;
     kind = s.spec.kind as any;
+    if (s.spec.kind === "secondly") everySeconds = s.spec.every;
+    if (s.spec.kind === "minutely") everyMinutes = s.spec.every;
     if (s.spec.kind === "hourly") hourlyMinute = s.spec.minute;
     if (s.spec.kind === "daily") time = s.spec.time;
     if (s.spec.kind === "weekly") { time = s.spec.time; weekday = s.spec.weekday; }
-    tz = s.spec.tz ?? "";
+    tz = "tz" in s.spec ? (s.spec.tz ?? "") : "";
     // Hydrate constraint groups. Missing field => not active; default mask all-true.
     const c = s.constraints ?? {};
     if (Array.isArray(c.hours) && c.hours.length) {
@@ -179,6 +191,8 @@
 
   function buildSpec(): Spec {
     const t = tz.trim();
+    if (kind === "secondly") return { kind: "secondly", every: Math.max(1, Math.min(3600, everySeconds || 1)) };
+    if (kind === "minutely") return { kind: "minutely", every: Math.max(1, Math.min(1440, everyMinutes || 1)) };
     if (kind === "hourly") return { kind: "hourly", minute: hourlyMinute, ...(t ? { tz: t } : {}) };
     if (kind === "daily") return { kind: "daily", time, ...(t ? { tz: t } : {}) };
     return { kind: "weekly", weekday, time, ...(t ? { tz: t } : {}) };
@@ -217,13 +231,16 @@
   async function save() {
     err = "";
     try {
-      if (!instruction.trim()) { err = $_("schedules.instruction_required"); return; }
+      const resolvedInstruction = action === "visual_notify"
+        ? "__visual_notify_tick__"
+        : instruction.trim();
+      if (!resolvedInstruction) { err = $_("schedules.instruction_required"); return; }
       const spec = buildSpec();
       const constraints = buildConstraints();
       if (editing) {
-        await invoke("schedule_update", { id: editing.id, name, instruction, spec, autonomy, maxSteps, enabled, constraints });
+        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, autonomy, maxSteps, enabled, constraints });
       } else {
-        await invoke("schedule_add", { name, instruction, spec, autonomy, maxSteps, enabled, constraints });
+        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, autonomy, maxSteps, enabled, constraints });
       }
       reset();
       await load();
@@ -253,7 +270,10 @@
   }
 
   function fmtSpec(s: Spec): string {
-    const tzTag = s.tz ? $_("schedules.tz_suffix", { values: { tz: s.tz } }) : "";
+    const tzValue = "tz" in s ? (s.tz ?? "") : "";
+    const tzTag = tzValue ? $_("schedules.tz_suffix", { values: { tz: tzValue } }) : "";
+    if (s.kind === "secondly") return $_("schedules.fmt_secondly", { values: { every: s.every } });
+    if (s.kind === "minutely") return $_("schedules.fmt_minutely", { values: { every: s.every } });
     if (s.kind === "hourly") return $_("schedules.fmt_hourly", { values: { minute: String(s.minute).padStart(2, "0"), tz: tzTag } });
     if (s.kind === "daily") return $_("schedules.fmt_daily", { values: { time: s.time, tz: tzTag } });
     return $_("schedules.fmt_weekly", { values: { weekday: WD[s.weekday] ?? "?", time: s.time, tz: tzTag } });
@@ -280,6 +300,20 @@
   function fmtTime(ms?: number): string {
     if (!ms) return $_("schedules.time_unknown");
     return new Date(ms).toLocaleString();
+  }
+
+  function isVisualNotify(s: Sched | null | undefined): boolean {
+    return (s?.action ?? "task") === "visual_notify";
+  }
+
+  function displayInstruction(s: Sched): string {
+    if (isVisualNotify(s)) return $_("schedules.visual_notify_instruction");
+    return s.instruction;
+  }
+
+  function displayName(s: Sched): string {
+    if (isVisualNotify(s)) return $_("schedules.visual_notify_name");
+    return s.name;
   }
 
   onMount(async () => {
@@ -315,18 +349,34 @@
   <section class="editor">
     <h2>{editing ? $_("schedules.edit_heading") : $_("schedules.new_heading")}</h2>
     <label>{$_("schedules.name_label")} <input bind:value={name} placeholder={$_("schedules.name_placeholder")} /></label>
-    <label>{$_("schedules.instruction_label")}
-      <textarea rows="3" bind:value={instruction} placeholder={$_("schedules.instruction_placeholder")}></textarea>
+    <label>{$_("schedules.action_label")}
+      <select bind:value={action} disabled={!!editing && isVisualNotify(editing)}>
+        <option value="task">{$_("schedules.action_task")}</option>
+        <option value="visual_notify">{$_("schedules.action_visual_notify")}</option>
+      </select>
     </label>
+    {#if action === "visual_notify"}
+      <p class="sub-hint visual-note">{$_("schedules.visual_notify_instruction")}</p>
+    {:else}
+      <label>{$_("schedules.instruction_label")}
+        <textarea rows="3" bind:value={instruction} placeholder={$_("schedules.instruction_placeholder")}></textarea>
+      </label>
+    {/if}
 
     <fieldset class="trigger">
       <legend>{$_("schedules.trigger_legend")}</legend>
       <label><input type="radio" bind:group={kind} value="hourly" /> {$_("schedules.trigger_hourly")}</label>
       <label><input type="radio" bind:group={kind} value="daily" /> {$_("schedules.trigger_daily")}</label>
       <label><input type="radio" bind:group={kind} value="weekly" /> {$_("schedules.trigger_weekly")}</label>
+      <label><input type="radio" bind:group={kind} value="secondly" /> {$_("schedules.trigger_secondly")}</label>
+      <label><input type="radio" bind:group={kind} value="minutely" /> {$_("schedules.trigger_minutely")}</label>
 
       <div class="trigger-detail">
-        {#if kind === "hourly"}
+        {#if kind === "secondly"}
+          <label>{$_("schedules.every_seconds_label")} <input type="number" min="1" max="3600" bind:value={everySeconds} /></label>
+        {:else if kind === "minutely"}
+          <label>{$_("schedules.every_minutes_label")} <input type="number" min="1" max="1440" bind:value={everyMinutes} /></label>
+        {:else if kind === "hourly"}
           <label>{$_("schedules.minute_prefix")} <input type="number" min="0" max="59" bind:value={hourlyMinute} /> {$_("schedules.minute_suffix")}</label>
         {:else if kind === "daily"}
           <label>{$_("schedules.time_label")} <input type="time" bind:value={time} /></label>
@@ -338,11 +388,13 @@
           </label>
           <label>{$_("schedules.time_label")} <input type="time" bind:value={time} /></label>
         {/if}
-        <label>{$_("schedules.tz_label")}
-          <select bind:value={tz}>
-            {#each TZS as t}<option value={t.value}>{t.label}</option>{/each}
-          </select>
-        </label>
+        {#if kind !== "secondly" && kind !== "minutely"}
+          <label>{$_("schedules.tz_label")}
+            <select bind:value={tz}>
+              {#each TZS as t}<option value={t.value}>{t.label}</option>{/each}
+            </select>
+          </label>
+        {/if}
       </div>
     </fieldset>
 
@@ -393,14 +445,16 @@
       </div>
     </fieldset>
 
-    <label>{$_("schedules.autonomy_label")}
-      <select bind:value={autonomy}>
-        <option value="full">full</option>
-        <option value="confirm_critical">confirm_critical</option>
-        <option value="confirm_each">confirm_each</option>
-      </select>
-    </label>
-    <label>{$_("schedules.max_steps_label")} <input type="number" min="1" max="200" bind:value={maxSteps} /></label>
+    {#if action !== "visual_notify"}
+      <label>{$_("schedules.autonomy_label")}
+        <select bind:value={autonomy}>
+          <option value="full">full</option>
+          <option value="confirm_critical">confirm_critical</option>
+          <option value="confirm_each">confirm_each</option>
+        </select>
+      </label>
+      <label>{$_("schedules.max_steps_label")} <input type="number" min="1" max="200" bind:value={maxSteps} /></label>
+    {/if}
     <label><input type="checkbox" bind:checked={enabled} /> {$_("schedules.enabled_label")}</label>
 
     <div class="actions">
@@ -415,13 +469,14 @@
       <div class="row" class:active={editing?.id === s.id} class:disabled={!s.enabled}>
         <div class="info">
           <div class="name">
-            {s.enabled ? "🟢" : "⚪"} {s.name}
+            {s.enabled ? "🟢" : "⚪"} {displayName(s)}
+            {#if isVisualNotify(s)}<span class="type-tag">{$_("schedules.action_visual_notify")}</span>{/if}
             <span class="trigger-tag">{fmtSpec(s.spec)}{fmtConstraints(s)}</span>
           </div>
-          <div class="instr">{s.instruction}</div>
+          <div class="instr">{displayInstruction(s)}</div>
           <div class="meta">
             {$_("schedules.next_label")} {fmtTime(s.next_ms)} · {$_("schedules.last_label")} {fmtTime(s.last_run_ms)} ·
-            {s.autonomy} · {$_("schedules.step_count", { values: { n: s.max_steps } })}
+            {#if isVisualNotify(s)}{$_("schedules.visual_notify_meta")}{:else}{s.autonomy} · {$_("schedules.step_count", { values: { n: s.max_steps } })}{/if}
           </div>
         </div>
         <div class="ops">
@@ -444,7 +499,7 @@
   .hint { font-size: 0.85rem; color: #4b5563; }
   .err { color: #b91c1c; }
   .editor label { display: block; margin: 0.4rem 0; }
-  .editor input[type="text"], .editor input:not([type]), .editor input[type="number"],
+  .editor input:not([type]), .editor input[type="number"],
   .editor input[type="time"], .editor input[type="datetime-local"], .editor select {
     margin-left: 0.4rem; padding: 0.25rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px;
   }
@@ -482,6 +537,8 @@
   .name { font-weight: 600; }
   .trigger-tag { background: #eff6ff; color: #1d4ed8; padding: 0 0.4rem; border-radius: 3px;
                  font-size: 0.75rem; margin-left: 0.4rem; font-weight: 500; }
+  .type-tag { background: #ecfeff; color: #0f766e; padding: 0 0.4rem; border-radius: 3px;
+              font-size: 0.75rem; margin-left: 0.4rem; font-weight: 500; }
   .instr { font-size: 0.85rem; color: #374151; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .meta { font-size: 0.72rem; color: #6b7280; margin-top: 0.15rem; }
   .ops button { padding: 0.3rem 0.6rem; background: #2563eb; color: #fff; border: 0;

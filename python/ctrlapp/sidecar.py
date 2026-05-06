@@ -37,12 +37,6 @@
 事件类型：
 
 - ``run_start`` ``{instruction, run_dir, model, max_steps, autonomy}``
-- ``step_start`` ``{step, max_steps}``
-- ``assistant_text`` ``{step, text}``
-- ``tool_call`` ``{step, name, action, args}``
-- ``tool_result`` ``{step, action, ok, output, error}``
-- ``step_image`` ``{step, level, width, height, path, kind}``
-- ``final`` ``{status, text}``  status ∈ ``ok``/``cancelled``/``max_steps``
 - ``error`` ``{message}``
 
 启动方式：``python -m ctrlapp --sidecar``。
@@ -50,18 +44,23 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
 import traceback
+from datetime import datetime
+from pathlib import Path
 from typing import Any
+import re
+import base64
 
 from rich.console import Console
 
 from .config import Config, load_config
 from .dpi import set_dpi_aware
-from .loop import Agent
-from .runlog import ThreadLog
+from .loop import Agent, _build_llm_client
+from .runlog import ThreadLog, resolve_logs_root
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
 from . import icon_memory as icon_mod
@@ -69,6 +68,7 @@ from . import templates as templates_mod
 from . import scheduler as scheduler_mod
 from . import launchers as launchers_mod
 from . import regions as regions_mod
+from .taskbar_monitor import TaskbarMonitor
 
 # rich 默认会写 stdout，会污染协议——sidecar 模式必须把 console 重定向到 stderr。
 _err_console = Console(file=sys.stderr)
@@ -82,6 +82,10 @@ def _writeln(obj: dict[str, Any]) -> None:
 
 
 class Sidecar:
+    _VISUAL_NOTIFY_SCHEDULE_NAME = "任务栏消息监听"
+    _VISUAL_NOTIFY_INSTRUCTION = "__visual_notify_tick__"
+    _VISUAL_NOTIFY_ACTION = "visual_notify"
+
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self._lock = threading.Lock()
@@ -94,17 +98,76 @@ class Sidecar:
         # 任务队列：当 worker 在跑时，后续 start_task 会被排在这里，上一个任务结束
         # 后自动堆出跳起下一个。每项包含独立的 ThreadLog，让侧边栏能看到“排队中”。
         self._queue: list[dict[str, Any]] = []
+        self._queue_seq: int = 0
         self._scheduler = scheduler_mod.Scheduler(self._on_schedule_fire)
+        self._taskbar_monitor: TaskbarMonitor | None = None
+
+    def _startup_log_path(self) -> Path:
+        logs_root = resolve_logs_root(self.cfg.logging)
+        logs_root.mkdir(parents=True, exist_ok=True)
+        day = datetime.now().strftime("%Y%m%d")
+        return logs_root / f"startup-{day}.log"
+
+    def _append_startup_log(self, message: str) -> None:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{ts}] {message}\n"
+        try:
+            path = self._startup_log_path()
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _normalize_priority(v: Any) -> int:
+        """Queue priority: 0=urgent, 1=normal, 2=listener."""
+        try:
+            p = int(v)
+        except Exception:
+            return 1
+        if p < 0:
+            return 0
+        if p > 2:
+            return 2
+        return p
+
+    def _enqueue(self, item: dict[str, Any]) -> int:
+        """Insert by priority asc, then sequence asc (FIFO within same priority)."""
+        self._queue_seq += 1
+        item["seq"] = self._queue_seq
+        p = self._normalize_priority(item.get("priority", 1))
+        item["priority"] = p
+
+        idx = len(self._queue)
+        for i, it in enumerate(self._queue):
+            ip = self._normalize_priority(it.get("priority", 1))
+            iseq = int(it.get("seq", 0) or 0)
+            if p < ip or (p == ip and int(item["seq"]) < iseq):
+                idx = i
+                break
+        self._queue.insert(idx, item)
+        return idx + 1
 
     # ------------------------------------------------------------------
     # 主循环
     # ------------------------------------------------------------------
     def serve(self) -> int:
+        self._append_startup_log("sidecar serve start")
+        self._append_startup_log(f"argv={sys.argv}")
+        self._append_startup_log(f"cwd={os.getcwd()}")
+        self._append_startup_log(
+            f"provider={(self.cfg.llm.provider or 'proxy').lower()} model={self._active_model()} autonomy={self.cfg.safety.autonomy} max_steps={self.cfg.llm.max_steps}"
+        )
+        self._append_startup_log(
+            f"visual_notify enabled={getattr(self.cfg, 'visual_notify', None) and self.cfg.visual_notify.enabled} poll_interval={getattr(self.cfg.visual_notify, 'poll_interval_sec', 'n/a') if getattr(self.cfg, 'visual_notify', None) else 'n/a'}"
+        )
         _writeln({"event": "ready", "model": self._active_model(),
                   "provider": (self.cfg.llm.provider or "proxy").lower(),
                   "autonomy": self.cfg.safety.autonomy,
                   "max_steps": self.cfg.llm.max_steps})
         self._scheduler.start()
+        if getattr(self.cfg, "visual_notify", None) and self.cfg.visual_notify.enabled:
+            self._start_taskbar_monitor()
         for raw in sys.stdin:
             raw = raw.strip()
             if not raw:
@@ -121,8 +184,294 @@ class Sidecar:
         if self._worker and self._worker.is_alive():
             self._cancel.set()
             self._worker.join(timeout=10)
+        self._stop_taskbar_monitor()
         self._scheduler.stop()
         return 0
+
+    def _start_taskbar_monitor(self) -> None:
+        if self._taskbar_monitor is not None:
+            return
+
+        def sink(evt: dict[str, Any]) -> None:
+            _writeln(evt)
+
+        self._taskbar_monitor = TaskbarMonitor(
+            self.cfg.visual_notify,
+            logging_cfg=self.cfg.logging,
+            event_sink=sink,
+            confirm_callback=self._taskbar_confirm_with_llm,
+            on_confirmed=self._on_taskbar_notify_confirmed,
+        )
+        self._append_startup_log(
+            f"taskbar_monitor ready: manual_schedule_required name={self._VISUAL_NOTIFY_SCHEDULE_NAME} instruction={self._VISUAL_NOTIFY_INSTRUCTION} action={self._VISUAL_NOTIFY_ACTION}"
+        )
+        self._append_startup_log(
+            f"taskbar_height_diag: auto_detect={self._taskbar_monitor._auto_detect_taskbar_height}"
+            f" detected_px={self._taskbar_monitor._detected_taskbar_height_px}"
+            f" configured_px={self._taskbar_monitor._configured_strip_height_px}"
+            f" effective_px={self._taskbar_monitor._strip_height_px}"
+            f" source={self._taskbar_monitor._strip_height_source}"
+        )
+        # 不再自动创建内部监听定时任务：由用户在“定时”页手动添加。
+        _writeln({
+            "event": "taskbar_monitor_ready_manual_schedule_required",
+            "name": self._VISUAL_NOTIFY_SCHEDULE_NAME,
+            "instruction": self._VISUAL_NOTIFY_INSTRUCTION,
+            "action": self._VISUAL_NOTIFY_ACTION,
+            "recommended_spec": {
+                "kind": "secondly",
+                "every": max(1, int(round(float(self.cfg.visual_notify.poll_interval_sec)))),
+            },
+        })
+
+    def _stop_taskbar_monitor(self) -> None:
+        if self._taskbar_monitor is None:
+            return
+        self._taskbar_monitor = None
+
+    @staticmethod
+    def _data_url_png(raw: bytes) -> str:
+        return "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+
+    @staticmethod
+    def _extract_first_json(text: str) -> dict[str, Any] | None:
+        s = (text or "").strip()
+        if not s:
+            return None
+        try:
+            v = json.loads(s)
+            if isinstance(v, dict):
+                return v
+        except json.JSONDecodeError:
+            pass
+        m = re.search(r"\{[\s\S]*\}", s)
+        if not m:
+            return None
+        try:
+            v = json.loads(m.group(0))
+            return v if isinstance(v, dict) else None
+        except json.JSONDecodeError:
+            return None
+
+    def _taskbar_confirm_with_llm(self, current_img, prev_img, meta: dict[str, Any]) -> dict[str, Any]:
+        if not self.cfg.visual_notify.llm_confirm_enabled:
+            return {"has_new_message": False, "confidence": 0.0, "reason": "llm confirm disabled"}
+        try:
+            client = _build_llm_client(self.cfg, None)
+            from io import BytesIO
+
+            cur_buf = BytesIO()
+            current_img.save(cur_buf, format="PNG", optimize=True)
+            cur_url = self._data_url_png(cur_buf.getvalue())
+
+            content: list[dict[str, Any]] = [
+                {
+                    "type": "text",
+                    "text": (
+                        "你是任务栏通知确认器。对比当前帧（current）与上一帧（previous），"
+                        "判断任务栏中是否出现了新的即时消息提醒。\n"
+                        "注意：整张任务栏 strip 比例细长，缩放后细节可能不清。"
+                        "如果消息中提供了\"聚焦区域\"放大图，请以聚焦区域的对比结果为准。\n"
+                        "判定规则（任意一条满足即视为有新消息，has_new_message=true）：\n"
+                        "1) 某个应用图标新增了红点 / 红色徽章 / 未读数字；\n"
+                        "2) 某个应用图标的整体背景从普通色变为红色 / 橙红色 / 黄色等高亮报警色（这是 Windows 任务栏闪烁通知的典型表现）；\n"
+                        "3) 某个应用图标出现明显闪烁高亮（背景颜色相对上一帧明显变深/变亮/变红）；\n"
+                        "4) 某个应用图标新增了进度条、橙色下划线条 等通知样式。\n"
+                        "不算新消息的情况：\n"
+                        "- 鼠标 hover 引起的浅灰高亮；\n"
+                        "- 图标自身动画但颜色基调没变；\n"
+                        "- 任务栏开关按钮（开始菜单、搜索等）变化。\n"
+                        "只输出 JSON，不要输出额外文本，且 JSON 只包含一个布尔字段："
+                        "{\"has_new_message\": bool}"
+                    ),
+                },
+                {"type": "text", "text": "当前帧（current）如下："},
+                {"type": "image_url", "image_url": {"url": cur_url}},
+            ]
+
+            if prev_img is not None:
+                prev_buf = BytesIO()
+                prev_img.save(prev_buf, format="PNG", optimize=True)
+                prev_url = self._data_url_png(prev_buf.getvalue())
+                content.extend([
+                    {"type": "text", "text": "上一帧（previous）如下，用于对比变化："},
+                    {"type": "image_url", "image_url": {"url": prev_url}},
+                ])
+
+            # 聚焦裁剪：第一阶段（taskbar_monitor._tick）已经按 x_projection segments
+            # 把变化的 app 范围裁好+放大，并通过 meta["focus_crops"] 传过来。这里只需
+            # 把这些 PIL 图编码进 LLM 请求即可，不再重复裁剪。
+            crop_entries: list[dict[str, Any]] = []
+            try:
+                for fc in (meta.get("focus_crops") or []):
+                    cur_img_zoom = fc.get("current_image")
+                    prv_img_zoom = fc.get("previous_image")
+                    if cur_img_zoom is None or prv_img_zoom is None:
+                        continue
+                    cb = BytesIO(); cur_img_zoom.save(cb, format="PNG", optimize=True)
+                    pb = BytesIO(); prv_img_zoom.save(pb, format="PNG", optimize=True)
+                    crop_entries.append({
+                        "index": int(fc.get("index", 0) or 0),
+                        "x0": int(fc.get("x0", 0) or 0),
+                        "x1": int(fc.get("x1", 0) or 0),
+                        "current_bytes": cb.getvalue(),
+                        "previous_bytes": pb.getvalue(),
+                    })
+            except Exception:
+                pass
+
+            for ce in crop_entries:
+                idx = ce["index"]
+                x0p = ce["x0"]
+                x1p = ce["x1"]
+                content.extend([
+                    {
+                        "type": "text",
+                        "text": (
+                            f"聚焦区域 #{idx}（x={x0p}..{x1p}，已放大）——"
+                            f"先看当前帧，再看上一帧，重点判断该区域是否新增红色/橙色高亮、红点、未读数字等通知样式："
+                        ),
+                    },
+                    {"type": "text", "text": f"聚焦区域 #{idx} - 当前帧（current, zoomed）："},
+                    {"type": "image_url", "image_url": {"url": self._data_url_png(ce["current_bytes"])}},
+                    {"type": "text", "text": f"聚焦区域 #{idx} - 上一帧（previous, zoomed）："},
+                    {"type": "image_url", "image_url": {"url": self._data_url_png(ce["previous_bytes"])}},
+                ])
+
+            atlas = icon_mod.build_atlas(self.cfg.icons) if self.cfg.icons.enabled else None
+            if atlas is not None:
+                content.extend([
+                    {
+                        "type": "text",
+                        "text": "这是已记忆的图标 atlas，可用于识别 Teams/WeChat 图标：\n" + atlas.captions,
+                    },
+                    {"type": "image_url", "image_url": {"url": self._data_url_png(atlas.png_bytes)}},
+                ])
+
+            messages = [
+                {"role": "system", "content": "严格输出 JSON 对象，不要 markdown，不要解释。"},
+                {"role": "user", "content": content},
+            ]
+
+            # Debug: 把发给 LLM 的 content 摘要打印出来（去掉 base64 大字符串），
+            # 写入 detector log + stdout 事件，便于核对到底放了哪几张图。
+            # 图片按出现顺序对应来源路径（来自 meta），方便回查实际文件。
+            key_caps = meta.get("key_captures") or {}
+            image_sources: list[str | None] = [
+                meta.get("current_capture") or key_caps.get("current"),
+            ]
+            if prev_img is not None:
+                image_sources.append(meta.get("previous_capture") or key_caps.get("previous"))
+            for ce in crop_entries:
+                image_sources.append(f"<focus_crop #{ce['index']} current x={ce['x0']}..{ce['x1']}>")
+                image_sources.append(f"<focus_crop #{ce['index']} previous x={ce['x0']}..{ce['x1']}>")
+            if atlas is not None:
+                image_sources.append("<icon_atlas>")
+            content_summary: list[dict[str, Any]] = []
+            img_idx = 0
+            for part in content:
+                ptype = part.get("type")
+                if ptype == "text":
+                    txt = part.get("text") or ""
+                    content_summary.append({
+                        "type": "text",
+                        "len": len(txt),
+                        "text": txt,
+                    })
+                elif ptype == "image_url":
+                    url = (part.get("image_url") or {}).get("url") or ""
+                    src = image_sources[img_idx] if img_idx < len(image_sources) else None
+                    img_idx += 1
+                    if url.startswith("data:"):
+                        head, _, b64 = url.partition(",")
+                        content_summary.append({
+                            "type": "image_url",
+                            "scheme": head,
+                            "b64_len": len(b64),
+                            "source": src,
+                        })
+                    else:
+                        content_summary.append({"type": "image_url", "url": url, "source": src})
+                else:
+                    content_summary.append({"type": str(ptype)})
+            try:
+                if self._taskbar_monitor is not None:
+                    self._taskbar_monitor._log_step(
+                        "taskbar_llm_confirm_request",
+                        diff_score=meta.get("diff_score"),
+                        content_parts=content_summary,
+                    )
+            except Exception:
+                pass
+            _writeln({
+                "event": "taskbar_llm_confirm_request",
+                "diff_score": meta.get("diff_score"),
+                "content_parts": content_summary,
+            })
+
+            resp = client.chat(
+                messages,
+                tools=[],
+                max_tokens=max(80, int(self.cfg.visual_notify.llm_confirm_max_tokens)),
+                temperature=self.cfg.llm.temperature,
+                top_p=self.cfg.llm.top_p,
+            )
+            parsed = self._extract_first_json(resp.text)
+            if not parsed:
+                return {
+                    "has_new_message": False,
+                    "app_candidates": ["unknown"],
+                    "confidence": 0.0,
+                    "reason": "llm output not json",
+                    "raw": (resp.text or "")[:1000],
+                }
+            return {
+                "has_new_message": bool(parsed.get("has_new_message", False)),
+                "app_candidates": parsed.get("app_candidates") or [],
+                "confidence": float(parsed.get("confidence", 0.0) or 0.0),
+                "reason": str(parsed.get("reason", "") or "").strip(),
+                "raw": (resp.text or "")[:1000],
+            }
+        except Exception as exc:
+            return {
+                "has_new_message": False,
+                "app_candidates": ["unknown"],
+                "confidence": 0.0,
+                "reason": f"llm confirm failed: {type(exc).__name__}",
+            }
+
+    def _on_taskbar_notify_confirmed(self, _payload: dict[str, Any]) -> None:
+        """Strict mode: LLM-confirmed task always queues with deduplication.
+        
+        Detection layer (diff) runs outside queue (scheduled 2-sec task).
+        Only when LLM confirms, enqueue the handling task with priority=2.
+        Deduplication prevents multiple visual_notify tasks in queue.
+        """
+        if not self.cfg.visual_notify.auto_chat_enabled:
+            return
+        instruction = (self.cfg.visual_notify.auto_chat_instruction or "").strip()
+        if not instruction:
+            return
+        
+        with self._lock:
+            # Deduplication: check if there's already a pending visual_notify task
+            has_pending = any(
+                it.get("_from_visual_notify")
+                for it in self._queue
+            )
+            if has_pending:
+                _writeln({"event": "taskbar_auto_chat_skipped_duplicate"})
+                return
+        
+        try:
+            res = self._rpc_start_task({
+                "instruction": instruction,
+                "priority": 2,
+                "_from_visual_notify": True,  # metadata for dedup tracking
+            })
+            _writeln({"event": "taskbar_auto_chat_enqueued", "result": res})
+        except Exception as exc:
+            _writeln({"event": "taskbar_auto_chat_error", "message": f"{type(exc).__name__}: {exc}"})
 
     # ------------------------------------------------------------------
     # 单条请求派发
@@ -172,6 +521,7 @@ class Sidecar:
                 "title": it["thread"].title,
                 "instruction": it["instruction"],
                 "queued_ms": it["queued_ms"],
+                "priority": it.get("priority", 1),
             }
             for it in self._queue
         ]
@@ -217,6 +567,12 @@ class Sidecar:
         if self._worker and self._worker.is_alive():
             return {"ok": False, "error": "task running; cancel first"}
         self.cfg = new_cfg
+        if getattr(self.cfg, "visual_notify", None) and self.cfg.visual_notify.enabled:
+            # Rebind so updated visual-notify settings take effect immediately.
+            self._stop_taskbar_monitor()
+            self._start_taskbar_monitor()
+        else:
+            self._stop_taskbar_monitor()
         return {
             "ok": True,
             "provider": (new_cfg.llm.provider or "proxy").lower(),
@@ -567,6 +923,7 @@ class Sidecar:
             name=params.get("name", ""),
             instruction=params.get("instruction", ""),
             spec=spec,
+            action=params.get("action") or "task",
             autonomy=params.get("autonomy") or "confirm_critical",
             max_steps=int(params.get("max_steps") or 25),
             enabled=bool(params.get("enabled", True)),
@@ -582,6 +939,7 @@ class Sidecar:
             name=params.get("name"),
             instruction=params.get("instruction"),
             spec=params.get("spec"),
+            action=params.get("action"),
             autonomy=params.get("autonomy"),
             max_steps=params.get("max_steps"),
             enabled=params.get("enabled"),
@@ -599,6 +957,18 @@ class Sidecar:
 
     def _on_schedule_fire(self, item: dict[str, Any]) -> None:
         """调度器在子线程里调用。忙碌时排队，不抢占人工任务。"""
+        if (
+            str(item.get("action") or "").strip().lower() == self._VISUAL_NOTIFY_ACTION
+            or (item.get("instruction") or "").strip() == self._VISUAL_NOTIFY_INSTRUCTION
+        ):
+            try:
+                if self._taskbar_monitor is not None:
+                    self._taskbar_monitor.tick_once()
+                _writeln({"event": "visual_notify_tick", "id": item.get("id")})
+            except Exception as e:
+                _writeln({"event": "visual_notify_tick_error", "id": item.get("id"),
+                          "message": f"{type(e).__name__}: {e}"})
+            return
         try:
             instruction = item.get("instruction", "")
             sched_thread = ThreadLog.create(
@@ -608,6 +978,7 @@ class Sidecar:
                 "instruction": instruction,
                 "autonomy": item.get("autonomy"),
                 "max_steps": item.get("max_steps"),
+                "priority": 1,
                 "_thread": sched_thread,
             })
             if res.get("queued"):
@@ -641,6 +1012,7 @@ class Sidecar:
             raise ValueError("instruction is required")
         autonomy = params.get("autonomy")
         max_steps = params.get("max_steps")
+        priority = self._normalize_priority(params.get("priority", 1))
         if autonomy and autonomy not in ("full", "confirm_critical", "confirm_each"):
             raise ValueError(f"invalid autonomy: {autonomy!r}")
         # 可选：调用方（如 scheduler）已经为本任务建好了独立 thread。
@@ -653,20 +1025,27 @@ class Sidecar:
                 # 入队：为这个排队任务创建独立 thread，在侧边栏马上可见。
                 qthread = preset_thread or ThreadLog.create(self.cfg.logging, instruction)
                 qthread.append_user_input(instruction)
-                self._queue.append({
+                queue_item = {
                     "instruction": instruction,
                     "thread": qthread,
                     "autonomy": autonomy,
                     "max_steps": max_steps,
+                    "priority": priority,
                     "queued_ms": int(time.time() * 1000),
-                })
+                }
+                # Preserve metadata fields (starting with _) for tracking & deduplication
+                for key, val in params.items():
+                    if key.startswith("_") and key not in ("_thread",):
+                        queue_item[key] = val
+                position = self._enqueue(queue_item)
                 _writeln({"event": "task_queued",
                           "thread_id": qthread.id,
                           "title": qthread.title,
                           "instruction": instruction,
-                          "position": len(self._queue),
+                          "priority": priority,
+                          "position": position,
                           "queue": self._queue_snapshot()})
-                return {"queued": True, "position": len(self._queue),
+                return {"queued": True, "position": position,
                         "thread_id": qthread.id}
 
             # 立刻跑：覆盖静态配置，使用 preset_thread / active thread / 新建 thread。
@@ -770,6 +1149,7 @@ class Sidecar:
             thread = nxt["thread"]
             autonomy = nxt.get("autonomy")
             max_steps = nxt.get("max_steps")
+            priority = self._normalize_priority(nxt.get("priority", 1))
             if autonomy:
                 self.cfg.safety.autonomy = autonomy
             if max_steps:
@@ -786,6 +1166,7 @@ class Sidecar:
                   "thread_id": thread.id,
                   "title": thread.title,
                   "instruction": instruction,
+                  "priority": priority,
                   "queue": self._queue_snapshot()})
 
 

@@ -21,6 +21,10 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 
+# Output to repo root dist/ so tauri.conf.json resource path ../../dist/ctrlapp.exe works
+import sys
+sys.argv += ["--distpath", os.path.join(ROOT, "dist")]
+
 hidden = []
 hidden += collect_submodules("mss")
 hidden += collect_submodules("pyautogui")

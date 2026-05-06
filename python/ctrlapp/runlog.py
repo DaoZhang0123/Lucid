@@ -33,6 +33,7 @@ _TEXT_LEVELS: dict[str, int] = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR":
 _IMAGE_LEVELS: dict[str, int] = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "OFF": 100}
 
 _THREAD_PREFIX = "thread-"
+_THREADS_SUBDIR = "threads"
 
 
 def _slug(text: str, max_len: int = 32) -> str:
@@ -54,6 +55,41 @@ def resolve_logs_root(cfg: LoggingConfig) -> Path:
     elif (home := os.environ.get("HOME")):
         return Path(home) / ".ctrlapp" / cfg.dir
     return Path(__file__).resolve().parents[2] / cfg.dir
+
+
+def resolve_threads_root(cfg: LoggingConfig) -> Path:
+    """Thread 子目录：所有 thread-* 都放在 logs/threads/ 下，避免顶层过乱。"""
+    root = resolve_logs_root(cfg) / _THREADS_SUBDIR
+    return root
+
+
+def _migrate_legacy_threads(cfg: LoggingConfig) -> None:
+    """把历史遗留在 logs/ 顶层的 thread-* 目录迁移到 logs/threads/ 下。
+    幂等：已迁移过的不会重复处理；目标已存在则跳过。
+    """
+    try:
+        top = resolve_logs_root(cfg)
+        if not top.exists():
+            return
+        new_root = resolve_threads_root(cfg)
+        moved = 0
+        for entry in list(top.iterdir()):
+            if not entry.is_dir():
+                continue
+            if not entry.name.startswith(_THREAD_PREFIX):
+                continue
+            new_root.mkdir(parents=True, exist_ok=True)
+            target = new_root / entry.name
+            if target.exists():
+                continue
+            try:
+                entry.rename(target)
+                moved += 1
+            except Exception:
+                # 跨卷或权限失败时忽略，让旧目录留在原处
+                pass
+    except Exception:
+        pass
 
 
 class ThreadLog:
@@ -89,7 +125,8 @@ class ThreadLog:
             obj._image_seq = 0
             obj._meta = {}
             return obj
-        root = resolve_logs_root(cfg)
+        _migrate_legacy_threads(cfg)
+        root = resolve_threads_root(cfg)
         root.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
         slug = _slug(title)
@@ -123,7 +160,8 @@ class ThreadLog:
 
     @classmethod
     def open(cls, cfg: LoggingConfig, thread_id: str) -> "ThreadLog":
-        root = resolve_logs_root(cfg)
+        _migrate_legacy_threads(cfg)
+        root = resolve_threads_root(cfg)
         run_dir = root / thread_id
         if not run_dir.exists():
             raise FileNotFoundError(f"thread not found: {thread_id}")
@@ -272,7 +310,8 @@ class ThreadLog:
 
     @classmethod
     def list_threads(cls, cfg: LoggingConfig) -> list[dict[str, Any]]:
-        root = resolve_logs_root(cfg)
+        _migrate_legacy_threads(cfg)
+        root = resolve_threads_root(cfg)
         if not root.exists():
             return []
         out: list[dict[str, Any]] = []
@@ -303,7 +342,8 @@ class ThreadLog:
     def delete_thread(cls, cfg: LoggingConfig, thread_id: str) -> bool:
         if not thread_id.startswith(_THREAD_PREFIX):
             return False
-        root = resolve_logs_root(cfg)
+        _migrate_legacy_threads(cfg)
+        root = resolve_threads_root(cfg)
         target = root / thread_id
         if not target.exists() or not target.is_dir():
             return False
@@ -315,7 +355,8 @@ class ThreadLog:
 
     @classmethod
     def read_thread(cls, cfg: LoggingConfig, thread_id: str) -> dict[str, Any]:
-        root = resolve_logs_root(cfg)
+        _migrate_legacy_threads(cfg)
+        root = resolve_threads_root(cfg)
         run_dir = root / thread_id
         if not run_dir.exists():
             raise FileNotFoundError(thread_id)

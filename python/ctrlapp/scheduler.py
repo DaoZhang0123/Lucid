@@ -1,6 +1,9 @@
-"""定时任务调度器 schedules.json + 后台 minute tick。
+"""定时任务调度器 schedules.json + 后台 tick。
 
-设计取舍：避免引入 cron / apscheduler 依赖，自己写 minute 级 tick。支持三类触发：
+设计取舍：避免引入 cron / apscheduler 依赖，自己写轻量 tick。支持五类触发：
+
+* ``secondly``  : 每 ``every`` 秒触发一次（1..3600）
+* ``minutely``  : 每 ``every`` 分钟触发一次（1..1440）
 
 * ``hourly``    : 每小时的第 ``minute`` 分钟跑一次
 * ``daily``     : 每天 ``time`` (HH:MM) 跑一次
@@ -15,7 +18,7 @@
 
 到点时若任一限制项不满足，本次则跳过不触发。hours / weekdays 按 ``spec.tz`` （未设则本机）计算。
 
-调度器线程 60 秒醒一次（启动时立刻 tick 一次，可命中错过窗口）。任务到点时，
+调度器线程按最近 next_ms 动态醒来（最慢 60 秒，最快 0.2 秒）；启动时立刻 tick 一次。任务到点时，
 通过传入的 ``trigger`` 回调启动一次新任务（``trigger`` 由 sidecar 注入，内部
 会 ``thread_new + start_task``）。
 
@@ -38,7 +41,8 @@ except ImportError:  # pragma: no cover - Python <3.9
     ZoneInfoNotFoundError = Exception  # type: ignore
 
 _BASENAME = "schedules.json"
-_TICK_SEC = 60
+_TICK_MAX_SEC = 60.0
+_TICK_MIN_SEC = 0.2
 
 
 def _resolve_tz(name: str | None):
@@ -95,7 +99,15 @@ def _save(items: list[dict[str, Any]]) -> None:
 
 def _validate(spec: dict[str, Any]) -> None:
     kind = spec.get("kind")
-    if kind == "hourly":
+    if kind == "secondly":
+        every = int(spec.get("every", 1))
+        if not (1 <= every <= 3600):
+            raise ValueError("every for secondly must be 1..3600")
+    elif kind == "minutely":
+        every = int(spec.get("every", 1))
+        if not (1 <= every <= 1440):
+            raise ValueError("every for minutely must be 1..1440")
+    elif kind == "hourly":
         m = int(spec.get("minute", 0))
         if not (0 <= m < 60):
             raise ValueError("minute must be 0..59")
@@ -138,7 +150,13 @@ def _next_run(spec: dict[str, Any], now: datetime) -> datetime:
             base = now.astimezone().astimezone(tz)
         else:
             base = now.astimezone(tz)
-    if kind == "hourly":
+    if kind == "secondly":
+        every = int(spec.get("every", 1))
+        cand = base + timedelta(seconds=every)
+    elif kind == "minutely":
+        every = int(spec.get("every", 1))
+        cand = base + timedelta(minutes=every)
+    elif kind == "hourly":
         m = int(spec["minute"])
         cand = base.replace(minute=m, second=0, microsecond=0)
         if cand <= base:
@@ -231,9 +249,15 @@ def _allowed(constraints: dict[str, Any] | None, now: datetime) -> bool:
 def add_schedule(name: str, instruction: str, spec: dict[str, Any],
                  autonomy: str = "confirm_critical", max_steps: int = 25,
                  enabled: bool = True,
-                 constraints: dict[str, Any] | None = None) -> dict[str, Any]:
+                 constraints: dict[str, Any] | None = None,
+                 action: str | None = None) -> dict[str, Any]:
     name = (name or "").strip() or "未命名计划"
     instruction = (instruction or "").strip()
+    schedule_action = str(action or "task").strip().lower() or "task"
+    if schedule_action not in ("task", "visual_notify"):
+        raise ValueError(f"invalid action: {schedule_action!r}")
+    if schedule_action == "visual_notify":
+        instruction = instruction or "__visual_notify_tick__"
     if not instruction:
         raise ValueError("instruction required")
     if autonomy not in ("full", "confirm_critical", "confirm_each"):
@@ -241,10 +265,24 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
     _validate(spec)
     cons = _validate_constraints(constraints)
     items = _load()
+    # 新增时检测同类（仅针对 visual_notify 监听任务）：
+    # 同 instruction + 同 spec.kind 即视为相似，直接复用已有任务，不再创建新任务。
+    if schedule_action == "visual_notify":
+        ins_key = instruction.strip()
+        kind_key = str((spec or {}).get("kind") or "").strip().lower()
+        for it in items:
+            if str((it.get("action") or "task")).strip().lower() != "visual_notify":
+                continue
+            if (it.get("instruction") or "").strip() != ins_key:
+                continue
+            if str((it.get("spec") or {}).get("kind") or "").strip().lower() != kind_key:
+                continue
+            return it
     item = {
         "id": uuid.uuid4().hex[:12],
         "name": name,
         "instruction": instruction,
+        "action": schedule_action,
         "spec": spec,
         "autonomy": autonomy,
         "max_steps": int(max_steps),
@@ -259,6 +297,72 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
     return item
 
 
+def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
+                    autonomy: str = "confirm_critical", max_steps: int = 25,
+                    enabled: bool = True,
+                    constraints: dict[str, Any] | None = None,
+                    action: str | None = None) -> dict[str, Any]:
+    """Ensure a schedule with the same (name, instruction, spec.kind) exists.
+
+    If found, returns the existing item as-is. Otherwise creates one.
+    """
+    n = (name or "").strip()
+    ins = (instruction or "").strip()
+    k = str((spec or {}).get("kind") or "").strip().lower()
+    schedule_action = str(action or "task").strip().lower() or "task"
+    items = _load()
+    cons = _validate_constraints(constraints)
+
+    def _is_similar(it: dict[str, Any]) -> bool:
+        same_visual_notify = (
+            schedule_action == "visual_notify"
+            and (it.get("instruction") or "").strip() == ins
+            and str((it.get("spec") or {}).get("kind") or "").strip().lower() == k
+        )
+        return same_visual_notify or (
+            (it.get("name") or "").strip() == n
+            and (it.get("instruction") or "").strip() == ins
+            and str((it.get("spec") or {}).get("kind") or "").strip().lower() == k
+        )
+
+    primary = next((it for it in items if _is_similar(it)), None)
+    if primary is not None:
+        need_update = (
+            (primary.get("name") or "").strip() != n
+            or (primary.get("instruction") or "").strip() != ins
+            or (primary.get("spec") or {}) != spec
+            or str(primary.get("action") or "task").strip().lower() != schedule_action
+            or (primary.get("autonomy") or "confirm_critical") != autonomy
+            or int(primary.get("max_steps") or 25) != int(max_steps)
+            or bool(primary.get("enabled", True)) != bool(enabled)
+            or (primary.get("constraints") or {}) != cons
+        )
+        if not need_update:
+            return primary
+        updated = update_schedule(
+            primary["id"],
+            name=name,
+            instruction=instruction,
+            spec=spec,
+            action=schedule_action,
+            autonomy=autonomy,
+            max_steps=max_steps,
+            enabled=enabled,
+            constraints=cons,
+        )
+        return updated or primary
+    return add_schedule(
+        name=name,
+        instruction=instruction,
+        spec=spec,
+        autonomy=autonomy,
+        max_steps=max_steps,
+        enabled=enabled,
+        constraints=cons,
+        action=schedule_action,
+    )
+
+
 def update_schedule(sid: str, **fields: Any) -> dict[str, Any] | None:
     items = _load()
     for it in items:
@@ -270,6 +374,11 @@ def update_schedule(sid: str, **fields: Any) -> dict[str, Any] | None:
             for k in ("name", "instruction", "autonomy", "max_steps", "enabled"):
                 if k in fields and fields[k] is not None:
                     it[k] = fields[k]
+            if "action" in fields and fields["action"] is not None:
+                action = str(fields["action"] or "task").strip().lower() or "task"
+                if action not in ("task", "visual_notify"):
+                    raise ValueError(f"invalid action: {action!r}")
+                it["action"] = action
             # constraints 传 None 表示不变，传 {} / dict 表示覆盖。
             if "constraints" in fields and fields["constraints"] is not None:
                 it["constraints"] = _validate_constraints(fields["constraints"])
@@ -291,7 +400,7 @@ def delete_schedule(sid: str) -> bool:
 # ---------------- runtime ----------------
 
 class Scheduler:
-    """常驻后台线程，60s tick 一次。`trigger(item)` 由 sidecar 注入。"""
+    """常驻后台线程，动态 tick。`trigger(item)` 由 sidecar 注入。"""
 
     def __init__(self, trigger: Callable[[dict[str, Any]], None]) -> None:
         self._trigger = trigger
@@ -317,7 +426,31 @@ class Scheduler:
                 self._tick()
             except Exception:
                 pass
-            self._stop.wait(_TICK_SEC)
+            self._stop.wait(self._compute_wait_sec())
+
+    def _compute_wait_sec(self) -> float:
+        """Pick next wait based on the earliest due item.
+
+        We keep a floor to avoid busy loop and a ceiling to keep periodic wakeups cheap.
+        """
+        items = _load()
+        now_ms = int(time.time() * 1000)
+        due_in_ms: list[int] = []
+        for it in items:
+            if not it.get("enabled"):
+                continue
+            nm = int(it.get("next_ms", 0) or 0)
+            if nm <= 0:
+                continue
+            due_in_ms.append(max(0, nm - now_ms))
+        if not due_in_ms:
+            return _TICK_MAX_SEC
+        wait_sec = min(due_in_ms) / 1000.0
+        if wait_sec < _TICK_MIN_SEC:
+            return _TICK_MIN_SEC
+        if wait_sec > _TICK_MAX_SEC:
+            return _TICK_MAX_SEC
+        return wait_sec
 
     def _tick(self) -> None:
         items = _load()

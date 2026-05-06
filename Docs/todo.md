@@ -94,11 +94,12 @@
   - 首次启动 seed：自动写入"键盘优先 / 不覆盖用户内容 / 先 alt+tab 看是否已开 / 保存对话框直接 type 绝对路径"等通用技法（原 SYSTEM_PROMPT 中的"常用技巧"段）
   - 主动写入：模型用 `learn_tip(text, kind)` 把任务中总结的成功路径或失败教训追加进文件；`/tools` 页面可手编 / 一键追加 / 重置 seed
   - 路径：`%LOCALAPPDATA%\dev.ctrlapp\tools.md`；`[tools]` 配置 enabled / max_entries / max_chars
-- [ ] **桌面通知监听**：
-  - 监听 Windows ToastNotification / Action Center（`Windows.UI.Notifications.Management.UserNotificationListener`，需用户授权）拿到微信、Teams、Outlook、Slack 等推送
-  - Agent 主动汇总"过去 X 分钟内你收到了哪些消息、是否需要回复"，避免漏掉
-  - 可配置过滤：白名单应用、关键字（如自己名字 / @ mention）才升级到打扰级
-  - 配置：`[notify] enabled / poll_interval_sec / app_whitelist / urgent_keywords`
+- [~] **桌面通知监听（改视觉方案）**：
+  - 结论更新：Teams / WeChat 在当前环境均无法稳定进入 Action Center；改为识别桌面底部中间任务栏区域的应用状态（图标徽标、小红点、任务栏预览提示）。
+  - v1 路线：周期性抓取任务栏中部窄带（约底部 120px × 居中 40%-60% 宽），用颜色阈值 + 小区域连通域检测红点/徽标变化；只做事件记录，不自动点击。
+  - v2 路线：为 Teams / WeChat 建立图标锚点和徽标模板，按图标邻域做定向检测，减少误报。
+  - v3 路线：检测到疑似新消息后，再触发一次 L3/L2 精细截图，让主 Agent判断“是否需要打开 App 查看并回复”。
+  - 详细方案见：`Docs/visual-notify-taskbar.md`。
 - [x] **Cron 定时任务**：
   - `python/ctrlapp/scheduler.py`：minute-tick `Scheduler` 后台线程随 sidecar 启动；支持 interval / daily / weekly 三种触发
   - 持久化：`schedules.json`（`%LOCALAPPDATA%\dev.ctrlapp\`），含 `next_ms` / `last_run_ms` / `enabled`
@@ -160,6 +161,8 @@
 
 ## 横向 / 工程债
 
+- [x] **Built-in zero-GUI utilities (`read_file` / `write_file` / `run_shell`)**：避免 「launch_app('cmd') → type 'type X' → screenshot → OCR」 这种 4 步 + ~100KB 图象 token 去读个 50 字节文件的倒贴路径。三个 meta tool 在 `meta_tools.py`、受 `[fileio]` / `[shell]` 控制；路径支持 `%ENV%` / `$env:NAME` / `~`；shell 调用隐藏控制台窗口 (`CREATE_NO_WINDOW`)，默认 timeout 20s（硬顶 120s，超过请开真终端），输出被 `_truncate_text` 限到 16k 字符。系统 prompt 里只留了 4 行指路牌，具体决策调用时看 tool description。
+- [x] **光标周边 L3 智能紧贴（UIA-driven smart L3）**：H3 尺寸不再用固定 200x200，而是调 IUIAutomation `ElementFromPoint` 拿到鼠标处 UI 元素的 BoundingRectangle，外拓 `l3_smart_padding_px=16`、限下限 160x80；占屏 >40% 返回 None 回落固定方。处理了计算器这种 280x60 小显屏被 L3 正方形覃茂丢了边缘的问题。`python/ctrlapp/uia.py` 是纯 ctypes COM 包装（0 三方依赖），首调 ~60ms、后续 <5ms。详见 [Docs/screenshot.md §2.1](screenshot.md#21)。
 - [~] **国际化（i18n）：仓库 + App 主语言切英文，附中文 / 法语 / 阿拉伯语 / 俄语 翻译**：
   - **App UI 层**：✅ 已落地。`app/src/lib/i18n/` 用 `svelte-i18n` 注册 `en` / `zh-CN` / `fr-FR` 三语，`SUPPORTED_LOCALES` + `LOCALE_LABELS` 从 `index.ts` 集中导出；语言选择器在 `/settings`，写入 `localStorage["ctrlapp.locale"]` 并在 `setupI18n()` 启动时复用，避免冷启动闪烁。`+page.svelte` / `chatStore` / `/settings` / `/templates` / `/schedules` / `/memory` / `/tools` 全部硬编码已抽到 `messages/{en,zh-CN,fr-FR}.json`（含 28 个 tz 城市标签 `tz_utc_m12..p14`，`TZS` 数组用 `$derived` 重算以便切换语言后即时刷新）。
   - **Sidecar 层**：⚠️ 部分。`SYSTEM_PROMPT` / `meta_tools.py` schema 描述 / `tooltips.py` seed / `memory.py` header / `icon_memory.py` atlas 标题 / `loop.py` 的 atlas 注入与 nudge 文案已全部翻成英文（默认面向国际用户）；尚未实现按 `cfg.ui.locale` 在 sidecar 内切换语言（也就是说目前是“英文 only 给 LLM”，不会按用户 UI locale 给中/法版 prompt）。
