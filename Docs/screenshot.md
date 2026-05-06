@@ -201,7 +201,7 @@ else:
 
 - 路径 `%LOCALAPPDATA%\dev.ctrlapp\logs\<thread-id>\step-NNN-*.png`
 - 同时在 `events.jsonl` 写一条 `step_image`：`{step, level, width, height, file, path, phase: init|post}`。
-- `Agent._record_img` 维护 `md5(发送字节) → 文件名` dict，让 `_prune_old_images_dispatch` 把图替换成占位文字时能写出准确的 `file=`。
+- `Agent._record_img` 维护 `md5(发送字节) → 文件名` dict，让 `context_manager.compress_old_images` 把图替换成占位文字时能写出准确的 `file=`。
 - `_sanitize_for_log` 在写 `context.log`（每步发给 LLM 的 messages 全文）时把 base64 数据块替换成 `[image: <文件名>]`，避免 log 出现兆级 base64。
 
 ---

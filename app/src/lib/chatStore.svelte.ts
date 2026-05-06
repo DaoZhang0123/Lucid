@@ -76,7 +76,49 @@ function handleEvent(v: any) {
     push({ kind: "system", text: `sidecar ready · provider=${v.provider ?? "?"} · model=${v.model} · autonomy=${v.autonomy} · max_steps=${v.max_steps}` });
     void refreshThreadList();
   } else if (k === "thread_changed") {
-    chat.activeThreadId = v.id;
+    const newId = v.id ?? null;
+    const prevId = chat.activeThreadId;
+    chat.activeThreadId = newId;
+    // 若 sidecar 把活动 thread 切换到了另一条（例如调度器到点新建了一个 thread），
+    // 旧 thread 的 chat.items 不能继续接收新 thread 的事件——清空并按需重放新 thread
+    // 已有的历史事件（新建的空 thread 直接得到空白视图）。
+    if (newId && newId !== prevId) {
+      chat.items = [];
+      chat.currentStep = 0;
+      chat.totalSteps = 0;
+      void (async () => {
+        try {
+          const data: any = await invoke<any>("thread_read", { id: newId });
+          const events: any[] = data?.events ?? [];
+          // 中途切换：仅重放，不重复 push 当前 sidecar 还在 emit 的事件。
+          // 简单起见：如果本地 items 还是空，就用历史事件填充；之后的实时事件会自然 append。
+          if (!chat.items.length && events.length) {
+            for (const ev of events) {
+              const ek = ev.event;
+              if (ek === "user_input") chat.items.push({ kind: "user", text: ev.text ?? "" });
+              else if (ek === "run_start") chat.items.push({ kind: "system", text: t("chat.run_started") });
+              else if (ek === "assistant_text") chat.items.push({ kind: "assistant", step: ev.step, text: ev.text ?? "" });
+              else if (ek === "tool_call") chat.items.push({ kind: "tool", step: ev.step, action: ev.action, args: ev.args });
+              else if (ek === "tool_result") {
+                for (let i = chat.items.length - 1; i >= 0; i--) {
+                  const it = chat.items[i];
+                  if (it.kind === "tool" && it.step === ev.step && it.action === ev.action && !it.result) {
+                    it.result = { ok: ev.ok, output: ev.output, error: ev.error };
+                    break;
+                  }
+                }
+              } else if (ek === "step_image") {
+                chat.items.push({ kind: "image", step: ev.step, level: ev.level, threadId: ev.thread_id ?? newId, file: ev.file, path: ev.path });
+              } else if (ek === "final") chat.items.push({ kind: "final", status: ev.status, text: ev.text ?? "" });
+              else if (ek === "error") chat.items.push({ kind: "system", text: `错误：${ev.message}` });
+            }
+            chat.items = [...chat.items];
+          }
+        } catch {
+          // 新 thread 还没落盘，忽略；后续实时事件会填充视图
+        }
+      })();
+    }
     void refreshThreadList();
   } else if (k === "run_start") {
     chat.running = true;

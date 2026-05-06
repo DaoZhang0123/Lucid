@@ -445,7 +445,108 @@ __all__ = [
     "OpenAIChatClient",
     "AnthropicClient",
     "CopilotClient",
+    "build_llm_client",
 ]
+
+
+def _resolve_proxy_key(api_key_in_cfg: str) -> str:
+    return (
+        api_key_in_cfg
+        or os.environ.get("LITELLM_MASTER_KEY", "")
+        or os.environ.get("OPENAI_API_KEY", "")
+    )
+
+
+def build_llm_client(cfg: "Any", api_key_override: str | None) -> LLMClient:
+    """按 cfg.llm.provider 选三种后端之一。
+
+    "proxy"     -> OpenAI 兼容代理 (LiteLLM / OpenClaw / 任意 OpenAI 兼容端点)
+    "anthropic" -> Anthropic 原生 Messages API
+    "copilot"   -> GitHub Copilot OAuth
+
+    显式设置但凭据缺失时，会按 anthropic > copilot > proxy 的优先级回退
+    （避免“点了 copilot 却悄悄走 proxy”这种隐形错配）。
+    """
+    raw_provider = (cfg.llm.provider or "anthropic").strip().lower()
+
+    # 候选探测（按用户指定的优先级）
+    a = cfg.llm.anthropic
+    anthropic_key = api_key_override or a.api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    has_anthropic = bool(anthropic_key)
+
+    has_copilot = False
+    copilot_tm = None
+    try:
+        from .auth.copilot import CopilotTokenManager  # 延迟导入避免循环
+        copilot_tm = CopilotTokenManager(cfg.llm.copilot.state_file or None)
+        has_copilot = bool(copilot_tm.status().get("logged_in"))
+    except Exception:
+        copilot_tm = None
+        has_copilot = False
+
+    proxy = cfg.llm.proxy
+    proxy_key = api_key_override or _resolve_proxy_key(proxy.api_key)
+    has_proxy = bool(proxy_key)
+
+    # 把"auto" / 未知值，或显式 provider 但凭据缺失的情况，按优先级回退
+    def _auto_pick() -> str:
+        if has_anthropic:
+            return "anthropic"
+        if has_copilot:
+            return "copilot"
+        if has_proxy:
+            return "proxy"
+        return "anthropic"  # 没有任何凭据时，让下面 anthropic 分支报详细错
+
+    if raw_provider not in ("anthropic", "copilot", "proxy"):
+        provider = _auto_pick()
+    elif raw_provider == "anthropic" and not has_anthropic and (has_copilot or has_proxy):
+        provider = _auto_pick()
+    elif raw_provider == "copilot" and not has_copilot and (has_anthropic or has_proxy):
+        provider = _auto_pick()
+    elif raw_provider == "proxy" and not has_proxy and (has_anthropic or has_copilot):
+        provider = _auto_pick()
+    else:
+        provider = raw_provider
+
+    if provider == "anthropic":
+        if not anthropic_key:
+            raise RuntimeError(
+                "缺少 Anthropic API Key：请设置 ANTHROPIC_API_KEY 环境变量，"
+                "或在设置页 Anthropic.api_key 填入。"
+            )
+        return AnthropicClient(
+            api_key=anthropic_key,
+            model=a.model,
+            base_url=a.base_url,
+            anthropic_version=a.anthropic_version,
+        )
+    if provider == "copilot":
+        from .auth.copilot import CopilotAuthError, CopilotTokenManager
+        c = cfg.llm.copilot
+        tm = copilot_tm or CopilotTokenManager(c.state_file or None)
+        if not tm.status().get("logged_in"):
+            raise RuntimeError(
+                "未登录 GitHub Copilot。请到设置页点 “登录 GitHub Copilot” 完成设备码授权。"
+            )
+        # 预热一次：提前发现 token 到期 / 账号被吃
+        try:
+            tm.get_active()
+        except CopilotAuthError as e:
+            raise RuntimeError(str(e))
+        return CopilotClient(token_manager=tm, model=c.model)
+    # proxy
+    if not proxy_key:
+        raise RuntimeError(
+            "缺少代理 API Key：请设置 LITELLM_MASTER_KEY 环境变量，"
+            "或在 config.toml 的 [llm.proxy].api_key 填入。"
+        )
+    return OpenAIChatClient(
+        base_url=proxy.base_url,
+        api_key=proxy_key,
+        model=proxy.model,
+        extra_headers=dict(proxy.extra_headers) if proxy.extra_headers else None,
+    )
 
 
 # Lightweight self-test (only when executed directly)

@@ -31,7 +31,8 @@ _HEADER = "# ctrlapp Operation Tips Library\n"
 _SEED_BODY = """\
 - [seed · keyboard] Prefer keyboard shortcuts over mouse clicks; screenshot coordinates aren't always exact, so anything you can do via the keyboard, do via the keyboard.
 - [seed · keyboard] Switch / browse open windows with alt+tab / alt+shift+tab / win+tab; do NOT switch windows by clicking taskbar icons.
-- [seed · search] Default search engine is bing.com. Fastest path: win+r to open Run, type `https://bing.com/search?q=keywords` and Enter — Windows opens the result page in the default browser. Only switch to Google / Baidu / etc. when the user explicitly asks.
+- [seed · browser] Default browser is **Microsoft Edge**. For any "open a web page / search the web / log into a site / read this URL" task, use Edge unless the user explicitly names another browser. Fastest path: `launch_app(name="edge")` (or `win+r` then type `msedge <url>` and Enter). Don't open Chrome / Firefox / etc. by default.
+- [seed · search] Default search engine is bing.com. Fastest path: win+r to open Run, type `https://bing.com/search?q=keywords` and Enter — Windows opens the result page in Edge (the default browser). Only switch to Google / Baidu / etc. when the user explicitly asks.
 - [seed · text-edit] Select all ctrl+a, copy ctrl+c, paste ctrl+v, undo ctrl+z, save ctrl+s, find ctrl+f.
 - [seed · system] Run dialog win+r, File Explorer win+e, show desktop win+d; for Notepad use win+r then type notepad and Enter.
 - [seed · window] Window layout: win+left/right snap to half, win+up maximise, win+down minimise / restore, win+m minimise all.

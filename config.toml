@@ -91,7 +91,7 @@ l3_max_long_edge = 0
 # 对话历史里每个 level 保留最近 K 张截图（装入发给 LLM 的 prompt 里）。
 # 超出部分被替换为带路径的占位文本；模型需要回看时可调用 load_screenshot(path=...) 重新加载。
 keep_recent_l1 = 1
-keep_recent_l2 = 3
+keep_recent_l2 = 1
 keep_recent_l3 = 2
 # 每个不同的 active app 至少保留多少张最近的 L2（按 launch_app/focus_window 的 slug 区分）。
 # 这样在 App-A → App-B → App-C 的串联任务里，App-A 那张关键 L2 不会被新 App 的 L2 一次性挤掉。

@@ -109,14 +109,15 @@
 - [x] Image 压缩放到 context manager 里（`python/ctrlapp/context_manager.py` `compress_old_images`：未命中“最近 K 张/级 + 全局最近 N 张”保留集的旧截图，先尝试解码 → 等比缩放到 `[context].image_recompress_max_long_edge` → JPEG @ `image_recompress_quality` 重编码；若新字节反而更大或重压关闭则回落到原 `[old screenshot omitted]` 文本占位）
 - [x] **Context Manager / 自适应压缩**：`python/ctrlapp/context_manager.py` `ContextManager.maybe_summarize`：在每次发往 LLM 前 `estimate_tokens(messages)` 估算请求体规模（文本按 chars/4，单图按 base64 长度/4 上限 2400），超过 `[context].target_ratio * model_context_tokens` 即触发摘要——把 prelude 之外、最近 `keep_recent_messages` 之前的旧消息剥掉图片后丢给 `Agent._summarize_segment`（复用当前 LLMClient 但 tools=[] 且只跑一次），把返回文本塞回成单条 `## Conversation summary so far` 的 user message。配置：`[context] auto_compress_enabled / target_ratio / model_context_tokens / keep_recent_messages / summary_max_tokens / summary_model`（summary_model 字段已预留，目前复用主 client）。F3 持久化天然吃下结果（saved tail 已经是压缩后的 messages）。
 - [x] **`launch_app(name)` meta tool —— 用 Windows 原生接口启动 / 切换 App，绕开视觉**：详见 [Docs/screenshot.md §12](screenshot.md#12-视觉之外用-windows-原生接口启动--切换-app)。已落地，外加每个 App 的 tips / launcher spec 都搬到了 `python/ctrlapp/apps/<slug>.py` 单文件（hot-plug 注册表，drop-a-file = add an app），并暴露 `update_launcher` meta tool 让 Agent 把"shortcut 改了 / exe 路径变了"等学习结果持久化到 `<user data>/launchers.json`。
-- [ ] **截图链路重构：函数化 + 启动差分捕获 L2 + 点击前后 L3 校验**（详见 [Docs/screenshot.md §13](screenshot.md#13-截图链路重构函数化--启动差分捕获-l2--点击前后-l3-校验)）：
+- [~] **截图链路重构：函数化 + 启动差分捕获 L2 + 点击前后 L3 校验**（详见 [Docs/screenshot.md §3.3 / §3.3.1 / §3.4](screenshot.md#3-何时拍自动-vs-模型主动)）：
   - **目标**：把"何时拍 / 拍什么 / 怎么校验"从模型决策里拿走一部分，用确定性算法 + 时序 hook 补位，进一步压缩 round-trip。
-  - **R1. screenshot 拆成独立函数（不再藏在 `computer` action 里）**：新建独立 `screenshot` tool（参数 `level` / `region` / `max_long_edge` / `quality`），与 `computer`（鼠键）解耦；坐标系仍统一在 `tool.last_capture` 里维护。同时保留 `computer.action=screenshot` 作为兼容别名，方便回滚。
-  - **R2. 起手只 L1 一次，之后 launch_app 用 diff 算 L2**：首张 L1 后，`launch_app` 内部在调用前后各拍一张 L1，用 dHash / 像素差（`PIL.ImageChops.difference` + 连通域 bbox）算出"最大变化矩形"，断定为新 App 主窗口；把该矩形 + 截图直接以 `## launch_app result (visual)` 的 user message 主动推给模型，**不消耗一次 LLM round-trip 来"看 L1 找 App 在哪"**。返回给模型的 metadata：`{app, hwnd, region:[x,y,w,h], confidence}`。差分失败 / 多个候选区域时回退到 `_grab(window_rect_of_hwnd(hwnd))` —— 用 Windows API 拿 hwnd 的客户区作为 L2。
-  - **R3. 点击前后 L3 + L2 双图校验（取代两阶段 preview）**：在 `_dispatch` 点击类动作时，**自动**前后各抓一张 L3（鼠标 ±100px），并在 post 阶段补一张 L2（活动窗口）；用 dHash 比对前后 L3，若相似度过高（>0.97）→ 直接报 `[click verify] no visual change near cursor` 让模型立刻重试 / 改坐标，**不必等模型自己看图发现**。两阶段 preview 改为兜底（仅 L1 直接点小图标时触发），由 §11 I 那条触发条件控制。
-  - **R4. 坐标系强校验**：`computer` 里所有带 `coordinate` 的 action，对照 `tool.last_capture.sent_size` 做越界检查，越界直接 `ToolResult(error=...)` 让模型重新截图。
-  - **配置**：`[screenshot] launch_diff_enabled / launch_diff_min_area_ratio=0.05 / click_verify_dhash_threshold=0.97 / first_l1_only=true`。
-  - **与已落地的 `launch_app` 关系**：本条是"launch_app 之后视觉怎么接管"的下一步——launch_app 给出 hwnd / region，screenshot 模块把 region 翻译成 L2，模型完全跳过"找 App 在屏幕哪儿"。
+  - **R1. screenshot 拆成独立函数（不再藏在 `computer` action 里）** — ❌ 未做。当前仍是 `computer({action:"screenshot", level})`，理由：与 Anthropic computer-use schema 对齐 + 共享 `tool.last_capture` 坐标系（详见 [screenshot.md §1](screenshot.md#1-截图是-computer-工具的一个-action不是独立-tool)），暂不拆。如真要拆，保留旧 action 作 alias 即可。
+  - **R2. 起手只 L1 一次，之后 launch_app 用 diff 算 L2** — ✅ 落地了**结果等价**的更稳路径，但**不用 diff**。`launch_app` 直接用 Windows API 拿 hwnd 的客户区当作 region，pin 进 `tool.active_app_rect`；起手 L1 已可关（`[screenshot] feed_initial_l1_to_llm = false` 时只查虚拟桌面尺寸不抓像素，模型要看再自己 `screenshot`）。post-step 状态机自动从这个 rect 拍 L2 当 "map"，不消耗一次 LLM round-trip 让模型 "看 L1 找 App 在哪"。dHash 差分方案最初的目的是不用 hwnd → 实际 hwnd-rect 路径既准又省，**diff 版本不再做**。
+  - **R3. 点击前后 L3 + L2 双图校验** — ✅ 已落地等价方案。点击动作后：(a) `tool.dispatch` 内部前后各拍一张 L3 算 `pixel_change_ratio`，低于 `click_no_change_threshold`（默认 0.5%）时把那张 post-L3 当 "may have missed" follow-up 附进 ToolResult（详见 [screenshot.md §3.3.1](screenshot.md#331-例外click_verify-判定-miss-会附一张-l3-提醒)）；(b) `safety.verify_click_with_l3 = true` 时 loop 在 post 阶段还会**额外**抓一张 L3 落点取证图（[§3.4](screenshot.md#34-落点-l3-取证click-verify)）。两阶段 preview 已默认关闭（[system_prompt.py](python/ctrlapp/system_prompt.py) 根据 `safety.verify_click_target_before` 自动选 single-phase / two-phase 文案），保留作为兜底开关。
+  - **R4. 坐标系强校验** — ⚠️ 部分。当前 `tool.dispatch` 在 active-app pin 状态下会拒绝把点击坐标反算到 `active_app_rect` 之外（防焦点跳走后乱点），但还没有按 `last_capture.sent_size` 做硬越界校验（如 L3 200x200 截图后给 y=366 仍会按 offset+scale 静默换算 —— 详见 [screenshot.md §11](screenshot.md#11-已知坑--待改进) 第 1 条）。这条仍待做。
+  - **配置**：`[screenshot] feed_initial_l1_to_llm` / `click_verify_enabled` / `click_no_change_threshold` / `post_step_use_l3` / `[safety] verify_click_with_l3` / `verify_click_target_before` —— 全部已暴露。
+  - **剩余 ToDo**：(R1) 是否真要拆出独立 `screenshot` tool（取舍见上）；(R4) 给 `coordinate` 加越界硬校验，越界直接 `ToolResult(error=...)` 让模型重新截图。
+
 - [ ] **语音输入 / Push-to-Talk 建任务**：注册一个全局快捷键（默认 `Ctrl+Alt+Space`，`[ui].voice_hotkey` 可改），按住录音、松开停止，把录到的音频送给 ASR（首选本地 `faster-whisper` small/medium，`[voice].engine = whisper-local | azure | openai`，`[voice].model_size`、`[voice].language="auto"`），转出文本后：
   - 如果当前没有 active thread 或用户配置 `[voice].always_new_thread = true` → 自动 `thread_new` + `start_task`（前端 chat 视图自动滚到新 thread）；
   - 否则把文本作为 user message 续到当前 thread。
@@ -147,7 +148,8 @@
   - 索引：sidecar 启动时把 memory/tools 切成单条 → 倒排索引；条目变更时增量更新（监听 `/memory` `/tools` 页面写盘事件）。
   - 配置：`[rag] enabled / top_k=5 / backend / refresh_every_steps=10 / max_chars_per_entry=300`。
   - 收益：(1) 大幅减少每步发给 LLM 的 prompt 体积；(2) 给模型的 memory/tools 信噪比变高（不会被无关条目干扰）；(3) 为后面 Phase 3 的"用户多人 / 多角色记忆隔离"留接口。
-- [ ] **打盹**：5分钟内没有任务的时候，启用打盹功能，从执行过任务的context.md等文件提取需要的信息，比如icon信息，成功或者失败的点（以防执行任务的时候没有记录下来）等。
+- [ ] **打盹学习**：5分钟内没有任务的时候，启用打盹功能，从执行过任务的context.md等文件提取需要的信息，比如icon信息，成功或者失败的点（以防执行任务的时候没有记录下来）等，这个可以用大模型来学习，任务等级可以弄成最低。打盹过的文档可以记录下来，以免重复学习。
+- [] **初始化**: 有一些电脑上的配置，比如查看任务栏之类的，会影响到taskbar notify的功能，最好用一个任务来代替用户完成配置。任务等级可以弄成最低
 
 ---
 
@@ -161,6 +163,7 @@
 
 ## 横向 / 工程债
 
+- [x] **后期步骤变慢的诊断 + image budget 收紧（2026-05-06）**：长 thread（如 ⏰ 天气，43 步、context.log 2.1 MB）从 step 14 起每轮稳定带 6-8 张 `image_ref`，且全程 `omitted=0` —— 即 `compress_old_images` 在 `keep_recent_l2=3` 下根本没 demote 任何一张图。两处修复：(a) `config.toml` 默认 `keep_recent_l2 = 3 → 1`（基线每步 ≈ L1=1 + L2=1 + L3=2 = 4 张）；(b) 重写 `loop.py` `SYSTEM_PROMPT_HEAD` rule 8，从"建议 transcribe"升级为强制：明确告知"old screenshots WILL be replaced by `[旧截图已省略...]` 占位符"，要求模型在**同一轮**就把图中与任务相关的信息（按钮坐标、列表项、错误文案、OCR 小字、聊天/搜索结果、数值字段……）转写到 assistant 文本里作为持久工作记忆，并提示 "summarise / forward / report what you see" 类任务务必 early-extract。详见 [design.md §4.5.3](design.md#453-分级截屏策略带宽成本与精度的平衡) 附加规则与 [screenshot.md §10](screenshot.md#10-相关配置一览configtoml)。
 - [x] **Built-in zero-GUI utilities (`read_file` / `write_file` / `run_shell`)**：避免 「launch_app('cmd') → type 'type X' → screenshot → OCR」 这种 4 步 + ~100KB 图象 token 去读个 50 字节文件的倒贴路径。三个 meta tool 在 `meta_tools.py`、受 `[fileio]` / `[shell]` 控制；路径支持 `%ENV%` / `$env:NAME` / `~`；shell 调用隐藏控制台窗口 (`CREATE_NO_WINDOW`)，默认 timeout 20s（硬顶 120s，超过请开真终端），输出被 `_truncate_text` 限到 16k 字符。系统 prompt 里只留了 4 行指路牌，具体决策调用时看 tool description。
 - [x] **光标周边 L3 智能紧贴（UIA-driven smart L3）**：H3 尺寸不再用固定 200x200，而是调 IUIAutomation `ElementFromPoint` 拿到鼠标处 UI 元素的 BoundingRectangle，外拓 `l3_smart_padding_px=16`、限下限 160x80；占屏 >40% 返回 None 回落固定方。处理了计算器这种 280x60 小显屏被 L3 正方形覃茂丢了边缘的问题。`python/ctrlapp/uia.py` 是纯 ctypes COM 包装（0 三方依赖），首调 ~60ms、后续 <5ms。详见 [Docs/screenshot.md §2.1](screenshot.md#21)。
 - [~] **国际化（i18n）：仓库 + App 主语言切英文，附中文 / 法语 / 阿拉伯语 / 俄语 翻译**：
@@ -177,7 +180,7 @@
   - 控制台 / 锁屏超时：`powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOCONLOCK 0; powercfg /setactive SCHEME_CURRENT`
   - 替代锁屏建议：用 `nircmd monitor off` 或调 `SendMessage(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)` 仅熄屏不切安全桌面；屏幕黑了但 BitBlt 仍可工作。
   - 兜底：跑任务时若仍检测到 BitBlt Access Denied，前端弹 “屏幕已锁，无法截图，请解锁或改用熄屏”，并暂停当前 run 而不是反复把锁屏期间的截图错误喂给模型。
-- [ ] 单元测试：`_prune_old_images` / `_split_segments` / `_norm_key` / `RunLogger` 轮转 / `_parse_level`
+- [ ] 单元测试：`compress_old_images` / `_split_segments` / `_norm_key` / `RunLogger` 轮转 / `_parse_level`
 - [ ] CI：Windows runner 跑 lint + 单测（不动鼠键的部分）
 - [ ] L3 鼠标近屏幕边缘时区域裁剪到虚拟屏幕边界（防 mss 越界问题）
 - [ ] OSWorld / WindowsAgentArena 子集跑分（design.md §3.2）

@@ -202,6 +202,7 @@ loop:
 - 启用 **prompt caching**：系统 prompt + 任务描述缓存，每步只增量发新截图与 action。
 - 滑动窗口：历史只保留最近 K 张截图（按级别独立 K 值），更早的用文字摘要替代。
 - **变化检测**：若两次同级截图哈希高度相似，跳过本次 LLM 调用，直接复用上次决策。
+- **图像 ≠ 持久工作记忆**：滑窗 + 重压（`context_manager.compress_old_images`）会主动 demote 旧截图为 `[旧截图已省略...]` 占位文本。系统 prompt（`SYSTEM_PROMPT_HEAD` rule 8）显式要求模型**当轮就把图中与任务相关的信息（按钮坐标、列表项、错误文案、OCR 小字、聊天内容、搜索结果……）转写到 assistant 文本里**——assistant 文本是不会被 demote 的持久工作记忆，图像是易失的；尤其 "summarise / forward / report what you see" 类任务必须 early-extract，不能拖到最后一步去回看老图。
 
 **全部参数可配**（见 §5.x `config.toml` 示例）：
 
@@ -217,10 +218,11 @@ l1_max_long_edge = 1568   # 下采样长边，0 = 不缩放
 l2_max_long_edge = 1568
 l3_max_long_edge = 0
 
-# 历史滑窗
-keep_recent_l1 = 2
-keep_recent_l2 = 4
-keep_recent_l3 = 6
+# 历史滑窗（实测每步带 6-8 张图后期会显著拖慢 Opus；
+# 当前默认值收紧到 L1=1 / L2=1 / L3=2，每步基线 ≈ 4 张图）
+keep_recent_l1 = 1
+keep_recent_l2 = 1
+keep_recent_l3 = 2
 
 # 变化检测：两图相似度阈值（0~1，1=完全相同）
 skip_if_similarity_above = 0.985
