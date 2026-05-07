@@ -88,6 +88,14 @@ pub fn run() {
             sidecar::schedule_add,
             sidecar::schedule_update,
             sidecar::schedule_delete,
+            sidecar::doze_status,
+            sidecar::doze_run_now,
+            sidecar::doze_clear_processed,
+            sidecar::doze_proposals_list,
+            sidecar::doze_proposal_read_png,
+            sidecar::doze_proposal_accept,
+            sidecar::doze_proposal_reject,
+            sidecar::doze_proposals_clear,
         ])
         .setup(move |app| {
             // ---------- system tray ----------

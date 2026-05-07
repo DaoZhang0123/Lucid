@@ -546,6 +546,49 @@ pub async fn schedule_delete(id: String) -> Result<Value, String> {
     instance().request("schedule_delete", json!({"id": id})).await
 }
 
+// ---- 打盹学习 (doze) ----
+#[tauri::command]
+pub async fn doze_status() -> Result<Value, String> {
+    instance().request("doze_status", json!({})).await
+}
+
+#[tauri::command]
+pub async fn doze_run_now() -> Result<Value, String> {
+    instance().request("doze_run_now", json!({})).await
+}
+
+#[tauri::command]
+pub async fn doze_clear_processed() -> Result<Value, String> {
+    instance().request("doze_clear_processed", json!({})).await
+}
+
+#[tauri::command]
+pub async fn doze_proposals_list() -> Result<Value, String> {
+    instance().request("doze_proposals_list", json!({})).await
+}
+
+#[tauri::command]
+pub async fn doze_proposal_read_png(id: String) -> Result<Value, String> {
+    instance().request("doze_proposal_read_png", json!({"id": id})).await
+}
+
+#[tauri::command]
+pub async fn doze_proposal_accept(id: String, label: Option<String>, description: Option<String>) -> Result<Value, String> {
+    instance().request("doze_proposal_accept", json!({
+        "id": id, "label": label, "description": description,
+    })).await
+}
+
+#[tauri::command]
+pub async fn doze_proposal_reject(id: String) -> Result<Value, String> {
+    instance().request("doze_proposal_reject", json!({"id": id})).await
+}
+
+#[tauri::command]
+pub async fn doze_proposals_clear() -> Result<Value, String> {
+    instance().request("doze_proposals_clear", json!({})).await
+}
+
 /// Tell the sidecar to re-read the user-config so settings changes take effect
 /// without restarting the whole process. Will refuse if a task is in-flight.
 #[tauri::command]

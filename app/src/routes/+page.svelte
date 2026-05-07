@@ -147,6 +147,7 @@
     <a class="link" href="/schedules">{$_("header.nav_schedules")}</a>
     <a class="link" href="/memory">{$_("header.nav_memory")}</a>
     <a class="link" href="/tools">{$_("header.nav_tools")}</a>
+    <a class="link" href="/doze">{$_("header.nav_doze")}</a>
     <a class="link" href="/settings">{$_("header.nav_settings")}</a>
   </header>
 

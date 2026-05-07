@@ -362,6 +362,35 @@ class ContextConfig:
 
 
 @dataclass
+class DozeConfig:
+    """Doze (idle-time) reflection learning. See ``Docs/doze.md``.
+
+    When the sidecar has been idle for ``idle_threshold_sec`` (no running task,
+    empty queue, no recent user RPC), a low-priority background worker scans
+    ``threads/`` for unprocessed runs and asks the LLM to extract reusable
+    ``learn_tip`` / ``remember`` calls. Default off — opt in via /settings.
+    """
+    enabled: bool = False
+    # When to wake.
+    idle_threshold_sec: int = 300
+    tick_interval_sec: int = 60
+    # Per-pass limits.
+    max_threads_per_pass: int = 1
+    max_rounds_per_thread: int = 2
+    max_tool_calls_per_pass: int = 6
+    max_event_text_chars: int = 600
+    max_tips_digest_lines: int = 30
+    max_memory_digest_lines: int = 30
+    # LLM reply ceiling (the reflector replies one short sentence + tool_calls).
+    max_tokens: int = 1500
+    # Persistence (relative to <user data> dir).
+    processed_path: str = "doze_processed.json"
+    log_path: str = "doze.log"
+    # Bump when prompt format changes — past threads will be re-learned.
+    prompt_version: int = 1
+
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     screenshot: ScreenshotConfig = field(default_factory=ScreenshotConfig)
@@ -378,6 +407,7 @@ class Config:
     fileio: FileIOConfig = field(default_factory=FileIOConfig)
     shell: ShellConfig = field(default_factory=ShellConfig)
     visual_notify: VisualNotifyConfig = field(default_factory=VisualNotifyConfig)
+    doze: DozeConfig = field(default_factory=DozeConfig)
 
 
 def _apply(dc: Any, raw: dict[str, Any] | None) -> Any:
@@ -432,4 +462,5 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.fileio, raw.get("fileio"))
     _apply(cfg.shell, raw.get("shell"))
     _apply(cfg.visual_notify, raw.get("visual_notify"))
+    _apply(cfg.doze, raw.get("doze"))
     return cfg

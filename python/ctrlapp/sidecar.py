@@ -69,6 +69,7 @@ from . import scheduler as scheduler_mod
 from . import launchers as launchers_mod
 from . import regions as regions_mod
 from .taskbar_monitor import TaskbarMonitor
+from .doze import DozeWorker
 
 # rich 默认会写 stdout，会污染协议——sidecar 模式必须把 console 重定向到 stderr。
 _err_console = Console(file=sys.stderr)
@@ -101,6 +102,12 @@ class Sidecar:
         self._queue_seq: int = 0
         self._scheduler = scheduler_mod.Scheduler(self._on_schedule_fire)
         self._taskbar_monitor: TaskbarMonitor | None = None
+        self._doze = DozeWorker(
+            self.cfg,
+            llm_factory=lambda: _build_llm_client(self.cfg, None),
+            is_busy=self._sidecar_busy,
+            event_sink=_writeln,
+        )
 
     def _startup_log_path(self) -> Path:
         logs_root = resolve_logs_root(self.cfg.logging)
@@ -166,6 +173,7 @@ class Sidecar:
                   "autonomy": self.cfg.safety.autonomy,
                   "max_steps": self.cfg.llm.max_steps})
         self._scheduler.start()
+        self._doze.start()
         if getattr(self.cfg, "visual_notify", None) and self.cfg.visual_notify.enabled:
             self._start_taskbar_monitor()
         for raw in sys.stdin:
@@ -186,6 +194,7 @@ class Sidecar:
             self._worker.join(timeout=10)
         self._stop_taskbar_monitor()
         self._scheduler.stop()
+        self._doze.stop()
         return 0
 
     def _start_taskbar_monitor(self) -> None:
@@ -476,12 +485,30 @@ class Sidecar:
     # ------------------------------------------------------------------
     # 单条请求派发
     # ------------------------------------------------------------------
+    # RPC methods that should NOT count as "user activity" for doze idle detection
+    # (the Tauri frontend polls these on a timer when the window is open).
+    _NON_ACTIVITY_METHODS = frozenset({
+        "ping", "get_status", "thread_list", "thread_read", "thread_read_image",
+        "memory_read", "tools_read", "app_tips_list", "app_tips_read",
+        "templates_list", "schedule_list", "icons_list", "icons_read_png",
+        "launchers_list", "regions_list", "doze_status",
+        "doze_proposals_list", "doze_proposal_read_png",
+    })
+
+    def _sidecar_busy(self) -> bool:
+        with self._lock:
+            queue_len = len(self._queue)
+        worker_alive = bool(self._worker and self._worker.is_alive())
+        return worker_alive or queue_len > 0
+
     def _handle(self, req: dict[str, Any]) -> None:
         rid = req.get("id")
         method = req.get("method", "")
         params = req.get("params") or {}
         if not isinstance(params, dict):
             params = {}
+        if method and method not in self._NON_ACTIVITY_METHODS:
+            self._doze.bump_activity()
         try:
             handler = getattr(self, f"_rpc_{method}", None)
             if handler is None:
@@ -585,6 +612,56 @@ class Sidecar:
             raise ValueError(f"invalid autonomy: {autonomy!r}")
         self.cfg.safety.autonomy = autonomy
         return {"autonomy": autonomy}
+
+    # ---- doze (idle reflection) ----
+
+    def _rpc_doze_status(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return self._doze.status()
+
+    def _rpc_doze_run_now(self, _params: dict[str, Any]) -> dict[str, Any]:
+        if not self.cfg.doze.enabled:
+            raise ValueError("doze disabled (set [doze].enabled=true)")
+        return self._doze.run_now()
+
+    def _rpc_doze_clear_processed(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return self._doze.clear_processed()
+
+    def _rpc_doze_proposals_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        from . import icon_proposals as ipm
+        return {"items": ipm.list_proposals(self.cfg)}
+
+    def _rpc_doze_proposal_read_png(self, params: dict[str, Any]) -> dict[str, Any]:
+        from . import icon_proposals as ipm
+        pid = (params.get("id") or "").strip()
+        if not pid:
+            raise ValueError("id required")
+        png = ipm.read_proposal_png(self.cfg, pid)
+        if png is None:
+            raise FileNotFoundError(pid)
+        return {"id": pid, "png_b64": base64.b64encode(png).decode("ascii")}
+
+    def _rpc_doze_proposal_accept(self, params: dict[str, Any]) -> dict[str, Any]:
+        from . import icon_proposals as ipm
+        pid = (params.get("id") or "").strip()
+        if not pid:
+            raise ValueError("id required")
+        label = (params.get("label") or "").strip()
+        desc = (params.get("description") or "").strip()
+        entry = ipm.accept(self.cfg, pid, override_label=label, override_desc=desc)
+        if entry is None:
+            raise RuntimeError("accept failed (icons disabled or proposal missing)")
+        return {"ok": True, "icon": entry}
+
+    def _rpc_doze_proposal_reject(self, params: dict[str, Any]) -> dict[str, Any]:
+        from . import icon_proposals as ipm
+        pid = (params.get("id") or "").strip()
+        if not pid:
+            raise ValueError("id required")
+        return {"ok": ipm.reject(self.cfg, pid)}
+
+    def _rpc_doze_proposals_clear(self, _params: dict[str, Any]) -> dict[str, Any]:
+        from . import icon_proposals as ipm
+        return {"removed": ipm.clear_all(self.cfg)}
 
     # ---- thread management ----
 

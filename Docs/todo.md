@@ -148,8 +148,12 @@
   - 索引：sidecar 启动时把 memory/tools 切成单条 → 倒排索引；条目变更时增量更新（监听 `/memory` `/tools` 页面写盘事件）。
   - 配置：`[rag] enabled / top_k=5 / backend / refresh_every_steps=10 / max_chars_per_entry=300`。
   - 收益：(1) 大幅减少每步发给 LLM 的 prompt 体积；(2) 给模型的 memory/tools 信噪比变高（不会被无关条目干扰）；(3) 为后面 Phase 3 的"用户多人 / 多角色记忆隔离"留接口。
-- [ ] **打盹学习**：5分钟内没有任务的时候，启用打盹功能，从执行过任务的context.md等文件提取需要的信息，比如icon信息，成功或者失败的点（以防执行任务的时候没有记录下来）等，这个可以用大模型来学习，任务等级可以弄成最低。打盹过的文档可以记录下来，以免重复学习。
+- [~] **打盹学习**：5分钟内没有任务的时候，启用打盹功能，从执行过任务的 `events.jsonl` 等文件提取需要的信息，比如 icon 信息、成功或失败的点（以防执行任务的时候没有记录下来）等，由大模型来学习，任务等级最低。打盹过的文档记录到 `doze_processed.json`，避免重复学习。
+  - **v0（已落地）**：[python/ctrlapp/doze.py](python/ctrlapp/doze.py) `DozeWorker` 后台 tick 线程，由 sidecar 在 `serve()` 启动时拉起；空闲条件 = 没有运行中 worker + 队列为空 + 距上次 user-driven RPC > `idle_threshold_sec`（默认 300s）。一次 pass 选一条**未处理**的最近 thread，把 `events.jsonl` 压缩成纯文本时间线 + 现有 tips/memory 摘要喂给 LLM，工具白名单仅 `learn_tip` / `remember` / `load_app_tips`（**不动鼠键，不发图**）。协作式取消：任意 user-driven RPC（`start_task` / `thread_new` / `cancel` / `set_autonomy`...）都会 `bump_activity()` 并打断当前 pass。新 RPC：`doze_status` / `doze_run_now` / `doze_clear_processed`；新事件：`doze_idle_start` / `doze_pass_done`。配置在 `[doze]`（默认 `enabled = false`，需 `/settings` 显式开启）。详见 [Docs/doze.md](doze.md)。
+  - **v1 / icon 通道（已落地）**：[python/ctrlapp/icon_proposals.py](python/ctrlapp/icon_proposals.py) 新模块（`<user data>/icon_proposals/{index.json, <id>.png}`）；[doze.py](python/ctrlapp/doze.py) 系统提示新增 `propose_icon(image_filename, x, y, w, h, label, description?)` 工具白名单条目，并把 `step_image` 事件的文件名 / 宽高列入 user prompt 供模型挑选；`_dispatch_propose_icon` 负责安全校验文件名、用 PIL 裁剪图块并入队。Sidecar 增加 5 个 RPC：`doze_proposals_list` / `doze_proposal_read_png` / `doze_proposal_accept`(可改名/改描述，→ `icon_memory.add_icon`) / `doze_proposal_reject` / `doze_proposals_clear`，全部进入 `_NON_ACTIVITY_METHODS` 白名单不打断打盹。前端新增 [/doze 页](app/src/routes/doze/+page.svelte)（与 /memory /schedules 并排，header 加 `nav_doze` i18n），包含状态面板 / Run Now / Clear Processed / 提案卡片预览 + 接受/拒绝/全部清空。
+  - **v1（计划）**：心跳——与打盹共享 `python/ctrlapp/reflector.py`，差别仅在触发器（运行中每 N 步 vs 任务完成后 5 分钟）与上下文窗口。
 - [] **初始化**: 有一些电脑上的配置，比如查看任务栏之类的，会影响到taskbar notify的功能，最好用一个任务来代替用户完成配置。任务等级可以弄成最低
+- [] **scheduler**: 定时任务可以加一个按钮，启动测试
 
 ---
 

@@ -156,3 +156,19 @@ key_screenshot_keep = 200
 auto_chat_enabled = true
 auto_chat_instruction = "检测到任务栏可能有新消息。请先查看 Teams/WeChat 最近未读消息，基于上下文给出简短自然回复并发送。完成后返回继续监听。"
 
+
+[doze]
+# 打盹学习：sidecar 空闲时低优先级反思已结束的 thread，
+# 抽取 learn_tip / remember 写回长期记忆。详见 Docs/doze.md。
+# 默认关；在 /settings 显式开启。
+enabled = true
+idle_threshold_sec = 300
+tick_interval_sec = 60
+max_threads_per_pass = 1
+max_rounds_per_thread = 2
+max_tool_calls_per_pass = 6
+max_event_text_chars = 600
+max_tips_digest_lines = 30
+max_memory_digest_lines = 30
+max_tokens = 1500
+prompt_version = 1
