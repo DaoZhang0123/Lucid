@@ -53,6 +53,24 @@ _INTERNAL_ACTIONS = ("visual_notify", "scan_launcher_icons", "promote_tray_icons
 _VALID_ACTIONS = ("task",) + _INTERNAL_ACTIONS
 
 
+def _normalize_apps(apps: list[str] | None) -> list[str]:
+    """Dedupe + strip empties for ``auto_chat_apps``. Preserves order."""
+    if not apps:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for a in apps:
+        s = str(a or "").strip()
+        if not s:
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
 def _resolve_tz(name: str | None):
     """返回 tzinfo 或 None（None 代表本机时间）。``name`` 为空 / 'local' / 'system' 也返回 None。"""
     if not name:
@@ -258,7 +276,8 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
                  autonomy: str = "confirm_critical", max_steps: int = 25,
                  enabled: bool = True,
                  constraints: dict[str, Any] | None = None,
-                 action: str | None = None) -> dict[str, Any]:
+                 action: str | None = None,
+                 auto_chat_apps: list[str] | None = None) -> dict[str, Any]:
     name = (name or "").strip() or "未命名计划"
     instruction = (instruction or "").strip()
     schedule_action = str(action or "task").strip().lower() or "task"
@@ -303,6 +322,7 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
         "next_ms": int(_next_run(spec, datetime.now()).timestamp() * 1000),
         "last_run_ms": 0,
         "constraints": cons,
+        "auto_chat_apps": _normalize_apps(auto_chat_apps),
     }
     items.append(item)
     _save(items)
@@ -395,6 +415,8 @@ def update_schedule(sid: str, **fields: Any) -> dict[str, Any] | None:
             # constraints 传 None 表示不变，传 {} / dict 表示覆盖。
             if "constraints" in fields and fields["constraints"] is not None:
                 it["constraints"] = _validate_constraints(fields["constraints"])
+            if "auto_chat_apps" in fields and fields["auto_chat_apps"] is not None:
+                it["auto_chat_apps"] = _normalize_apps(fields["auto_chat_apps"])
             it["updated_ms"] = int(time.time() * 1000)
             _save(items)
             return it

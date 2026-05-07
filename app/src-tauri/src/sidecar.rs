@@ -530,21 +530,23 @@ pub async fn schedule_list() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn schedule_add(name: String, instruction: String, spec: Value, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>, constraints: Option<Value>) -> Result<Value, String> {
+pub async fn schedule_add(name: String, instruction: String, spec: Value, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>) -> Result<Value, String> {
     instance().request("schedule_add", json!({
         "name": name, "instruction": instruction, "spec": spec,
         "autonomy": autonomy, "max_steps": max_steps,
         "enabled": enabled.unwrap_or(true),
         "constraints": constraints,
+        "auto_chat_apps": auto_chat_apps,
     })).await
 }
 
 #[tauri::command]
-pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>, constraints: Option<Value>) -> Result<Value, String> {
+pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>) -> Result<Value, String> {
     instance().request("schedule_update", json!({
         "id": id, "name": name, "instruction": instruction, "spec": spec,
         "autonomy": autonomy, "max_steps": max_steps, "enabled": enabled,
         "constraints": constraints,
+        "auto_chat_apps": auto_chat_apps,
     })).await
 }
 
@@ -586,6 +588,17 @@ pub async fn doze_delete_output(id: String) -> Result<Value, String> {
     instance()
         .request("doze_delete_output", json!({ "id": id }))
         .await
+}
+
+/// List installed apps (scanned launcher icons) with name + base64 PNG icon,
+/// in atlas.txt order. Used by the visual_notify auto-reply whitelist UI.
+/// When `rescan` is true, the sidecar runs a fresh Start-Menu scan first so
+/// apps the user just installed/uninstalled appear immediately.
+#[tauri::command]
+pub async fn installed_apps_list(rescan: Option<bool>) -> Result<Value, String> {
+    instance().request("installed_apps_list", json!({
+        "rescan": rescan.unwrap_or(false),
+    })).await
 }
 
 /// Tell the sidecar to re-read the user-config so settings changes take effect

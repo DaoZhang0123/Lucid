@@ -72,10 +72,16 @@
 
 当 LLM 返回 `has_new_message=true` 时：
 
-1. 触发 `_on_taskbar_notify_confirmed()` 回调。
+1. 触发 `_on_taskbar_notify_confirmed(payload)` 回调，`payload` 已带
+   `app_candidates`、`confidence`、`reason` 等 Step 2 输出。
 2. 检查去重：是否已有相同 `_from_visual_notify=True` 的待处理任务在队列中。
 3. 若有去重命中，直接跳过（避免多个视觉通知任务堆积）。
-4. 若无，创建一个新的"消息处理"任务，加入队列，优先级 `priority=2`（低于人工任务）。
+4. **App 注入**：把 `app_candidates`（去重 + 过滤 `unknown`）拼成一行追加到
+   `auto_chat_instruction` 末尾，让 Agent 直接奔已识别 App，不再盲探。
+5. **独立 thread**：用 `ThreadLog.create()` 单独建一条 thread（标题带 App
+   名），通过 `_thread=` 传给 `_rpc_start_task`，避免空闲分支
+   `_ensure_active_thread()` 复用用户当前打开的 thread。
+6. 入队，优先级 `priority=2`（低于人工任务）。
 
 ### 去重与冷却
 
@@ -216,6 +222,29 @@ llm_confirm_cooldown_sec = 5.0  # 防抖，避免连续触发
 ```text
 检测到任务栏可能有新消息。请先查看 Teams/WeChat 最近未读消息，基于上下文给出简短自然回复并发送。完成后返回继续监听。
 ```
+
+> **App 注入（自动）**：sidecar 在入队前会把 Step 2 LLM 返回的 `app_candidates`
+> （去重并过滤 `unknown`）拼成一行追加到上述模板末尾，例如：
+>
+> ```text
+> [detector] 任务栏 diff + LLM 确认本次最可能产生新消息的 App: Teams / WeChat。请优先打开并查看这些 App 的最新未读。
+> ```
+>
+> 这样 Agent 不必再"探每一个聊天 App"，直接奔具体目标。模板里**不需要**手写
+> 占位符，留空即可，或干脆把硬编码的 "Teams/WeChat" 删掉，让 detector 行成
+> 为唯一的 App 来源。
+
+### 独立 thread
+
+每次 `taskbar_notify_confirmed` 入队前，sidecar 都会用 `ThreadLog.create()`
+新建一条独立 thread（标题形如 `🔔·Teams/WeChat <模板前 32 字符>`），并通过
+`_thread=` 参数传给 `_rpc_start_task`。这样无论：
+
+- sidecar 当前**正在跑**别的任务（走入队分支，本就会建独立 thread），还是
+- sidecar **空闲**（曾经会 `_ensure_active_thread()` 复用用户当前打开的
+  thread，把自动任务塞进去），
+
+自动任务永远落在自己的 thread 里，不会污染用户正在浏览 / 编辑的会话。
 
 ### 关键防抖策略
 

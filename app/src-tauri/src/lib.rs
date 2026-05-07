@@ -94,6 +94,7 @@ pub fn run() {
             sidecar::doze_clear_processed,
             sidecar::doze_outputs,
             sidecar::doze_delete_output,
+            sidecar::installed_apps_list,
         ])
         .setup(move |app| {
             // ---------- system tray ----------

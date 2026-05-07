@@ -95,6 +95,66 @@ def read_png(cfg: Config, key: str) -> bytes | None:
         return None
 
 
+def list_installed_apps(cfg: Config) -> list[dict[str, Any]]:
+    """Return ``[{key, name, file, png_bytes}, ...]`` ordered the same way as
+    ``<user_data>/icons/atlas.txt``. Items missing from atlas.txt are appended
+    at the end in index.json order (so newly-scanned apps still surface).
+    Apps without a readable PNG are still returned with ``png_bytes=b""``."""
+    items = list_icons(cfg)
+    by_name: dict[str, dict[str, Any]] = {}
+    for it in items:
+        name = (it.get("name") or "").strip()
+        if name and name not in by_name:
+            by_name[name] = it
+
+    ordered_names: list[str] = []
+    seen: set[str] = set()
+    _, atlas_txt = _atlas_cache_paths(cfg)
+    if atlas_txt.is_file():
+        try:
+            for raw in atlas_txt.read_text("utf-8").splitlines():
+                # format: "[N] App name"
+                line = raw.strip()
+                if not line or not line.startswith("["):
+                    continue
+                _, _, rest = line.partition("]")
+                nm = rest.strip()
+                if nm and nm not in seen:
+                    seen.add(nm)
+                    ordered_names.append(nm)
+        except OSError:
+            pass
+
+    for it in items:
+        nm = (it.get("name") or "").strip()
+        if nm and nm not in seen:
+            seen.add(nm)
+            ordered_names.append(nm)
+
+    out: list[dict[str, Any]] = []
+    base = store_dir(cfg)
+    for nm in ordered_names:
+        it = by_name.get(nm)
+        if not it:
+            continue
+        fname = (it.get("file") or "").strip()
+        png_bytes = b""
+        if fname:
+            p = base / fname
+            if p.is_file():
+                try:
+                    png_bytes = p.read_bytes()
+                except OSError:
+                    png_bytes = b""
+        out.append({
+            "key": it.get("key") or "",
+            "name": nm,
+            "file": fname,
+            "png_bytes": png_bytes,
+        })
+    return out
+
+
 # ---------------- enumeration ----------------
 
 def _start_menu_dirs() -> list[Path]:
@@ -305,6 +365,131 @@ def _safe_name(s: str) -> str:
     return ("".join(out))[:80] or "app"
 
 
+# ---------------- UWP / MSIX (AppX) enumeration ----------------
+#
+# The Start-Menu .lnk + Uninstall-registry walk above MISSES every modern
+# packaged app: Microsoft Teams (work or school), WhatsApp, Photos, etc.
+# Those are surfaced only via the AppX subsystem. We shell out to PowerShell
+# once per scan and ask it to merge ``Get-StartApps`` (which includes both
+# classic + UWP entries with their AppUserModelID) with ``Get-AppxPackage``
+# (which gives us each package's InstallLocation + AppxManifest.xml so we
+# can find the right Square44/150 logo asset on disk).
+#
+# Returns a list of dicts: {name, appid, icon_path}. ``icon_path`` is an
+# absolute path to a PNG asset that PIL can open directly — no win32 icon
+# extraction needed because UWP apps already ship raster icon assets.
+_UWP_PS_SCRIPT = r"""
+$ErrorActionPreference = 'Stop'
+$apps = Get-StartApps
+$pkgs = Get-AppxPackage | Group-Object PackageFamilyName -AsHashTable -AsString
+$result = New-Object System.Collections.ArrayList
+foreach ($a in $apps) {
+    $appid = $a.AppID
+    if ($appid -notmatch '!') { continue }
+    $parts = $appid.Split('!', 2)
+    $pfn = $parts[0]
+    $entry = $parts[1]
+    if (-not $pkgs.ContainsKey($pfn)) { continue }
+    $pkg = $pkgs[$pfn]
+    if ($pkg -is [array]) { $pkg = $pkg[0] }
+    $loc = $pkg.InstallLocation
+    if (-not $loc -or -not (Test-Path -LiteralPath $loc)) { continue }
+    $manifest = Join-Path $loc 'AppxManifest.xml'
+    if (-not (Test-Path -LiteralPath $manifest)) { continue }
+    try { [xml]$xml = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 } catch { continue }
+    $ns = New-Object System.Xml.XmlNamespaceManager($xml.NameTable)
+    $ns.AddNamespace('d', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10')
+    $ns.AddNamespace('uap', 'http://schemas.microsoft.com/appx/manifest/uap/windows10')
+    $appNode = $xml.SelectSingleNode("//d:Application[@Id='$entry']", $ns)
+    if (-not $appNode) { continue }
+    $vis = $appNode.SelectSingleNode('uap:VisualElements', $ns)
+    if (-not $vis) { continue }
+    $logo = $vis.GetAttribute('Square44x44Logo')
+    if (-not $logo) { $logo = $vis.GetAttribute('Square150x150Logo') }
+    if (-not $logo) { $logo = $vis.GetAttribute('Logo') }
+    if (-not $logo) { continue }
+    $logoFull = Join-Path $loc $logo
+    $logoDir  = [IO.Path]::GetDirectoryName($logoFull)
+    $logoBase = [IO.Path]::GetFileNameWithoutExtension($logoFull)
+    $logoExt  = [IO.Path]::GetExtension($logoFull)
+    if (-not (Test-Path -LiteralPath $logoDir)) { continue }
+    # Prefer larger, plated, scale-200 variants. Pick file with biggest size.
+    $best = $null; $bestSize = 0
+    Get-ChildItem -LiteralPath $logoDir -Filter "$logoBase*$logoExt" -File -ErrorAction SilentlyContinue | ForEach-Object {
+        # skip alt forms intended for white-on-black (unplated)
+        if ($_.Name -match 'altform-unplated|contrast-(white|black)') { return }
+        if ($_.Length -gt $bestSize) { $bestSize = $_.Length; $best = $_.FullName }
+    }
+    if (-not $best -and (Test-Path -LiteralPath $logoFull)) { $best = $logoFull }
+    if (-not $best) { continue }
+    [void]$result.Add([pscustomobject]@{ Name = $a.Name; AppID = $appid; IconPath = $best })
+}
+$result | ConvertTo-Json -Compress -Depth 3
+"""
+
+
+def _iter_uwp_apps() -> list[dict[str, str]]:
+    """Enumerate UWP/MSIX-packaged apps via PowerShell. Empty list on failure."""
+    if os.name != "nt":
+        return []
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive",
+             "-ExecutionPolicy", "Bypass", "-Command", _UWP_PS_SCRIPT],
+            capture_output=True, text=True, timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        _log.warning("uwp enumeration failed: %s", exc)
+        return []
+    if proc.returncode != 0:
+        _log.warning("uwp ps returncode=%s stderr=%s", proc.returncode, proc.stderr[:300])
+        return []
+    out = (proc.stdout or "").strip()
+    if not out:
+        return []
+    try:
+        data = json.loads(out)
+    except Exception as exc:
+        _log.warning("uwp ps json parse failed: %s; head=%r", exc, out[:200])
+        return []
+    # ConvertTo-Json yields a single object instead of a one-element array
+    # when there's exactly one match — normalise.
+    if isinstance(data, dict):
+        data = [data]
+    if not isinstance(data, list):
+        return []
+    items: list[dict[str, str]] = []
+    for d in data:
+        if not isinstance(d, dict):
+            continue
+        name = str(d.get("Name") or "").strip()
+        appid = str(d.get("AppID") or "").strip()
+        icon = str(d.get("IconPath") or "").strip()
+        if name and appid and icon:
+            items.append({"name": name, "appid": appid, "icon_path": icon})
+    return items
+
+
+def _load_uwp_icon_png(icon_path: str, size: int = _ICON_SIZE) -> bytes | None:
+    """Open a UWP asset PNG and re-encode to ``size`` × ``size``. UWP assets
+    sit on disk as PNGs already, so no win32 icon extraction needed."""
+    try:
+        from PIL import Image
+        from io import BytesIO
+        with Image.open(icon_path) as im:
+            im = im.convert("RGBA")
+            if im.size != (size, size):
+                im = im.resize((size, size), Image.LANCZOS)
+            buf = BytesIO()
+            im.save(buf, format="PNG", optimize=True)
+            return buf.getvalue()
+    except Exception as exc:
+        _log.debug("uwp icon load failed (%s): %s", icon_path, exc)
+        return None
+
+
 def run_full_scan(cfg: Config) -> dict[str, Any]:
     """全量扫描；幂等地清空目录后重写。返回汇总信息（成功 / 跳过 / 失败计数）。"""
     if os.name != "nt":
@@ -324,7 +509,8 @@ def run_full_scan(cfg: Config) -> dict[str, Any]:
     seen_keys: set[str] = set()
     items: list[dict[str, Any]] = []
     stats = {"lnks_seen": 0, "lnk_no_target": 0, "from_lnk": 0,
-             "uninstall_seen": 0, "from_uninstall": 0, "extract_failed": 0}
+             "uninstall_seen": 0, "from_uninstall": 0, "extract_failed": 0,
+             "uwp_seen": 0, "from_uwp": 0, "uwp_failed": 0}
 
     # 1) Start Menu .lnk
     for lnk in _iter_lnks():
@@ -429,6 +615,37 @@ def run_full_scan(cfg: Config) -> dict[str, Any]:
         seen_keys.add(key)
         stats["from_uninstall"] += 1
 
+    # 3) UWP / MSIX (AppX) packaged apps — Teams (work), WhatsApp, etc.
+    # These never appear as Start-Menu .lnk files. Get-StartApps + AppxManifest
+    # gives us {Name, AppID, IconPath} where IconPath is a real PNG on disk.
+    for entry in _iter_uwp_apps():
+        stats["uwp_seen"] += 1
+        appid = entry["appid"]
+        norm = "uwp:" + appid.lower()
+        key = _key_for(norm)
+        if key in seen_keys:
+            continue
+        png = _load_uwp_icon_png(entry["icon_path"])
+        if not png:
+            stats["uwp_failed"] += 1
+            continue
+        fname = f"{key}_{_safe_name(entry['name'])}.png"
+        (out_dir / fname).write_bytes(png)
+        items.append({
+            "key": key,
+            "name": entry["name"],
+            "target": appid,            # AppUserModelID — caller can `start shell:appsFolder\\<appid>`
+            "icon_source": entry["icon_path"],
+            "icon_index": 0,
+            "file": fname,
+            "source": "uwp",
+            "w": _ICON_SIZE,
+            "h": _ICON_SIZE,
+            "ms": int(time.time() * 1000),
+        })
+        seen_keys.add(key)
+        stats["from_uwp"] += 1
+
     # 写 index
     index = {
         "scanned_ms": started_ms,
@@ -446,8 +663,8 @@ def run_full_scan(cfg: Config) -> dict[str, Any]:
             "duration_ms": index["duration_ms"], "dir": str(out_dir)}
 
 
-__all__ = ["run_full_scan", "list_icons", "read_png", "store_dir",
-           "build_atlas", "LauncherAtlas"]
+__all__ = ["run_full_scan", "list_icons", "list_installed_apps", "read_png",
+           "store_dir", "build_atlas", "LauncherAtlas"]
 
 
 # ---------------- atlas (for taskbar_notify confirm prompt) ----------------

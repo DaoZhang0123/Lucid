@@ -24,7 +24,10 @@
     autonomy: string; max_steps: number; enabled: boolean;
     next_ms?: number; last_run_ms?: number;
     constraints?: Constraints;
+    auto_chat_apps?: string[];
   };
+
+  type InstalledApp = { key: string; name: string; icon: string };
 
   let items = $state<Sched[]>([]);
   let err = $state("");
@@ -57,6 +60,96 @@
   let allowedWeekdays = $state<boolean[]>(Array(7).fill(true));
   let dateStart = $state("");
   let dateEnd = $state("");
+
+  // visual_notify: per-schedule whitelist of apps that should trigger the
+  // auto-reply. Only when the LLM-confirmed app falls inside this set will
+  // the auto-chat task be enqueued. Names match `installedApps[*].name`.
+  let installedApps = $state<InstalledApp[]>([]);
+  let autoChatApps = $state<string[]>([]);
+  // Apps default-checked when creating a new visual_notify schedule.
+  // Match against the **exact** installed-app name (case-insensitive). We
+  // used to do a substring match but that pulled in things like
+  // "微信开发者工具" / "卸载微信开发者工具" because they happen to contain "微信".
+  // Keep this list narrow — only the actual messaging clients.
+  const DEFAULT_AUTO_CHAT_EXACT = new Set([
+    "微信",
+    "wechat",
+    "weixin",
+    "microsoft teams",
+    "teams",
+    "teams (work or school)",
+    "microsoft teams (work or school)",
+  ]);
+
+  function defaultAutoChatApps(): string[] {
+    return installedApps
+      .map((a) => a.name)
+      .filter((nm) => DEFAULT_AUTO_CHAT_EXACT.has(nm.trim().toLowerCase()));
+  }
+
+  function toggleAutoChatApp(name: string) {
+    if (autoChatApps.includes(name)) {
+      autoChatApps = autoChatApps.filter((a) => a !== name);
+    } else {
+      autoChatApps = [...autoChatApps, name];
+    }
+  }
+
+  // Compact dropdown UI state for the auto-chat-apps multi-select.
+  let autoChatPickerOpen = $state(false);
+  let autoChatSearch = $state("");
+  let autoChatPickerEl = $state<HTMLDivElement | null>(null);
+  let autoChatRefreshing = $state(false);
+  // Rescan once per page-load when the user first opens the picker, so a
+  // freshly-installed (or just-uninstalled) app shows up without waiting
+  // for the daily scheduled scan.
+  let autoChatAutoRescanned = false;
+
+  async function refreshInstalledApps(rescan: boolean) {
+    autoChatRefreshing = true;
+    try {
+      const r = await invoke<{ items: InstalledApp[] }>(
+        "installed_apps_list",
+        { rescan },
+      );
+      installedApps = r?.items ?? [];
+      // Drop any selected names that no longer exist after the rescan
+      // (e.g. user uninstalled the app). Keep order stable.
+      const present = new Set(installedApps.map((a) => a.name));
+      autoChatApps = autoChatApps.filter((nm) => present.has(nm));
+    } catch (e) {
+      err = String(e);
+    } finally {
+      autoChatRefreshing = false;
+    }
+  }
+
+  async function openAutoChatPicker() {
+    autoChatPickerOpen = !autoChatPickerOpen;
+    if (autoChatPickerOpen && !autoChatAutoRescanned) {
+      autoChatAutoRescanned = true;
+      await refreshInstalledApps(true);
+    }
+  }
+
+  let filteredInstalledApps = $derived.by(() => {
+    const q = autoChatSearch.trim().toLowerCase();
+    if (!q) return installedApps;
+    return installedApps.filter((a) => a.name.toLowerCase().includes(q));
+  });
+
+  function appIcon(name: string): string {
+    return installedApps.find((a) => a.name === name)?.icon ?? "";
+  }
+
+  // Close the picker when the user clicks outside it.
+  function onDocClick(ev: MouseEvent) {
+    if (!autoChatPickerOpen) return;
+    const root = autoChatPickerEl;
+    if (root && ev.target instanceof Node && !root.contains(ev.target)) {
+      autoChatPickerOpen = false;
+    }
+  }
 
   const WD_KEYS = [
     "schedules.weekday_mon",
@@ -135,6 +228,7 @@
     allowedWeekdays = Array(7).fill(true);
     dateStart = "";
     dateEnd = "";
+    autoChatApps = defaultAutoChatApps();
   }
 
   // ms -> "YYYY-MM-DDTHH:MM" in local tz, suitable for <input type="datetime-local">.
@@ -187,6 +281,12 @@
       dateStart = "";
       dateEnd = "";
     }
+    autoChatApps = Array.isArray(s.auto_chat_apps)
+      ? [...s.auto_chat_apps]
+      // Legacy schedule (created before the whitelist feature) — no field
+      // saved yet. Fall back to the WeChat / Teams default so users don't
+      // see a fully unchecked list.
+      : defaultAutoChatApps();
   }
 
   function buildSpec(): Spec {
@@ -242,9 +342,9 @@
       const spec = buildSpec();
       const constraints = buildConstraints();
       if (editing) {
-        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, autonomy, maxSteps, enabled, constraints });
+        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, autonomy, maxSteps, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null });
       } else {
-        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, autonomy, maxSteps, enabled, constraints });
+        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, autonomy, maxSteps, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null });
       }
       reset();
       await load();
@@ -355,7 +455,19 @@
         if (!editing) maxSteps = m;
       }
     } catch { /* keep fallback 50 */ }
+    try {
+      const r = await invoke<{ items: InstalledApp[] }>("installed_apps_list");
+      installedApps = r?.items ?? [];
+      // Seed defaults for the (new) form. startEdit() overrides this when
+      // editing an existing schedule.
+      if (!editing && autoChatApps.length === 0) {
+        autoChatApps = defaultAutoChatApps();
+      }
+    } catch { /* installed apps list optional */ }
     await load();
+    if (typeof document !== "undefined") {
+      document.addEventListener("click", onDocClick, true);
+    }
   });
 </script>
 
@@ -387,6 +499,75 @@
     </label>
     {#if action === "visual_notify"}
       <p class="sub-hint visual-note">{$_("schedules.visual_notify_instruction")}</p>
+      <fieldset class="trigger auto-chat-apps">
+        <legend>{$_("schedules.auto_chat_apps_legend")}</legend>
+        <p class="sub-hint">{$_("schedules.auto_chat_apps_hint")}</p>
+        {#if installedApps.length === 0}
+          <p class="sub-hint">{$_("schedules.auto_chat_apps_empty")}</p>
+        {:else}
+          <div class="apps-picker" bind:this={autoChatPickerEl}>
+            <button
+              type="button"
+              class="apps-picker-trigger"
+              onclick={openAutoChatPicker}
+            >
+              {#if autoChatApps.length === 0}
+                <span class="apps-picker-placeholder">{$_("schedules.auto_chat_apps_pick_placeholder")}</span>
+              {:else}
+                <span class="apps-picker-chips">
+                  {#each autoChatApps as nm (nm)}
+                    <span class="apps-picker-chip">
+                      {#if appIcon(nm)}<img src={appIcon(nm)} alt="" />{/if}
+                      <span class="app-name">{nm}</span>
+                      <button
+                        type="button"
+                        class="chip-x"
+                        title={$_("schedules.select_none_button")}
+                        onclick={(e) => { e.stopPropagation(); toggleAutoChatApp(nm); }}
+                      >×</button>
+                    </span>
+                  {/each}
+                </span>
+              {/if}
+              <span class="apps-picker-caret">{autoChatPickerOpen ? "▲" : "▼"}</span>
+            </button>
+
+            {#if autoChatPickerOpen}
+              <div class="apps-picker-panel">
+                <input
+                  class="apps-picker-search"
+                  type="text"
+                  placeholder={$_("schedules.auto_chat_apps_search_placeholder")}
+                  bind:value={autoChatSearch}
+                />
+                <div class="apps-picker-list">
+                  {#each filteredInstalledApps as app (app.name)}
+                    <label class="apps-picker-row" class:checked={autoChatApps.includes(app.name)}>
+                      <input
+                        type="checkbox"
+                        checked={autoChatApps.includes(app.name)}
+                        onchange={() => toggleAutoChatApp(app.name)}
+                      />
+                      {#if app.icon}<img src={app.icon} alt="" />{:else}<span class="app-icon-placeholder"></span>{/if}
+                      <span class="app-name">{app.name}</span>
+                    </label>
+                  {:else}
+                    <p class="sub-hint apps-picker-empty">{$_("schedules.auto_chat_apps_no_match")}</p>
+                  {/each}
+                </div>
+                <div class="chip-actions apps-picker-actions">
+                  <button type="button" class="ghost" onclick={() => (autoChatApps = installedApps.map((a) => a.name))}>{$_("schedules.select_all_button")}</button>
+                  <button type="button" class="ghost" onclick={() => (autoChatApps = [])}>{$_("schedules.select_none_button")}</button>
+                  <button type="button" class="ghost" onclick={() => (autoChatApps = defaultAutoChatApps())}>{$_("schedules.auto_chat_apps_defaults_button")}</button>
+                  <button type="button" class="ghost" disabled={autoChatRefreshing} onclick={() => refreshInstalledApps(true)}>
+                    {autoChatRefreshing ? $_("schedules.auto_chat_apps_refreshing") : $_("schedules.auto_chat_apps_refresh_button")}
+                  </button>
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </fieldset>
     {:else if action === "scan_launcher_icons"}
       <p class="sub-hint visual-note">{$_("schedules.launcher_scan_instruction")}</p>
     {:else if action === "promote_tray_icons"}
@@ -561,6 +742,41 @@
           background: #f9fafb; cursor: pointer; user-select: none; }
   .chip input { margin: 0; }
   .chip-actions { margin: 0.2rem 0 0.3rem 1.2rem; }
+  .auto-chat-apps .apps-picker { position: relative; margin-top: 0.3rem; }
+  .apps-picker-trigger { width: 100%; min-height: 2rem; padding: 0.25rem 1.6rem 0.25rem 0.4rem;
+    border: 1px solid #d1d5db; border-radius: 4px; background: #fff;
+    text-align: left; cursor: pointer; position: relative; font-size: 0.82rem; }
+  .apps-picker-trigger:hover { border-color: #93c5fd; }
+  .apps-picker-placeholder { color: #9ca3af; }
+  .apps-picker-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+  .apps-picker-chip { display: inline-flex; align-items: center; gap: 0.25rem;
+    background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 3px;
+    padding: 0.05rem 0.3rem; font-size: 0.78rem; max-width: 200px; }
+  .apps-picker-chip img { width: 14px; height: 14px; object-fit: contain; flex-shrink: 0; }
+  .apps-picker-chip .app-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .apps-picker-chip .chip-x { background: transparent; border: 0; color: #1d4ed8;
+    cursor: pointer; padding: 0 0.1rem; font-size: 0.95rem; line-height: 1; }
+  .apps-picker-chip .chip-x:hover { color: #b91c1c; }
+  .apps-picker-caret { position: absolute; right: 0.5rem; top: 50%;
+    transform: translateY(-50%); color: #6b7280; font-size: 0.7rem; pointer-events: none; }
+  .apps-picker-panel { position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+    background: #fff; border: 1px solid #d1d5db; border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08); z-index: 20;
+    max-height: 360px; display: flex; flex-direction: column; }
+  .apps-picker-search { margin: 0.4rem; padding: 0.25rem 0.4rem;
+    border: 1px solid #e5e7eb; border-radius: 3px; font-size: 0.82rem; }
+  .apps-picker-list { overflow-y: auto; padding: 0 0.2rem 0.2rem; flex: 1; }
+  .apps-picker-row { display: flex; align-items: center; gap: 0.4rem;
+    padding: 0.2rem 0.35rem; border-radius: 3px; cursor: pointer; font-size: 0.82rem; }
+  .apps-picker-row:hover { background: #f3f4f6; }
+  .apps-picker-row.checked { background: #eff6ff; }
+  .apps-picker-row input { margin: 0; flex-shrink: 0; }
+  .apps-picker-row img { width: 18px; height: 18px; object-fit: contain; flex-shrink: 0; }
+  .apps-picker-row .app-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .apps-picker-empty { margin: 0.5rem 0.6rem; }
+  .apps-picker-actions { margin: 0.2rem 0.3rem 0.4rem; }
+  .app-icon-placeholder { display: inline-block; width: 18px; height: 18px;
+    background: #e5e7eb; border-radius: 3px; flex-shrink: 0; }
   .daterange { margin: 0.4rem 0 0.3rem 1.2rem; }
   .daterange label { display: inline-block; margin-right: 0.8rem; }
   .actions button { padding: 0.4rem 1rem; background: #2563eb; color: #fff; border: 0;
