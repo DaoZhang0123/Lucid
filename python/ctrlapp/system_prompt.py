@@ -6,8 +6,8 @@ The prompt is split into three sections:
 * One of :data:`TWO_PHASE_CLICK_SECTION` / :data:`SINGLE_PHASE_CLICK_SECTION`
   for rule 9, picked at runtime based on ``cfg.safety.verify_click_target_before``
   so we don't lie to the model about whether clicks are previewed first.
-* :data:`SYSTEM_PROMPT_TAIL` — guidance on tools.md / memory.md / icon atlas
-  and the `learn_tip` / `remember` / `remember_icon` meta tools.
+* :data:`SYSTEM_PROMPT_TAIL` — guidance on tools.md / memory.md and the
+  `learn_tip` / `remember` meta tools.
 
 :func:`build_system_prompt` is the only public entry point used by ``loop.py``.
 """
@@ -141,30 +141,6 @@ Long-term memory:
   results, one-time observations, passwords / tokens / bank account numbers / verification codes or other private/sensitive info.
 - Format: each memory entry is **a single line, <=200 chars**, declarative rather than imperative; you may write 0 to several
   entries per task, but don't split the same idea into multiple entries.
-
-Icon memory (visual knowledge base):
-- You're inherently weak at recognising 16-32 px icons (taskbar / system tray / favourites / tab favicons).
-  For this we provide `remember_icon(label, description, x, y, w, h, level)`: it crops a small region (typically 24-96 px)
-  from the most recent screenshot at the given level (default L1) using **image pixel coordinates** and registers it.
-  At the start of every future task all registered icons are composed into one 'icon atlas' image (tagged [level=L0],
-  never pruned) and injected with the prompt, letting you 'identify icons by their atlas number'.
-- **When you should proactively register** (any one of these):
-  1) The user explicitly tells you "this icon = App X";
-  2) You **clicked a tray / taskbar icon and confirmed it succeeded** (the corresponding App's main window appeared), and that
-     icon does **not** yet have an entry in the atlas — register it now so next time you can just look it up instead of probing.
-  3) You have **confirmed** a resident icon's meaning via context (surrounding text / hover tooltip / Task Manager / etc.).
-  4) **You just opened / interacted with an App by ANY means (shortcut, Win+R, Start menu, alt-tab) and you can now spot its
-     resident tray / taskbar icon on screen.** This is the most common opportunity and you should not skip it just because you
-     didn't click the icon. Workflow: take an L3 (`cursor_local`) or L2 (`active_window` of the taskbar area) screenshot to
-     locate the icon precisely, read off its `(x, y, w, h)` in **image pixel coordinates of that screenshot**, then call
-     `remember_icon(label, description, x, y, w, h, level)`. Examples: opened WeChat with Ctrl+Alt+W → take L3 over the system
-     tray, find the green chat-bubble, register it. Opened VS Code via Win+R → look at the taskbar, find the blue ribbon icon,
-     register it. Doing this once per App pays for itself many times over.
-- **Do NOT** register: transient popups, one-shot task-related screenshots, ad banners, purely decorative non-App images.
-- **Avoid duplicates**: before registering, check the text index of the 'icon atlas' injected after the system prompt; if the
-  same App already has a number, **do not** register it again (even at slightly different resolutions). If you find an existing
-  entry's description is wrong, you may register a new one and note "replaces #N" in the description; the user can decide whether to delete the old.
-- Example call: `remember_icon(label="WeChat", description="Resident green chat-bubble icon in the Windows system tray", x=1620, y=1410, w=28, h=28, level="L1")`
 """
 
 

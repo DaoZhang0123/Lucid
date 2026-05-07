@@ -120,13 +120,6 @@ chinese_input = "clipboard"
 # 每个动作之间的最小间隔（秒），给 UI 留响应时间
 action_delay = 0.15
 
-[icons]
-# 图标记忆库：把"小图标 ↔ App"映射成 LOCALAPPDATA/dev.ctrlapp/icons/，
-# 任务起手时拼成一张合集图注入 prompt，帮模型识别托盘/任务栏小图标。
-enabled = true
-max_icons = 60          # 超过则丢最早的
-tile_size = 96          # 单图标在合集图里的最大渲染边长
-atlas_cols = 4          # 合集图每行多少个图标
 
 [visual_notify]
 # 任务栏视觉通知两步法：先截图 diff，有变化再调 LLM 确认是否有新消息。

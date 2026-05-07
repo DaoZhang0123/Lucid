@@ -12,6 +12,10 @@ function t(key: string, values?: Record<string, string | number | boolean | Date
   }
 }
 
+// 由 startTask 设为 true；handleEvent 里下一次 thread_changed 后重置。
+// 避免本轮刚 push 的用户消息被 thread 创建事件冲掉。
+let _skipNextThreadChangedClear = false;
+
 export type ChatItem =
   | { kind: "user"; text: string }
   | { kind: "assistant"; step?: number; text: string }
@@ -82,7 +86,9 @@ function handleEvent(v: any) {
     // 若 sidecar 把活动 thread 切换到了另一条（例如调度器到点新建了一个 thread），
     // 旧 thread 的 chat.items 不能继续接收新 thread 的事件——清空并按需重放新 thread
     // 已有的历史事件（新建的空 thread 直接得到空白视图）。
-    if (newId && newId !== prevId) {
+    // 但：若本轮 startTask 刚 push 了一条用户消息，后端刚创建出来的
+    // thread_changed 正好会把它冲掉；为此加一个一次性跳过标志。
+    if (newId && newId !== prevId && !_skipNextThreadChangedClear) {
       chat.items = [];
       chat.currentStep = 0;
       chat.totalSteps = 0;
@@ -119,6 +125,7 @@ function handleEvent(v: any) {
         }
       })();
     }
+    _skipNextThreadChangedClear = false;
     void refreshThreadList();
   } else if (k === "run_start") {
     chat.running = true;
@@ -227,6 +234,10 @@ export async function refreshThreadList(): Promise<void> {
 export async function startTask(text: string, autonomy: string, maxSteps: number): Promise<void> {
   if (!text) return;
   push({ kind: "user", text });
+  // 后端会为本次 task 创建 / 切换 thread，会发出一条 thread_changed；
+  // 其默认处理是清空 chat.items。这里提前设一下标志跳过那一次，
+  // 避免用户刚输入的一条 user 消息被冲掉。
+  _skipNextThreadChangedClear = true;
   try {
     const res: any = await invoke("sidecar_start_task", { args: { instruction: text, autonomy, maxSteps } });
     if (res && res.queued) {

@@ -44,6 +44,13 @@ _BASENAME = "schedules.json"
 _TICK_MAX_SEC = 60.0
 _TICK_MIN_SEC = 0.2
 
+# Allowed values for the per-item ``action`` field.
+#  - ``task``                : 普通 agent 任务（默认）
+#  - ``visual_notify``       : 任务栏弹窗监听（sidecar 内部 tick）
+#  - ``scan_launcher_icons`` : 扫描已安装应用图标（sidecar 内部全量扫描）
+_INTERNAL_ACTIONS = ("visual_notify", "scan_launcher_icons")
+_VALID_ACTIONS = ("task",) + _INTERNAL_ACTIONS
+
 
 def _resolve_tz(name: str | None):
     """返回 tzinfo 或 None（None 代表本机时间）。``name`` 为空 / 'local' / 'system' 也返回 None。"""
@@ -254,10 +261,12 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
     name = (name or "").strip() or "未命名计划"
     instruction = (instruction or "").strip()
     schedule_action = str(action or "task").strip().lower() or "task"
-    if schedule_action not in ("task", "visual_notify"):
+    if schedule_action not in _VALID_ACTIONS:
         raise ValueError(f"invalid action: {schedule_action!r}")
     if schedule_action == "visual_notify":
         instruction = instruction or "__visual_notify_tick__"
+    if schedule_action == "scan_launcher_icons":
+        instruction = instruction or "__scan_launcher_icons__"
     if not instruction:
         raise ValueError("instruction required")
     if autonomy not in ("full", "confirm_critical", "confirm_each"):
@@ -265,13 +274,13 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
     _validate(spec)
     cons = _validate_constraints(constraints)
     items = _load()
-    # 新增时检测同类（仅针对 visual_notify 监听任务）：
-    # 同 instruction + 同 spec.kind 即视为相似，直接复用已有任务，不再创建新任务。
-    if schedule_action == "visual_notify":
+    # 新增时检测同类（针对内部 action：visual_notify / scan_launcher_icons 等）：
+    # 同 action + 同 instruction + 同 spec.kind 即视为相似，直接复用已有任务。
+    if schedule_action in _INTERNAL_ACTIONS:
         ins_key = instruction.strip()
         kind_key = str((spec or {}).get("kind") or "").strip().lower()
         for it in items:
-            if str((it.get("action") or "task")).strip().lower() != "visual_notify":
+            if str((it.get("action") or "task")).strip().lower() != schedule_action:
                 continue
             if (it.get("instruction") or "").strip() != ins_key:
                 continue
@@ -314,12 +323,13 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
     cons = _validate_constraints(constraints)
 
     def _is_similar(it: dict[str, Any]) -> bool:
-        same_visual_notify = (
-            schedule_action == "visual_notify"
+        same_internal = (
+            schedule_action in _INTERNAL_ACTIONS
+            and str((it.get("action") or "task")).strip().lower() == schedule_action
             and (it.get("instruction") or "").strip() == ins
             and str((it.get("spec") or {}).get("kind") or "").strip().lower() == k
         )
-        return same_visual_notify or (
+        return same_internal or (
             (it.get("name") or "").strip() == n
             and (it.get("instruction") or "").strip() == ins
             and str((it.get("spec") or {}).get("kind") or "").strip().lower() == k
@@ -376,7 +386,7 @@ def update_schedule(sid: str, **fields: Any) -> dict[str, Any] | None:
                     it[k] = fields[k]
             if "action" in fields and fields["action"] is not None:
                 action = str(fields["action"] or "task").strip().lower() or "task"
-                if action not in ("task", "visual_notify"):
+                if action not in _VALID_ACTIONS:
                     raise ValueError(f"invalid action: {action!r}")
                 it["action"] = action
             # constraints 传 None 表示不变，传 {} / dict 表示覆盖。

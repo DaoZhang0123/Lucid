@@ -28,7 +28,6 @@ from .config import Config
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
 from . import meta_tools as meta_tools_mod
-from . import icon_proposals as icon_proposals_mod
 from .runlog import ThreadLog, resolve_threads_root
 from .llm_client import LLMClient
 
@@ -100,12 +99,6 @@ You CANNOT control the GUI. The only tools available are:
   - learn_tip(text, kind, app?)        — append to tools.md / apps/<slug>/tips.md
   - remember(text)                     — append to memory.md
   - load_app_tips(app)                 — read existing per-app tips before writing
-  - propose_icon(image_filename, x, y, w, h, label, description?)
-        — propose a small icon crop from one of the step images listed below.
-          The proposal is QUEUED for the user to review (not auto-committed).
-          Use ONLY when the assistant text in the timeline already states the
-          icon's meaning AND gives concrete pixel coordinates inside that step
-          image. Never guess.
 
 Strict rules:
   1. Be conservative. If unsure, write nothing. Bad tips are worse than missing tips.
@@ -115,7 +108,7 @@ Strict rules:
      "<App>: avoid <pitfall> because <reason>". No vague advice.
   4. Memory entries must be user-stable facts (preferences, naming, paths). Do NOT
      record one-shot task facts (timestamps, search queries, recipient names).
-  5. At most 3 learn_tip calls, 1 remember call, and 2 propose_icon calls per pass.
+  5. At most 3 learn_tip calls and 1 remember call per pass.
   6. After your tool_calls, reply ONE short sentence summarising what you wrote
      (or "nothing worth saving" if you skipped everything).
 """
@@ -185,23 +178,6 @@ def build_user_prompt(cfg: Config, thread: dict[str, Any]) -> str:
     tips_text = tooltips_mod.read_tools(cfg.tools) if cfg.tools.enabled else ""
     mem_text = memory_mod.read_memory(cfg.memory) if cfg.memory.enabled else ""
 
-    # Step images available for propose_icon. Pull from step_image events
-    # (authoritative file names + dimensions); fall back to scanning run_dir.
-    image_lines: list[str] = []
-    seen_files: set[str] = set()
-    for evt in events:
-        if (evt.get("event") or "") != "step_image":
-            continue
-        f = (evt.get("file") or "").strip()
-        if not f or f in seen_files:
-            continue
-        seen_files.add(f)
-        w = evt.get("width") or "?"
-        h = evt.get("height") or "?"
-        lvl = evt.get("level") or "?"
-        image_lines.append(f"  - {f} ({w}x{h}, level={lvl}, step={evt.get('step', '?')})")
-    images_block = "\n".join(image_lines) if image_lines else "  (no step images)"
-
     return (
         f"## Thread\n"
         f"id: {thread.get('id')}\n"
@@ -210,12 +186,10 @@ def build_user_prompt(cfg: Config, thread: dict[str, Any]) -> str:
         f"{_digest(tips_text, cfg.doze.max_tips_digest_lines)}\n"
         f"\n## Existing memory digest (do not duplicate)\n"
         f"{_digest(mem_text, cfg.doze.max_memory_digest_lines)}\n"
-        f"\n## Step images available to propose_icon (use exact filename)\n"
-        f"{images_block}\n"
         f"\n## Event timeline\n"
         f"{timeline}\n"
         f"\n## Your turn\n"
-        f"Decide: zero or more learn_tip / remember / propose_icon calls (within"
+        f"Decide: zero or more learn_tip / remember calls (within"
         f" the limits in the system prompt). End with one short summary sentence.\n"
     )
 
@@ -223,102 +197,6 @@ def build_user_prompt(cfg: Config, thread: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Worker
 # ---------------------------------------------------------------------------
-
-_PROPOSE_ICON_SCHEMA: dict = {
-    "type": "function",
-    "function": {
-        "name": "propose_icon",
-        "description": (
-            "Propose a small icon crop from one of the step images of the thread "
-            "you are reflecting on. The crop is QUEUED for the user to review in "
-            "the /doze page (NOT auto-committed to the icon atlas). "
-            "Use ONLY when the assistant text in the timeline already states what "
-            "the icon means AND gives concrete pixel coordinates inside that image. "
-            "Never guess coordinates."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "image_filename": {"type": "string", "description": "Exact filename from the 'Step images available' list (e.g. 'step-003-post-fullscreen.png')."},
-                "x": {"type": "integer", "description": "Crop top-left x in image pixels."},
-                "y": {"type": "integer", "description": "Crop top-left y in image pixels."},
-                "w": {"type": "integer", "description": "Crop width (recommended 24-96)."},
-                "h": {"type": "integer", "description": "Crop height (recommended 24-96)."},
-                "label": {"type": "string", "description": "Short label, <=40 chars (e.g. 'WeChat')."},
-                "description": {"type": "string", "description": "Optional brief note (<=200 chars)."},
-            },
-            "required": ["image_filename", "x", "y", "w", "h", "label"],
-        },
-    },
-}
-
-
-def _dispatch_propose_icon(
-    cfg: Config,
-    args: dict[str, Any],
-    *,
-    thread_id: str,
-    thread_dir: str,
-) -> tuple[str, str]:
-    """Returns (output_text, error_text). error_text non-empty means failure."""
-    if not cfg.icons.enabled:
-        return ("", "icons disabled")
-    fname = (args.get("image_filename") or "").strip()
-    label = (args.get("label") or "").strip()
-    desc = (args.get("description") or "").strip()
-    if not fname or not label:
-        return ("", "image_filename and label required")
-    try:
-        x = int(args.get("x", 0)); y = int(args.get("y", 0))
-        w = int(args.get("w", 0)); h = int(args.get("h", 0))
-    except (TypeError, ValueError):
-        return ("", "x/y/w/h must be integers")
-    if w <= 0 or h <= 0:
-        return ("", "w/h must be > 0")
-    if not thread_dir:
-        return ("", "thread_dir missing on this pass")
-    # Path traversal guard.
-    if "/" in fname or "\\" in fname or fname.startswith(".."):
-        return ("", f"invalid image_filename {fname!r}")
-    p = Path(thread_dir) / fname
-    if not p.is_file():
-        return ("", f"image not found: {fname}")
-    try:
-        png_bytes = p.read_bytes()
-    except OSError as e:
-        return ("", f"read failed: {e}")
-    # Crop using icon_memory's helper (handles bound clamping + PNG re-encode).
-    from . import icon_memory as icon_mod
-    try:
-        from PIL import Image
-        with Image.open(io.BytesIO(png_bytes)) as src:
-            src = src.convert("RGBA")
-            sw, sh = src.size
-            x0 = max(0, min(x, sw - 1)); y0 = max(0, min(y, sh - 1))
-            x1 = max(x0 + 1, min(x + w, sw)); y1 = max(y0 + 1, min(y + h, sh))
-            crop = src.crop((x0, y0, x1, y1))
-            buf = io.BytesIO()
-            crop.save(buf, format="PNG", optimize=True)
-            crop_png = buf.getvalue()
-    except Exception as e:
-        return ("", f"crop failed: {type(e).__name__}: {e}")
-    entry = icon_proposals_mod.add_proposal(
-        cfg,
-        png_bytes=crop_png,
-        label=label,
-        description=desc,
-        source_thread=thread_id,
-        source_file=fname,
-        x=x0, y=y0, w=x1 - x0, h=y1 - y0,
-    )
-    if entry is None:
-        return ("", "failed to persist proposal")
-    return (
-        f"icon proposal #{entry['id']} '{entry['label']}' queued "
-        f"({entry['w']}x{entry['h']} from {fname} @ {entry['x']},{entry['y']}); "
-        f"awaiting user review in /doze.",
-        "",
-    )
 
 
 @dataclass
@@ -347,7 +225,7 @@ class DozeWorker:
         worker.stop()
     """
 
-    _MAX_TOOL_NAMES = ("learn_tip", "remember", "load_app_tips", "propose_icon")
+    _MAX_TOOL_NAMES = ("learn_tip", "remember", "load_app_tips")
 
     def __init__(
         self,
@@ -504,7 +382,7 @@ class DozeWorker:
 
     def _reflect(self, thread: dict[str, Any]) -> dict[str, int]:
         outcome = {"learn_tip": 0, "remember": 0, "load_app_tips": 0,
-                   "propose_icon": 0, "rounds": 0}
+                   "rounds": 0}
         try:
             client = self._llm_factory()
         except Exception as exc:
@@ -514,8 +392,6 @@ class DozeWorker:
         all_schemas = meta_tools_mod.build_meta_tool_schemas(self.cfg)
         tools = [s for s in all_schemas
                  if (s.get("function") or {}).get("name") in self._MAX_TOOL_NAMES]
-        if self.cfg.icons.enabled:
-            tools.append(_PROPOSE_ICON_SCHEMA)
 
         thread_id = thread.get("id") or ""
         thread_dir = thread.get("dir") or ""
@@ -568,23 +444,19 @@ class DozeWorker:
                         args = json.loads(c.arguments_json or "{}")
                     except json.JSONDecodeError:
                         args = {}
-                    if c.name == "propose_icon":
-                        out_text, error_text = _dispatch_propose_icon(
-                            self.cfg, args, thread_id=thread_id, thread_dir=thread_dir,
-                        )
-                        if not error_text:
-                            outcome["propose_icon"] += 1
+                    if c.name == "load_app_tips":
+                        # load_app_tips falls through to dispatch_meta_tool below.
+                        pass
+                    res = meta_tools_mod.dispatch_meta_tool(
+                        c.name, args, self.cfg, last_png_by_level={}, sensor=None,
+                    )
+                    if res is None:
+                        out_text = error_text = f"[doze] dispatch returned None for {c.name}"
                     else:
-                        res = meta_tools_mod.dispatch_meta_tool(
-                            c.name, args, self.cfg, last_png_by_level={}, sensor=None,
-                        )
-                        if res is None:
-                            out_text = error_text = f"[doze] dispatch returned None for {c.name}"
-                        else:
-                            out_text = res.output or ""
-                            error_text = res.error or ""
-                            if c.name in outcome and not error_text:
-                                outcome[c.name] += 1
+                        out_text = res.output or ""
+                        error_text = res.error or ""
+                        if c.name in outcome and not error_text:
+                            outcome[c.name] += 1
                 _append_log(self.cfg, f"[{_now_iso()}]   call {c.name}({c.arguments_json[:200]}) -> {(error_text or out_text)[:200]}")
                 messages.append({
                     "role": "tool",

@@ -26,7 +26,7 @@ from .screen import Capture, ScreenLevel, ScreenSensor
 from .tools import ComputerTool, ToolResult
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
-from . import icon_memory as icon_mod
+from . import launcher_icons as launcher_icons_mod
 from . import meta_tools
 from . import launchers as launchers_mod
 from . import regions as regions_mod
@@ -526,41 +526,36 @@ class Agent:
                       and self.cfg.launchers.inject_catalog_in_system_prompt else "")
                 + (regions_mod.regions_for_prompt(self.cfg.regions)
                    if getattr(self.cfg, "regions", None) and self.cfg.regions.enabled else "")
-                + (
-                    "\n\n## Icon memory library status\nCurrently empty. If you click a tray/taskbar icon and confirm "
-                    "success (the corresponding App opened), use `remember_icon` to register it, so future tasks can "
-                    "identify it by reference instead of probing.\n"
-                    if self.cfg.icons.enabled and not icon_mod.list_icons(self.cfg.icons)
-                    else ""
-                )
             )},
         ]
-        # 图标合集图（如果有的话）以一对 user/assistant 伪对话的形式注入到 system 之后、
-        # 真正的 instruction 之前。这样跨各家模型都能稳定接住图。
-        atlas = icon_mod.build_atlas(self.cfg.icons) if self.cfg.icons.enabled else None
+        # 已安装应用图标合集图（每天定时全量扫描得到）：拼成一张大图注入到 system 之
+        # 后、真正的 instruction 之前的一对 user/assistant 伪对话里。这样跨各家模型
+        # 都能稳定接住图。和 taskbar 通知共用同一张大图。
+        try:
+            atlas = launcher_icons_mod.build_atlas(self.cfg)
+        except Exception as exc:
+            log.warning(f"launcher atlas build failed: {type(exc).__name__}: {exc}")
+            atlas = None
         if atlas is not None:
-            atlas_name = log.save_image(atlas.png_bytes, "icon-atlas", level="INFO")
-            self._record_img(atlas.png_bytes, atlas_name or "icon-atlas")
-            existing_labels = ", ".join(
-                f"#{i + 1} {it.get('label', '?')}"
-                for i, it in enumerate(icon_mod.list_icons(self.cfg.icons))
-            )
+            atlas_name = log.save_image(atlas.png_bytes, "launcher-icons-atlas", level="INFO")
+            self._record_img(atlas.png_bytes, atlas_name or "launcher-icons-atlas")
             messages.append({
                 "role": "user",
                 "content": [
                     {
                         "type": "text",
                         "text": (
-                            "[level=L0] [Icon memory library] Below is the atlas of icons the user has taught me (laid out by number). "
-                            "From now on, when you see a small icon on screen, **cross-reference this atlas** to identify which App it is.\n"
-                            f"Already registered (**do NOT register again**): {existing_labels}\n"
+                            "[level=L0] [Launcher icons] Below is a collage of icons for apps installed on this Windows machine "
+                            "(auto-scanned daily). When you see a small icon on screen — especially in the taskbar / system tray / "
+                            "Start menu — **cross-reference this collage** to identify which App it is, and use the exact "
+                            "app name (the text after `[N]`) when you reason about it.\n"
                             f"Text index:\n{atlas.captions}"
                         ),
                     },
                     {"type": "image_url", "image_url": {"url": _data_url(atlas.png_bytes)}},
                 ],
             })
-            messages.append({"role": "assistant", "content": "Got it, I've memorised these icons and will identify by atlas number when I see them; for any new icon not in the atlas, I'll register it via remember_icon."})
+            messages.append({"role": "assistant", "content": "Got it, I'll cross-reference this launcher-icons collage when I encounter small icons on screen."})
         # NOTE: the "atlas is empty" notice used to be injected here as a synthetic
         # user/assistant turn, but that bloated the visible message log AND broke the
         # "messages should be real conversation" invariant. It's now appended to the
@@ -625,7 +620,6 @@ class Agent:
         self._current_messages = messages
         self._current_prelude_len = prelude_len
 
-        nudges_left = 1  # 模型只输文本不调工具时的最多推一把次数
         # 行为兜底：保存/打开对话框激活态。看到 ctrl+s / ctrl+shift+s / F12 / ctrl+o 触发；
         # 命中后给若干步预算，超出或检测到 Enter/Escape 视为对话框已结束。
         save_dialog_armed_steps = 0
@@ -723,15 +717,14 @@ class Agent:
                 stripped = text_content.strip()
                 completion_markers = ("任务完成", "任务失败", "无法完成", "task complete", "task failed", "cannot complete")
                 looks_done = any(m in stripped.lower() if m.isascii() else m in stripped for m in completion_markers)
-                if looks_done or nudges_left <= 0:
+                if looks_done:
                     final = stripped or "(no text output)"
                     log.step_record({"step": step + 1, "final_text": final})
                     log.close(status="ok", final_text=final)
                     self._emit("final", status="ok", text=final)
                     return final
-                # Nudge once: append a user message asking the model to either call a tool or summarise.
-                nudges_left -= 1
-                log.warning("assistant returned text without tool_call; nudging to continue")
+                # 不调工具又没说完成：温和提醒一下，继续走下一步。最终兜底是 max_steps。
+                log.warning("assistant returned text without tool_call; reminding to continue")
                 messages.append({
                     "role": "user",
                     "content": (
@@ -740,7 +733,6 @@ class Agent:
                     ),
                 })
                 continue
-            nudges_left = 1  # any action resets the nudge budget
 
             # 派发每个 tool_call
             had_screenshot = False

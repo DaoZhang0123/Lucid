@@ -1,16 +1,15 @@
 """Agent 的 "自我策展" function tools（除 `computer` 之外）。
 
-包含 3 个工具：
+包含 2 个常驻的其他工具：
 - ``remember``       —— 把用户偏好 / 称呼 / 习惯写入 ``memory.md``
 - ``learn_tip``      —— 把操作技巧（成功路径 / 失败教训）写入 ``tools.md``
-- ``remember_icon``  —— 从最近一张截图裁一小块登记到 ``icons/`` 图标记忆库
 
 每个工具暴露：
 - ``XXX_SCHEMA``：OpenAI function-calling 格式的 schema dict
 - 在 :func:`dispatch_meta_tool` 里的实际处理逻辑
 
 ReAct 主循环（``loop.py``）只需调用 :func:`build_meta_tool_schemas` 拿到 schemas 列表
-（按 ``cfg.{memory,tools,icons}.enabled`` 开关过滤），并在收到 tool_call 时把
+（按 ``cfg.{memory,tools}.enabled`` 开关过滤），并在收到 tool_call 时把
 非 ``computer`` 的工具名转发到 :func:`dispatch_meta_tool`。
 """
 from __future__ import annotations
@@ -21,7 +20,6 @@ from .config import Config
 from .tools import ToolResult
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
-from . import icon_memory as icon_mod
 from . import launchers as launchers_mod
 from . import regions as regions_mod
 from . import scheduler as scheduler_mod
@@ -75,37 +73,6 @@ LEARN_TIP_SCHEMA: dict = {
                 "app": {"type": "string", "description": "Optional. App slug (e.g. 'wechat', 'vscode') — routes the tip to that app's tips/<slug>.md so it's only loaded when working with that App. Omit / empty for cross-App general tips (go to global tools.md)."},
             },
             "required": ["text"],
-        },
-    },
-}
-
-REMEMBER_ICON_SCHEMA: dict = {
-    "type": "function",
-    "function": {
-        "name": "remember_icon",
-        "description": (
-            "Crop a small region of the most recent screenshot (typical use: a tiny icon in the taskbar or system tray) "
-            "and register it into the **icon memory library**. At the start of every future task all registered icons are "
-            "composed into one 'icon atlas' image and injected with the system prompt, helping you (and your future self) "
-            "recognise small icons.\n"
-            "Use when: the user explicitly tells you 'this icon = App X', or you have confirmed an icon's meaning from context "
-            "AND the icon will recur across tasks (e.g. WeChat / QQ / Steam / NetEase Music persistent tray icons).\n"
-            "**Do NOT** register: transient popup bubbles, ad banners, one-shot task screenshots.\n"
-            "Coordinates: x/y/w/h are **image pixel coordinates** (NOT screen coordinates); `level` selects which screenshot "
-            "layer you reference: L1=fullscreen, L2=active window, L3=cursor-local. Recommend cropping tray icons directly from L1."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "label": {"type": "string", "description": "Short label for the icon (<=20 chars). e.g. 'WeChat', 'QQ Music tray'."},
-                "description": {"type": "string", "description": "Brief note about meaning / location (<=200 chars) for later search."},
-                "x": {"type": "integer", "description": "Crop top-left x (image pixels)."},
-                "y": {"type": "integer", "description": "Crop top-left y (image pixels)."},
-                "w": {"type": "integer", "description": "Crop width (image pixels). Recommended 24-96."},
-                "h": {"type": "integer", "description": "Crop height (image pixels). Recommended 24-96."},
-                "level": {"type": "string", "enum": ["L1", "L2", "L3"], "description": "Which most-recent screenshot layer to crop from. Default L1."},
-            },
-            "required": ["label", "x", "y", "w", "h"],
         },
     },
 }
@@ -607,8 +574,6 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
     if cfg.tools.enabled:
         out.append(LEARN_TIP_SCHEMA)
         out.append(LOAD_APP_TIPS_SCHEMA)
-    if cfg.icons.enabled:
-        out.append(REMEMBER_ICON_SCHEMA)
     if getattr(cfg, "launchers", None) and cfg.launchers.enabled:
         out.append(LAUNCH_APP_SCHEMA)
         out.append(LIST_APPS_SCHEMA)
@@ -939,32 +904,6 @@ def dispatch_meta_tool(
             f"  rect: x={d['screen']['x']} y={d['screen']['y']} w={d['screen']['w']} h={d['screen']['h']}",
         ]
         return ToolResult(output="\n".join(lines))
-
-    if fn_name == "remember_icon" and cfg.icons.enabled:
-        label = (args.get("label") or "").strip()
-        desc = (args.get("description") or "").strip()
-        level = (args.get("level") or "L1").strip().upper() or "L1"
-        try:
-            x = int(args.get("x", 0))
-            y = int(args.get("y", 0))
-            w = int(args.get("w", 0))
-            h = int(args.get("h", 0))
-        except (TypeError, ValueError):
-            x = y = w = h = 0
-        src_png = last_png_by_level.get(level)
-        if not src_png:
-            return ToolResult(error=f"no recent {level} screenshot to crop from")
-        if not label:
-            return ToolResult(error="label required")
-        if w <= 0 or h <= 0:
-            return ToolResult(error="w/h must be > 0 (image pixels)")
-        entry = icon_mod.crop_and_add(cfg.icons, src_png, x, y, w, h, label, desc)
-        if entry:
-            return ToolResult(
-                output=(f"icon registered #{entry['id']} '{entry['label']}' "
-                        f"({w}x{h} from {level} @ {x},{y}). It will be auto-injected as part of the icon atlas at the start of every future task."),
-            )
-        return ToolResult(error="failed to crop or save icon (check image bounds)")
 
     if fn_name in ("schedule_list", "schedule_add", "schedule_update", "schedule_delete"):
         return _dispatch_schedule(fn_name, args, cfg)

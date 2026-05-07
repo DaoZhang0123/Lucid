@@ -289,19 +289,6 @@ class ShellConfig:
 
 
 @dataclass
-class IconMemoryConfig:
-    """图标记忆 icons/ 的配置。每个图标 = PNG 文件 + 标签描述，
-    任务起手时拼成一张合集图注入 prompt，让模型能识别小图标。"""
-    enabled: bool = True
-    path: str = "icons"           # 相对路径 → LOCALAPPDATA/dev.ctrlapp/icons/
-    max_icons: int = 60           # 超过则丢最早的
-    max_label_chars: int = 40
-    max_desc_chars: int = 200
-    tile_size: int = 96           # 单图标在合集图里的最大渲染边长（像素）
-    atlas_cols: int = 4           # 合集图每行多少个图标
-
-
-@dataclass
 class VisualNotifyConfig:
     """任务栏视觉通知两步法配置：先 diff，再按需调用 LLM 确认。"""
     enabled: bool = False
@@ -399,7 +386,6 @@ class Config:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     tools: ToolsConfig = field(default_factory=ToolsConfig)
-    icons: IconMemoryConfig = field(default_factory=IconMemoryConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     launchers: LaunchersConfig = field(default_factory=LaunchersConfig)
     regions: RegionsConfig = field(default_factory=RegionsConfig)
@@ -454,7 +440,6 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.logging, raw.get("logging"))
     _apply(cfg.memory, raw.get("memory"))
     _apply(cfg.tools, raw.get("tools"))
-    _apply(cfg.icons, raw.get("icons"))
     _apply(cfg.context, raw.get("context"))
     _apply(cfg.launchers, raw.get("launchers"))
     _apply(cfg.regions, raw.get("regions"))

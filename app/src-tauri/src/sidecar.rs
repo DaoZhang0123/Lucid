@@ -397,7 +397,14 @@ pub async fn task_queue_clear() -> Result<Value, String> {
 /// Read an image file inside a thread directory, return as data URL.
 #[tauri::command]
 pub async fn thread_read_image(app: AppHandle, thread_id: String, file_name: String) -> Result<String, String> {
-    let p = logs_root(&app).join(&thread_id).join(&file_name);
+    // Threads now live under <logs>/threads/<thread_id>/. Older builds had
+    // them directly under <logs>/<thread_id>/, so try the new layout first
+    // and fall back to the legacy one for any leftover dirs.
+    let root = logs_root(&app);
+    let mut p = root.join("threads").join(&thread_id).join(&file_name);
+    if !p.exists() {
+        p = root.join(&thread_id).join(&file_name);
+    }
     let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
     use base64::Engine;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
@@ -546,6 +553,11 @@ pub async fn schedule_delete(id: String) -> Result<Value, String> {
     instance().request("schedule_delete", json!({"id": id})).await
 }
 
+#[tauri::command]
+pub async fn schedule_run_now(id: String) -> Result<Value, String> {
+    instance().request("schedule_run_now", json!({"id": id})).await
+}
+
 // ---- 打盹学习 (doze) ----
 #[tauri::command]
 pub async fn doze_status() -> Result<Value, String> {
@@ -560,33 +572,6 @@ pub async fn doze_run_now() -> Result<Value, String> {
 #[tauri::command]
 pub async fn doze_clear_processed() -> Result<Value, String> {
     instance().request("doze_clear_processed", json!({})).await
-}
-
-#[tauri::command]
-pub async fn doze_proposals_list() -> Result<Value, String> {
-    instance().request("doze_proposals_list", json!({})).await
-}
-
-#[tauri::command]
-pub async fn doze_proposal_read_png(id: String) -> Result<Value, String> {
-    instance().request("doze_proposal_read_png", json!({"id": id})).await
-}
-
-#[tauri::command]
-pub async fn doze_proposal_accept(id: String, label: Option<String>, description: Option<String>) -> Result<Value, String> {
-    instance().request("doze_proposal_accept", json!({
-        "id": id, "label": label, "description": description,
-    })).await
-}
-
-#[tauri::command]
-pub async fn doze_proposal_reject(id: String) -> Result<Value, String> {
-    instance().request("doze_proposal_reject", json!({"id": id})).await
-}
-
-#[tauri::command]
-pub async fn doze_proposals_clear() -> Result<Value, String> {
-    instance().request("doze_proposals_clear", json!({})).await
 }
 
 /// Tell the sidecar to re-read the user-config so settings changes take effect

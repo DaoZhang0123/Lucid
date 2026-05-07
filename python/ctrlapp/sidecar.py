@@ -63,11 +63,11 @@ from .loop import Agent, _build_llm_client
 from .runlog import ThreadLog, resolve_logs_root
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
-from . import icon_memory as icon_mod
 from . import templates as templates_mod
 from . import scheduler as scheduler_mod
 from . import launchers as launchers_mod
 from . import regions as regions_mod
+from . import launcher_icons as launcher_icons_mod
 from .taskbar_monitor import TaskbarMonitor
 from .doze import DozeWorker
 
@@ -86,6 +86,10 @@ class Sidecar:
     _VISUAL_NOTIFY_SCHEDULE_NAME = "任务栏消息监听"
     _VISUAL_NOTIFY_INSTRUCTION = "__visual_notify_tick__"
     _VISUAL_NOTIFY_ACTION = "visual_notify"
+
+    _LAUNCHER_SCAN_NAME = "扫描已安装应用图标"
+    _LAUNCHER_SCAN_INSTRUCTION = "__scan_launcher_icons__"
+    _LAUNCHER_SCAN_ACTION = "scan_launcher_icons"
 
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
@@ -174,6 +178,20 @@ class Sidecar:
                   "max_steps": self.cfg.llm.max_steps})
         self._scheduler.start()
         self._doze.start()
+        # 注册（幂等）每日全量扫描已安装应用图标的内部任务。
+        try:
+            scheduler_mod.ensure_schedule(
+                name=self._LAUNCHER_SCAN_NAME,
+                instruction=self._LAUNCHER_SCAN_INSTRUCTION,
+                spec={"kind": "daily", "time": "03:30"},
+                action=self._LAUNCHER_SCAN_ACTION,
+                autonomy="full",
+                max_steps=1,
+                enabled=True,
+            )
+        except Exception as exc:
+            _writeln({"event": "launcher_scan_schedule_register_failed",
+                      "message": f"{type(exc).__name__}: {exc}"})
         if getattr(self.cfg, "visual_notify", None) and self.cfg.visual_notify.enabled:
             self._start_taskbar_monitor()
         for raw in sys.stdin:
@@ -343,18 +361,27 @@ class Sidecar:
                     },
                     {"type": "text", "text": f"聚焦区域 #{idx} - 当前帧（current, zoomed）："},
                     {"type": "image_url", "image_url": {"url": self._data_url_png(ce["current_bytes"])}},
-                    {"type": "text", "text": f"聚焦区域 #{idx} - 上一帧（previous, zoomed）："},
+                    {"text": f"聚焦区域 #{idx} - 上一帧（previous, zoomed）：", "type": "text"},
                     {"type": "image_url", "image_url": {"url": self._data_url_png(ce["previous_bytes"])}},
                 ])
 
-            atlas = icon_mod.build_atlas(self.cfg.icons) if self.cfg.icons.enabled else None
-            if atlas is not None:
+            # 已扫描的"已安装应用"图标合集——让模型能用具体的 App 名字命中是哪一个
+            # 任务栏图标变红了。规模 ~80 个，用紧凑布局；缺失或为空时静默跳过。
+            try:
+                launcher_atlas = launcher_icons_mod.build_atlas(self.cfg)
+            except Exception as exc:
+                launcher_atlas = None
+                _writeln({"event": "launcher_atlas_build_failed",
+                          "message": f"{type(exc).__name__}: {exc}"})
+            if launcher_atlas is not None:
                 content.extend([
                     {
                         "type": "text",
-                        "text": "这是已记忆的图标 atlas，可用于识别 Teams/WeChat 图标：\n" + atlas.captions,
+                        "text": ("下方是 Windows 已安装应用的 launcher 图标合集（每天定时全量扫描得到）。"
+                                 "若聚焦区域 / 当前帧里出现了下面其中某个图标的相同形状，请在 reason 中"
+                                 "用对应的应用名（[N] 后面那段）报出。\n" + launcher_atlas.captions),
                     },
-                    {"type": "image_url", "image_url": {"url": self._data_url_png(atlas.png_bytes)}},
+                    {"type": "image_url", "image_url": {"url": self._data_url_png(launcher_atlas.png_bytes)}},
                 ])
 
             messages = [
@@ -374,8 +401,8 @@ class Sidecar:
             for ce in crop_entries:
                 image_sources.append(f"<focus_crop #{ce['index']} current x={ce['x0']}..{ce['x1']}>")
                 image_sources.append(f"<focus_crop #{ce['index']} previous x={ce['x0']}..{ce['x1']}>")
-            if atlas is not None:
-                image_sources.append("<icon_atlas>")
+            if launcher_atlas is not None:
+                image_sources.append("<launcher_atlas>")
             content_summary: list[dict[str, Any]] = []
             img_idx = 0
             for part in content:
@@ -490,9 +517,8 @@ class Sidecar:
     _NON_ACTIVITY_METHODS = frozenset({
         "ping", "get_status", "thread_list", "thread_read", "thread_read_image",
         "memory_read", "tools_read", "app_tips_list", "app_tips_read",
-        "templates_list", "schedule_list", "icons_list", "icons_read_png",
+        "templates_list", "schedule_list",
         "launchers_list", "regions_list", "doze_status",
-        "doze_proposals_list", "doze_proposal_read_png",
     })
 
     def _sidecar_busy(self) -> bool:
@@ -625,43 +651,6 @@ class Sidecar:
 
     def _rpc_doze_clear_processed(self, _params: dict[str, Any]) -> dict[str, Any]:
         return self._doze.clear_processed()
-
-    def _rpc_doze_proposals_list(self, _params: dict[str, Any]) -> dict[str, Any]:
-        from . import icon_proposals as ipm
-        return {"items": ipm.list_proposals(self.cfg)}
-
-    def _rpc_doze_proposal_read_png(self, params: dict[str, Any]) -> dict[str, Any]:
-        from . import icon_proposals as ipm
-        pid = (params.get("id") or "").strip()
-        if not pid:
-            raise ValueError("id required")
-        png = ipm.read_proposal_png(self.cfg, pid)
-        if png is None:
-            raise FileNotFoundError(pid)
-        return {"id": pid, "png_b64": base64.b64encode(png).decode("ascii")}
-
-    def _rpc_doze_proposal_accept(self, params: dict[str, Any]) -> dict[str, Any]:
-        from . import icon_proposals as ipm
-        pid = (params.get("id") or "").strip()
-        if not pid:
-            raise ValueError("id required")
-        label = (params.get("label") or "").strip()
-        desc = (params.get("description") or "").strip()
-        entry = ipm.accept(self.cfg, pid, override_label=label, override_desc=desc)
-        if entry is None:
-            raise RuntimeError("accept failed (icons disabled or proposal missing)")
-        return {"ok": True, "icon": entry}
-
-    def _rpc_doze_proposal_reject(self, params: dict[str, Any]) -> dict[str, Any]:
-        from . import icon_proposals as ipm
-        pid = (params.get("id") or "").strip()
-        if not pid:
-            raise ValueError("id required")
-        return {"ok": ipm.reject(self.cfg, pid)}
-
-    def _rpc_doze_proposals_clear(self, _params: dict[str, Any]) -> dict[str, Any]:
-        from . import icon_proposals as ipm
-        return {"removed": ipm.clear_all(self.cfg)}
 
     # ---- thread management ----
 
@@ -898,63 +887,6 @@ class Sidecar:
             return result
         return result.to_dict()
 
-    # ---- icons/ （图标记忆库）----
-
-    def _rpc_icons_list(self, _params: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "enabled": self.cfg.icons.enabled,
-            "dir": str(icon_mod.icons_dir(self.cfg.icons)),
-            "items": icon_mod.list_icons(self.cfg.icons),
-        }
-
-    def _rpc_icons_add(self, params: dict[str, Any]) -> dict[str, Any]:
-        """从 base64 PNG 直接登记一张图标。"""
-        import base64
-        b64 = params.get("png_b64") or ""
-        label = params.get("label") or ""
-        desc = params.get("description") or ""
-        try:
-            png = base64.b64decode(b64)
-        except Exception as exc:
-            raise ValueError(f"invalid png_b64: {exc}") from exc
-        entry = icon_mod.add_icon(self.cfg.icons, png, label, desc)
-        return {"ok": entry is not None, "entry": entry}
-
-    def _rpc_icons_remove(self, params: dict[str, Any]) -> dict[str, Any]:
-        iid = params.get("id")
-        if not iid:
-            raise ValueError("id required")
-        return {"ok": icon_mod.remove_icon(self.cfg.icons, iid)}
-
-    def _rpc_icons_clear(self, _params: dict[str, Any]) -> dict[str, Any]:
-        icon_mod.clear_icons(self.cfg.icons)
-        return {"ok": True}
-
-    def _rpc_icons_get_png(self, params: dict[str, Any]) -> dict[str, Any]:
-        """返回某图标的 base64 PNG（供 UI 预览）。"""
-        import base64
-        iid = params.get("id")
-        if not iid:
-            raise ValueError("id required")
-        png = icon_mod.read_icon_png(self.cfg.icons, iid)
-        if png is None:
-            return {"ok": False}
-        return {"ok": True, "png_b64": base64.b64encode(png).decode("ascii")}
-
-    def _rpc_icons_atlas(self, _params: dict[str, Any]) -> dict[str, Any]:
-        """返回当前合集图（base64 PNG + 文字索引），用于 UI 预览。"""
-        import base64
-        atlas = icon_mod.build_atlas(self.cfg.icons)
-        if atlas is None:
-            return {"ok": False}
-        return {
-            "ok": True,
-            "png_b64": base64.b64encode(atlas.png_bytes).decode("ascii"),
-            "width": atlas.width,
-            "height": atlas.height,
-            "captions": atlas.captions,
-        }
-
     # ---- 任务模板 ----
 
     def _rpc_template_list(self, _params: dict[str, Any]) -> dict[str, Any]:
@@ -1034,9 +966,11 @@ class Sidecar:
 
     def _on_schedule_fire(self, item: dict[str, Any]) -> None:
         """调度器在子线程里调用。忙碌时排队，不抢占人工任务。"""
+        action = str(item.get("action") or "").strip().lower()
+        instruction = (item.get("instruction") or "").strip()
         if (
-            str(item.get("action") or "").strip().lower() == self._VISUAL_NOTIFY_ACTION
-            or (item.get("instruction") or "").strip() == self._VISUAL_NOTIFY_INSTRUCTION
+            action == self._VISUAL_NOTIFY_ACTION
+            or instruction == self._VISUAL_NOTIFY_INSTRUCTION
         ):
             try:
                 if self._taskbar_monitor is not None:
@@ -1045,6 +979,12 @@ class Sidecar:
             except Exception as e:
                 _writeln({"event": "visual_notify_tick_error", "id": item.get("id"),
                           "message": f"{type(e).__name__}: {e}"})
+            return
+        if (
+            action == self._LAUNCHER_SCAN_ACTION
+            or instruction == self._LAUNCHER_SCAN_INSTRUCTION
+        ):
+            self._dispatch_launcher_scan(item)
             return
         try:
             instruction = item.get("instruction", "")
@@ -1082,6 +1022,44 @@ class Sidecar:
         except Exception as e:
             _writeln({"event": "schedule_error", "id": item.get("id"),
                       "message": f"{type(e).__name__}: {e}"})
+
+    def _dispatch_launcher_scan(self, item: dict[str, Any]) -> None:
+        """在后台线程里跑一次全量扫描，避免阻塞调度器 tick。"""
+        sid = item.get("id")
+        name = item.get("name")
+
+        def _runner() -> None:
+            from . import launcher_icons as _li
+            t0 = time.time()
+            _writeln({"event": "launcher_scan_start", "id": sid, "name": name})
+            try:
+                summary = _li.run_full_scan(self.cfg)
+                _writeln({"event": "launcher_scan_done", "id": sid, "name": name,
+                          "duration_ms": int((time.time() - t0) * 1000),
+                          "summary": summary})
+            except Exception as e:
+                _writeln({"event": "launcher_scan_error", "id": sid, "name": name,
+                          "message": f"{type(e).__name__}: {e}"})
+
+        threading.Thread(target=_runner, name="launcher-scan", daemon=True).start()
+
+    def _rpc_schedule_run_now(self, params: dict[str, Any]) -> dict[str, Any]:
+        """前端"测试"按钮：按 id 找到调度项并立刻触发一次（不影响下一次 next_ms）。"""
+        sid = (params.get("id") or "").strip()
+        if not sid:
+            raise ValueError("id required")
+        item = next((it for it in scheduler_mod.list_schedules() if it.get("id") == sid), None)
+        if item is None:
+            raise ValueError(f"schedule {sid!r} not found")
+        # 在子线程里跑：visual_notify / launcher_scan 都可能耗时，task 类则直接入队。
+        threading.Thread(
+            target=self._on_schedule_fire,
+            args=(item,),
+            name=f"schedule-run-now-{sid}",
+            daemon=True,
+        ).start()
+        return {"triggered": True, "id": sid, "name": item.get("name"),
+                "action": item.get("action") or "task"}
 
     def _rpc_start_task(self, params: dict[str, Any]) -> dict[str, Any]:
         instruction = (params.get("instruction") or "").strip()
