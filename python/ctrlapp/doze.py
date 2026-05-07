@@ -20,7 +20,9 @@ import json
 import os
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -84,6 +86,134 @@ def _append_log(cfg: Config, line: str) -> None:
             f.write(line.rstrip("\n") + "\n")
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Per-output ledger: every time the reflector successfully calls learn_tip /
+# remember we append one record to ``<user data>/logs/doze_outputs.jsonl``.
+# This powers the "cumulative outputs" list on the doze page (with delete).
+# ---------------------------------------------------------------------------
+
+def _outputs_path(cfg: Config) -> Path:
+    return _user_data_dir() / "logs" / "doze_outputs.jsonl"
+
+
+def _resolve_target_file(cfg: Config, name: str, args: dict[str, Any]) -> Path | None:
+    if name == "remember":
+        return memory_mod.memory_path(cfg.memory)
+    if name == "learn_tip":
+        app = (args.get("app") or "").strip()
+        if app:
+            return tooltips_mod.app_tips_path(cfg.tools, app)
+        return tooltips_mod.tools_path(cfg.tools)
+    return None
+
+
+def _read_last_entry_line(p: Path) -> str:
+    """Return the last bullet line (``- [...] ...``) of ``p``, or '' on miss."""
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in reversed(text.splitlines()):
+        if line.startswith("- ["):
+            return line
+    return ""
+
+
+def _record_output(
+    cfg: Config,
+    *,
+    name: str,
+    args: dict[str, Any],
+    thread_id: str,
+) -> None:
+    target = _resolve_target_file(cfg, name, args)
+    if target is None:
+        return
+    entry_line = _read_last_entry_line(target)
+    if not entry_line:
+        return
+    record = {
+        "id": uuid.uuid4().hex,
+        "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "ts_ms": int(time.time() * 1000),
+        "name": name,
+        "kind": "memory" if name == "remember" else "tip",
+        "app": (args.get("app") or "") if name == "learn_tip" else "",
+        "tip_kind": (args.get("kind") or "") if name == "learn_tip" else "",
+        "text": (args.get("text") or "").strip(),
+        "file": str(target),
+        "entry": entry_line,
+        "thread_id": thread_id or "",
+    }
+    p = _outputs_path(cfg)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+def _load_outputs(cfg: Config) -> list[dict[str, Any]]:
+    p = _outputs_path(cfg)
+    if not p.is_file():
+        return []
+    out: list[dict[str, Any]] = []
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict) and rec.get("id"):
+                    out.append(rec)
+    except OSError:
+        return []
+    return out
+
+
+def _rewrite_outputs(cfg: Config, items: list[dict[str, Any]]) -> None:
+    p = _outputs_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        for rec in items:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    tmp.replace(p)
+
+
+def _delete_entry_from_file(target: Path, entry_line: str) -> bool:
+    """Remove the first line in ``target`` that exactly equals ``entry_line``.
+    Returns True if a line was removed and the file rewritten."""
+    if not entry_line or not target.is_file():
+        return False
+    try:
+        text = target.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    lines = text.splitlines(keepends=True)
+    target_stripped = entry_line.rstrip("\r\n")
+    found = False
+    new_lines: list[str] = []
+    for ln in lines:
+        if not found and ln.rstrip("\r\n") == target_stripped:
+            found = True
+            continue
+        new_lines.append(ln)
+    if not found:
+        return False
+    try:
+        target.write_text("".join(new_lines), encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
 
 
 # ---------------------------------------------------------------------------
@@ -281,13 +411,26 @@ class DozeWorker:
 
     def status(self) -> dict[str, Any]:
         proc = _load_processed(self.cfg)
+        items = list(proc.get("items") or [])
+        totals: dict[str, int] = {}
+        for it in items:
+            for k, v in (it.get("outcomes") or {}).items():
+                if not isinstance(v, (int, float)):
+                    continue
+                # Skip the meta "rounds" counter — totals should reflect the
+                # number of saves, not the number of LLM round-trips.
+                if k == "rounds":
+                    continue
+                totals[k] = totals.get(k, 0) + int(v)
         return {
             "enabled": bool(self.cfg.doze.enabled),
             "running": self._running,
             "last_pass_ms": self._last_pass_ms,
             "last_thread_id": self._last_thread_id,
             "last_outcome": dict(self._last_outcome),
-            "processed_count": len(proc.get("items") or []),
+            "processed_count": len(items),
+            "totals": totals,
+            "log_path": str(_log_path(self.cfg)),
             "last_activity_ms": self._last_activity_ms,
             "last_error": self._last_error,
         }
@@ -302,6 +445,33 @@ class DozeWorker:
     def clear_processed(self) -> dict[str, Any]:
         _save_processed(self.cfg, {"items": []})
         return {"ok": True}
+
+    def list_outputs(self, limit: int = 200) -> dict[str, Any]:
+        items = _load_outputs(self.cfg)
+        items.sort(key=lambda r: int(r.get("ts_ms") or 0), reverse=True)
+        if limit > 0:
+            items = items[:limit]
+        return {"items": items, "path": str(_outputs_path(self.cfg))}
+
+    def delete_output(self, output_id: str) -> dict[str, Any]:
+        if not output_id:
+            return {"ok": False, "error": "id required"}
+        items = _load_outputs(self.cfg)
+        target = next((r for r in items if r.get("id") == output_id), None)
+        if target is None:
+            return {"ok": False, "error": "not found"}
+        file_path = Path(target.get("file") or "")
+        entry = target.get("entry") or ""
+        removed = _delete_entry_from_file(file_path, entry)
+        # Always drop the ledger record so the UI doesn't keep showing a ghost.
+        new_items = [r for r in items if r.get("id") != output_id]
+        _rewrite_outputs(self.cfg, new_items)
+        _append_log(
+            self.cfg,
+            f"[{_now_iso()}]   DELETED {target.get('kind')} id={output_id} file={file_path} "
+            f"removed_from_file={removed}",
+        )
+        return {"ok": True, "removed_from_file": removed}
 
     # ---- main loop ----
 
@@ -342,7 +512,11 @@ class DozeWorker:
             self._last_thread_id = thread.get("id") or ""
             self._last_outcome = outcome
             self._last_error = ""
-            if not self._cancel.is_set():
+            # 不要把“一轮都没跑成”的 thread 记为已处理——那种通常是
+            # 连接错误 / cancel，thread 本身还没被 reflector 看过，
+            # 应该下轮重试。只要有任何一轮 LLM 返回了结果（哪怕是
+            # “nothing worth saving”）才算走过。
+            if not self._cancel.is_set() and outcome.get("rounds", 0) > 0:
                 self._mark_processed(thread.get("id") or "", outcome)
             self._event_sink({
                 "event": "doze_pass_done",
@@ -457,7 +631,29 @@ class DozeWorker:
                         error_text = res.error or ""
                         if c.name in outcome and not error_text:
                             outcome[c.name] += 1
+                # 通用一行（截断到 200 char），便于扫一眼。成功保存的 tip / memory
+                # 单独再写一条完整记录，方便日后直接拿来人工核对甚至 grep。
                 _append_log(self.cfg, f"[{_now_iso()}]   call {c.name}({c.arguments_json[:200]}) -> {(error_text or out_text)[:200]}")
+                if not error_text and c.name in ("learn_tip", "remember"):
+                    try:
+                        full_args = json.loads(c.arguments_json or "{}")
+                    except json.JSONDecodeError:
+                        full_args = {}
+                    if c.name == "learn_tip":
+                        app = full_args.get("app") or "*global*"
+                        kind = full_args.get("kind") or "tip"
+                        tip_text = (full_args.get("text") or "").replace("\n", " ").strip()
+                        _append_log(
+                            self.cfg,
+                            f"[{_now_iso()}]   SAVED tip thread={thread_id} app={app} kind={kind}: {tip_text}",
+                        )
+                    else:  # remember
+                        mem_text = (full_args.get("text") or "").replace("\n", " ").strip()
+                        _append_log(
+                            self.cfg,
+                            f"[{_now_iso()}]   SAVED memory thread={thread_id}: {mem_text}",
+                        )
+                    _record_output(self.cfg, name=c.name, args=full_args, thread_id=thread_id)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": c.id,

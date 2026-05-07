@@ -92,6 +92,8 @@ pub fn run() {
             sidecar::doze_status,
             sidecar::doze_run_now,
             sidecar::doze_clear_processed,
+            sidecar::doze_outputs,
+            sidecar::doze_delete_output,
         ])
         .setup(move |app| {
             // ---------- system tray ----------

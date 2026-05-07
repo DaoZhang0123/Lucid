@@ -91,6 +91,10 @@ class Sidecar:
     _LAUNCHER_SCAN_INSTRUCTION = "__scan_launcher_icons__"
     _LAUNCHER_SCAN_ACTION = "scan_launcher_icons"
 
+    _TRAY_PROMOTE_NAME = "显示所有系统托盘图标"
+    _TRAY_PROMOTE_INSTRUCTION = "__promote_tray_icons__"
+    _TRAY_PROMOTE_ACTION = "promote_tray_icons"
+
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self._lock = threading.Lock()
@@ -191,6 +195,21 @@ class Sidecar:
             )
         except Exception as exc:
             _writeln({"event": "launcher_scan_schedule_register_failed",
+                      "message": f"{type(exc).__name__}: {exc}"})
+        # 同样注册（幂等）每日把所有系统托盘图标 IsPromoted=1 的扫描，
+        # 让任务栏不再藏 ctrlapp / 微信 / 等图标到 "^" 溢出菜单里。
+        try:
+            scheduler_mod.ensure_schedule(
+                name=self._TRAY_PROMOTE_NAME,
+                instruction=self._TRAY_PROMOTE_INSTRUCTION,
+                spec={"kind": "daily", "time": "03:35"},
+                action=self._TRAY_PROMOTE_ACTION,
+                autonomy="full",
+                max_steps=1,
+                enabled=True,
+            )
+        except Exception as exc:
+            _writeln({"event": "tray_promote_schedule_register_failed",
                       "message": f"{type(exc).__name__}: {exc}"})
         if getattr(self.cfg, "visual_notify", None) and self.cfg.visual_notify.enabled:
             self._start_taskbar_monitor()
@@ -518,7 +537,7 @@ class Sidecar:
         "ping", "get_status", "thread_list", "thread_read", "thread_read_image",
         "memory_read", "tools_read", "app_tips_list", "app_tips_read",
         "templates_list", "schedule_list",
-        "launchers_list", "regions_list", "doze_status",
+        "launchers_list", "regions_list", "doze_status", "doze_outputs",
     })
 
     def _sidecar_busy(self) -> bool:
@@ -651,6 +670,17 @@ class Sidecar:
 
     def _rpc_doze_clear_processed(self, _params: dict[str, Any]) -> dict[str, Any]:
         return self._doze.clear_processed()
+
+    def _rpc_doze_outputs(self, params: dict[str, Any]) -> dict[str, Any]:
+        try:
+            limit = int(params.get("limit") or 200)
+        except (TypeError, ValueError):
+            limit = 200
+        return self._doze.list_outputs(limit=limit)
+
+    def _rpc_doze_delete_output(self, params: dict[str, Any]) -> dict[str, Any]:
+        oid = (params.get("id") or "").strip()
+        return self._doze.delete_output(oid)
 
     # ---- thread management ----
 
@@ -986,6 +1016,12 @@ class Sidecar:
         ):
             self._dispatch_launcher_scan(item)
             return
+        if (
+            action == self._TRAY_PROMOTE_ACTION
+            or instruction == self._TRAY_PROMOTE_INSTRUCTION
+        ):
+            self._dispatch_tray_promote(item)
+            return
         try:
             instruction = item.get("instruction", "")
             sched_thread = ThreadLog.create(
@@ -1042,6 +1078,26 @@ class Sidecar:
                           "message": f"{type(e).__name__}: {e}"})
 
         threading.Thread(target=_runner, name="launcher-scan", daemon=True).start()
+
+    def _dispatch_tray_promote(self, item: dict[str, Any]) -> None:
+        """在后台线程里把所有系统托盘图标的 IsPromoted 设为 1。"""
+        sid = item.get("id")
+        name = item.get("name")
+
+        def _runner() -> None:
+            from . import tray_promote as _tp
+            t0 = time.time()
+            _writeln({"event": "tray_promote_start", "id": sid, "name": name})
+            try:
+                summary = _tp.promote_all_tray_icons()
+                _writeln({"event": "tray_promote_done", "id": sid, "name": name,
+                          "duration_ms": int((time.time() - t0) * 1000),
+                          "summary": summary})
+            except Exception as e:
+                _writeln({"event": "tray_promote_error", "id": sid, "name": name,
+                          "message": f"{type(e).__name__}: {e}"})
+
+        threading.Thread(target=_runner, name="tray-promote", daemon=True).start()
 
     def _rpc_schedule_run_now(self, params: dict[str, Any]) -> dict[str, Any]:
         """前端"测试"按钮：按 id 找到调度项并立刻触发一次（不影响下一次 next_ms）。"""

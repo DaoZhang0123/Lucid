@@ -574,6 +574,20 @@ pub async fn doze_clear_processed() -> Result<Value, String> {
     instance().request("doze_clear_processed", json!({})).await
 }
 
+#[tauri::command]
+pub async fn doze_outputs(limit: Option<u32>) -> Result<Value, String> {
+    instance()
+        .request("doze_outputs", json!({ "limit": limit.unwrap_or(200) }))
+        .await
+}
+
+#[tauri::command]
+pub async fn doze_delete_output(id: String) -> Result<Value, String> {
+    instance()
+        .request("doze_delete_output", json!({ "id": id }))
+        .await
+}
+
 /// Tell the sidecar to re-read the user-config so settings changes take effect
 /// without restarting the whole process. Will refuse if a task is in-flight.
 #[tauri::command]

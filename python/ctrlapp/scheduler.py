@@ -48,7 +48,8 @@ _TICK_MIN_SEC = 0.2
 #  - ``task``                : 普通 agent 任务（默认）
 #  - ``visual_notify``       : 任务栏弹窗监听（sidecar 内部 tick）
 #  - ``scan_launcher_icons`` : 扫描已安装应用图标（sidecar 内部全量扫描）
-_INTERNAL_ACTIONS = ("visual_notify", "scan_launcher_icons")
+#  - ``promote_tray_icons``  : 把所有系统托盘图标设为"始终显示"（改注册表）
+_INTERNAL_ACTIONS = ("visual_notify", "scan_launcher_icons", "promote_tray_icons")
 _VALID_ACTIONS = ("task",) + _INTERNAL_ACTIONS
 
 
@@ -267,6 +268,8 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
         instruction = instruction or "__visual_notify_tick__"
     if schedule_action == "scan_launcher_icons":
         instruction = instruction or "__scan_launcher_icons__"
+    if schedule_action == "promote_tray_icons":
+        instruction = instruction or "__promote_tray_icons__"
     if not instruction:
         raise ValueError("instruction required")
     if autonomy not in ("full", "confirm_critical", "confirm_each"):

@@ -371,8 +371,8 @@ class DozeConfig:
     # LLM reply ceiling (the reflector replies one short sentence + tool_calls).
     max_tokens: int = 1500
     # Persistence (relative to <user data> dir).
-    processed_path: str = "doze_processed.json"
-    log_path: str = "doze.log"
+    processed_path: str = "logs/doze_processed.json"
+    log_path: str = "logs/doze.log"
     # Bump when prompt format changes — past threads will be re-learned.
     prompt_version: int = 1
 

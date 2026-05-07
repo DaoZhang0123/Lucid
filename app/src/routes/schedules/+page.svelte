@@ -20,7 +20,7 @@
 
   type Sched = {
     id: string; name: string; instruction: string; spec: Spec;
-    action?: "task" | "visual_notify" | "scan_launcher_icons";
+    action?: "task" | "visual_notify" | "scan_launcher_icons" | "promote_tray_icons";
     autonomy: string; max_steps: number; enabled: boolean;
     next_ms?: number; last_run_ms?: number;
     constraints?: Constraints;
@@ -35,7 +35,7 @@
 
   let name = $state("");
   let instruction = $state("");
-  let action = $state<"task" | "visual_notify" | "scan_launcher_icons">("task");
+  let action = $state<"task" | "visual_notify" | "scan_launcher_icons" | "promote_tray_icons">("task");
   let autonomy = $state<"full" | "confirm_critical" | "confirm_each">("confirm_critical");
   let maxSteps = $state(25);
   let enabled = $state(true);
@@ -149,7 +149,7 @@
     editing = s;
     name = s.name;
     instruction = s.instruction;
-    action = (s.action as "task" | "visual_notify" | "scan_launcher_icons") ?? "task";
+    action = (s.action as "task" | "visual_notify" | "scan_launcher_icons" | "promote_tray_icons") ?? "task";
     autonomy = (s.autonomy as any) ?? "confirm_critical";
     maxSteps = s.max_steps ?? defaultMaxSteps;
     enabled = !!s.enabled;
@@ -235,7 +235,9 @@
         ? "__visual_notify_tick__"
         : action === "scan_launcher_icons"
           ? "__scan_launcher_icons__"
-          : instruction.trim();
+          : action === "promote_tray_icons"
+            ? "__promote_tray_icons__"
+            : instruction.trim();
       if (!resolvedInstruction) { err = $_("schedules.instruction_required"); return; }
       const spec = buildSpec();
       const constraints = buildConstraints();
@@ -320,19 +322,25 @@
     return (s?.action ?? "task") === "scan_launcher_icons";
   }
 
+  function isTrayPromote(s: Sched | null | undefined): boolean {
+    return (s?.action ?? "task") === "promote_tray_icons";
+  }
+
   function isInternal(s: Sched | null | undefined): boolean {
-    return isVisualNotify(s) || isLauncherScan(s);
+    return isVisualNotify(s) || isLauncherScan(s) || isTrayPromote(s);
   }
 
   function displayInstruction(s: Sched): string {
     if (isVisualNotify(s)) return $_("schedules.visual_notify_instruction");
     if (isLauncherScan(s)) return $_("schedules.launcher_scan_instruction");
+    if (isTrayPromote(s)) return $_("schedules.tray_promote_instruction");
     return s.instruction;
   }
 
   function displayName(s: Sched): string {
     if (isVisualNotify(s)) return $_("schedules.visual_notify_name");
     if (isLauncherScan(s)) return $_("schedules.launcher_scan_name");
+    if (isTrayPromote(s)) return $_("schedules.tray_promote_name");
     return s.name;
   }
 
@@ -374,12 +382,15 @@
         <option value="task">{$_("schedules.action_task")}</option>
         <option value="visual_notify">{$_("schedules.action_visual_notify")}</option>
         <option value="scan_launcher_icons">{$_("schedules.action_launcher_scan")}</option>
+        <option value="promote_tray_icons">{$_("schedules.action_tray_promote")}</option>
       </select>
     </label>
     {#if action === "visual_notify"}
       <p class="sub-hint visual-note">{$_("schedules.visual_notify_instruction")}</p>
     {:else if action === "scan_launcher_icons"}
       <p class="sub-hint visual-note">{$_("schedules.launcher_scan_instruction")}</p>
+    {:else if action === "promote_tray_icons"}
+      <p class="sub-hint visual-note">{$_("schedules.tray_promote_instruction")}</p>
     {:else}
       <label>{$_("schedules.instruction_label")}
         <textarea rows="3" bind:value={instruction} placeholder={$_("schedules.instruction_placeholder")}></textarea>
@@ -468,7 +479,7 @@
       </div>
     </fieldset>
 
-    {#if action !== "visual_notify" && action !== "scan_launcher_icons"}
+    {#if action !== "visual_notify" && action !== "scan_launcher_icons" && action !== "promote_tray_icons"}
       <label>{$_("schedules.autonomy_label")}
         <select bind:value={autonomy}>
           <option value="full">full</option>
@@ -495,12 +506,13 @@
             {s.enabled ? "🟢" : "⚪"} {displayName(s)}
             {#if isVisualNotify(s)}<span class="type-tag">{$_("schedules.action_visual_notify")}</span>{/if}
             {#if isLauncherScan(s)}<span class="type-tag">{$_("schedules.action_launcher_scan")}</span>{/if}
+            {#if isTrayPromote(s)}<span class="type-tag">{$_("schedules.action_tray_promote")}</span>{/if}
             <span class="trigger-tag">{fmtSpec(s.spec)}{fmtConstraints(s)}</span>
           </div>
           <div class="instr">{displayInstruction(s)}</div>
           <div class="meta">
             {$_("schedules.next_label")} {fmtTime(s.next_ms)} · {$_("schedules.last_label")} {fmtTime(s.last_run_ms)} ·
-            {#if isVisualNotify(s)}{$_("schedules.visual_notify_meta")}{:else if isLauncherScan(s)}{$_("schedules.launcher_scan_meta")}{:else}{s.autonomy} · {$_("schedules.step_count", { values: { n: s.max_steps } })}{/if}
+            {#if isVisualNotify(s)}{$_("schedules.visual_notify_meta")}{:else if isLauncherScan(s)}{$_("schedules.launcher_scan_meta")}{:else if isTrayPromote(s)}{$_("schedules.tray_promote_meta")}{:else}{s.autonomy} · {$_("schedules.step_count", { values: { n: s.max_steps } })}{/if}
           </div>
         </div>
         <div class="ops">
