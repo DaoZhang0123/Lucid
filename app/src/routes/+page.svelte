@@ -131,12 +131,6 @@
 
 <div class="app">
   <header>
-    {#if !sidebarOpen}
-      <button class="toggle" title={$_("header.sidebar_show")}
-              onclick={() => { sidebarOpen = true; void refreshThreadList(); }}>
-        ›
-      </button>
-    {/if}
     <div class="title">{$_("app.title")}</div>
     <div class="status" class:on={chat.sidecarReady} class:running={chat.running}>
       {#if chat.running}
@@ -164,6 +158,14 @@
   </header>
 
   <div class="body">
+    {#if !sidebarOpen}
+      <div class="edge-reveal" aria-hidden="true">
+        <button class="edge-toggle" title={$_("header.sidebar_show")}
+                onclick={() => { sidebarOpen = true; void refreshThreadList(); }}>
+          ›
+        </button>
+      </div>
+    {/if}
     {#if sidebarOpen}
       <aside class="sidebar">
         <div class="side-head">
@@ -309,7 +311,21 @@
   .link { color: #93c5fd; text-decoration: none; font-size: 0.9rem; margin-left: 0.8rem; }
   .link:first-of-type { margin-left: auto; }
 
-  .body { flex: 1; display: flex; min-height: 0; }
+  .body { flex: 1; display: flex; min-height: 0; position: relative; }
+  .edge-reveal { position: absolute; left: 0; top: 0; bottom: 0; width: 14px; z-index: 5; }
+  .edge-toggle {
+    position: absolute; left: 6px; top: 50%; transform: translateY(-50%);
+    width: 1.6rem; height: 2.4rem; border-radius: 0 6px 6px 0;
+    background: #1f2937; color: #fff; border: 1px solid #4b5563; border-left: 0;
+    cursor: pointer; font-size: 1rem; line-height: 1; padding: 0;
+    opacity: 0; pointer-events: none; transition: opacity 0.15s;
+    box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.25);
+  }
+  .edge-reveal:hover .edge-toggle,
+  .edge-toggle:focus-visible {
+    opacity: 1; pointer-events: auto;
+  }
+  .edge-toggle:hover { background: #374151; }
   .sidebar { width: 16rem; background: #111827; color: #e5e7eb;
              display: flex; flex-direction: column; border-right: 1px solid #1f2937;
              min-width: 0; overflow: hidden; }
