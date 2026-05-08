@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "Klawbot · 桌面 Agent"
+    "title": "OtterScope · 桌面 Agent"
   },
   "lang": {
     "picker_label": "语言"
@@ -55,7 +55,7 @@
     "stderr_summary": "sidecar 日志（{n}）"
   },
   "settings": {
-    "page_title": "Klawbot · 设置",
+    "page_title": "OtterScope · 设置",
     "back_to_chat": "← 返回聊天",
     "history_link": "历史回放",
     "heading": "设置",
@@ -98,7 +98,7 @@
     "save_button": "保存",
     "saving_button": "保存中…",
     "saved_at": "已保存 @ {at}",
-    "hot_reload_hint": "保存后会尝试热重载 sidecar；若有任务运行中需稍后再试或重启 Klawbot。",
+    "hot_reload_hint": "保存后会尝试热重载 sidecar；若有任务运行中需稍后再试或重启 OtterScope。",
     "ping_section_title": "连通性",
     "ping_button": "ping sidecar",
     "selfcheck_section_title": "适配自检 (Phase 1.5)",
@@ -112,7 +112,7 @@
     "back": "‹ 返回"
   },
   "doze": {
-    "page_title": "Klawbot · 打盹",
+    "page_title": "OtterScope · 打盹",
     "hint": "空闲反思：当 sidecar 闲置超过设定时间后，后台低优先级扫描历史 thread，让大模型判断是否有值得沉淀为 tools.md / memory.md 的提示。",
     "info_scheduled": "已排队——下一轮 tick 会选一个 thread处理（状态马上会刷新）",
     "info_cleared": "已重置已处理索引",
@@ -163,7 +163,7 @@
     "cancel": "取消"
   },
   "memory": {
-    "page_title": "Klawbot · 记忆",
+    "page_title": "OtterScope · 记忆",
     "heading": "长期记忆 · memory.md",
     "hint": "每次任务起手会把这里的内容追加到 system prompt 末尾。Agent 也能用 <code>remember</code> 工具主动写入。<strong>不要</strong>在这里写密码 / token 等敏感信息。",
     "status_label": "状态：",
@@ -178,7 +178,7 @@
     "saved_at": "已保存 {at}"
   },
   "templates": {
-    "page_title": "Klawbot · 模板",
+    "page_title": "OtterScope · 模板",
     "heading": "任务模板",
     "hint": "把常用的指令存为模板，一键发送（仍走当前 active thread；运行中会先取消）。",
     "edit_heading": "编辑模板",
@@ -202,7 +202,7 @@
     "empty": "还没有模板，先在上面新建。"
   },
   "tools_page": {
-    "page_title": "Klawbot · 技巧",
+    "page_title": "OtterScope · 技巧",
     "heading": "操作技巧 · tools.md",
     "hint": "每次任务起手会把这里的内容追加到 system prompt 末尾，作为“操作技巧库”。Agent 在任务中可以用 <code>learn_tip</code> 函数主动追加成功/失败经验。这里只放<strong>操作技法</strong>（怎么操作 App / 对话框最稳妙），不要放用户偏好（那是 memory.md）或单次任务的临时事实。",
     "status_label": "状态：",
@@ -222,7 +222,7 @@
     "saved_at": "已保存 {at}"
   },
   "schedules": {
-    "page_title": "Klawbot · 定时",
+    "page_title": "OtterScope · 定时",
     "heading": "定时任务",
     "hint": "调度器随主进程常驻，按最近任务动态 tick（最快可到秒级）。当任务到点时若另一任务在跑，会进入队列等待执行。<strong>仅当应用在前台或托盘运行时生效。</strong>",
     "edit_heading": "编辑定时",

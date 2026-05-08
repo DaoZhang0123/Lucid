@@ -2,10 +2,10 @@
 
 提供函数式 API；CLI 入口：
 
-    python -m klawbot.selfcheck            # 跑所有自检
-    python -m klawbot.selfcheck monitors   # 仅多屏 + DPI 报告
-    python -m klawbot.selfcheck winr       # 仅 Win+R alias 自检（会真按键！）
-    python -m klawbot.selfcheck click      # 点击坐标偏差自检（HiDPI 标度差异回退）
+    python -m otterscope.selfcheck            # 跑所有自检
+    python -m otterscope.selfcheck monitors   # 仅多屏 + DPI 报告
+    python -m otterscope.selfcheck winr       # 仅 Win+R alias 自检（会真按键！）
+    python -m otterscope.selfcheck click      # 点击坐标偏差自检（HiDPI 标度差异回退）
 
 设计要点见 design.md §3.2 / §4.5.3 / §4.6.3：
 * 多屏布局变化时需要重新探测 `[screenshot].l1_max_long_edge` 上限——
@@ -229,7 +229,7 @@ def _print_json(obj) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="klawbot.selfcheck")
+    parser = argparse.ArgumentParser(prog="otterscope.selfcheck")
     parser.add_argument(
         "what",
         nargs="?",

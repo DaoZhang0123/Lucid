@@ -102,9 +102,37 @@ class TaskbarCaptureStore:
         self._root = resolve_logs_root(logging_cfg) / "taskbar-monitor"
         self._recent_dir = self._root / "recent"
         self._key_dir = self._root / "key"
+        # Learning queue: per-event JSONL of confirmed/rejected results, with
+        # focus_crop paths under key/, consumed by the doze worker so the
+        # reflector can learn each app's true-vs-false notification signature.
+        self._learn_queue_path = self._root / "learn-queue.jsonl"
+        self._learn_queue_max = 500
         if self._enabled:
             self._recent_dir.mkdir(parents=True, exist_ok=True)
             self._key_dir.mkdir(parents=True, exist_ok=True)
+
+    def append_learn_record(self, record: dict) -> None:
+        """Append one taskbar_notify_{confirmed,rejected} event to the learn
+        queue. Keeps at most ``_learn_queue_max`` records (rolling)."""
+        try:
+            self._root.mkdir(parents=True, exist_ok=True)
+            line = json.dumps(record, ensure_ascii=False)
+            with self._lock:
+                # Cheap tail-cap: read existing line count occasionally.
+                if self._learn_queue_path.exists():
+                    try:
+                        with open(self._learn_queue_path, "r", encoding="utf-8") as f:
+                            existing = f.readlines()
+                    except OSError:
+                        existing = []
+                    if len(existing) >= self._learn_queue_max:
+                        existing = existing[-(self._learn_queue_max - 1):]
+                        with open(self._learn_queue_path, "w", encoding="utf-8") as f:
+                            f.writelines(existing)
+                with open(self._learn_queue_path, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+        except OSError:
+            pass
 
     def save_recent(self, frame: StripFrame) -> str | None:
         if not self._enabled or self._recent_keep <= 0:
@@ -273,7 +301,7 @@ class TaskbarMonitor:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="klawbot-taskbar-monitor", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="otterscope-taskbar-monitor", daemon=True)
         self._thread.start()
         # 如果启用 LLM 确认，启动确认处理线程
         self._ensure_confirm_worker()
@@ -293,7 +321,7 @@ class TaskbarMonitor:
             return
         self._stop.clear()
         self._confirm_thread = threading.Thread(
-            target=self._confirm_worker, name="klawbot-taskbar-confirm", daemon=True
+            target=self._confirm_worker, name="otterscope-taskbar-confirm", daemon=True
         )
         self._confirm_thread.start()
         self._log_step("confirm_worker_started")
@@ -391,6 +419,16 @@ class TaskbarMonitor:
         # 让第二阶段（LLM 确认）只需消费已经准备好的图片 + 路径，避免把整幅细长 strip
         # 直接喂给 LLM 导致缩放后细节丢失。
         focus_crops = self._build_focus_crops(current.image, prev.image, diff_detail)
+        # 提前把 current / previous / focus_crops 落盘到 key/，让 sidecar 在记录
+        # taskbar_llm_confirm_request 时可以直接引用永久路径（recent/ 会被
+        # 轮转裁剪，追查时容易丢失）；同时 confirm worker 拿到同一份
+        # paths 后不再重复保存。
+        pre_key_paths = self._capture_store.save_key_event(
+            "llm-confirm-request",
+            current=current,
+            previous=prev,
+            focus_crops=focus_crops,
+        )
         # 确保 confirm worker 已启动（调度驱动模式下 start() 不会被调）
         self._ensure_confirm_worker()
         # 将确认请求放入异步队列，不阻塞监控线程
@@ -408,6 +446,7 @@ class TaskbarMonitor:
                     "current_capture": current.recent_path,
                     "previous_capture": prev.recent_path,
                     "focus_crops": focus_crops,
+                    "key_captures": pre_key_paths or {},
                 },
             ))
             self._emit({
@@ -462,26 +501,60 @@ class TaskbarMonitor:
                 if meta.get("diff_detail"):
                     emit_payload["diff_detail"] = meta["diff_detail"]
 
-                # 保存关键事件
+                # 保存关键事件（复用 _tick 阶段已经预先落盘的 key 路径，
+                # 不再重复写盘）。没有预存路径时（旧路径/异常路径）才 fallback
+                # 到以前的 事后保存逻辑。
                 current_frame = meta.get("current")
                 prev_frame = meta.get("prev")
+                pre_key = meta.get("key_captures") or {}
                 if current_frame and isinstance(current_frame, StripFrame):
                     if current_frame.recent_path:
                         emit_payload["current_capture"] = current_frame.recent_path
                     if prev_frame and isinstance(prev_frame, StripFrame) and prev_frame.recent_path:
                         emit_payload["previous_capture"] = prev_frame.recent_path
-                    
-                    key_paths = self._capture_store.save_key_event(
-                        ev,
-                        current=current_frame,
-                        previous=prev_frame,
-                        meta=emit_payload,
-                        focus_crops=meta.get("focus_crops") or [],
-                    )
-                    if key_paths:
-                        emit_payload["key_captures"] = key_paths
+
+                    if pre_key:
+                        emit_payload["key_captures"] = pre_key
+                    else:
+                        key_paths = self._capture_store.save_key_event(
+                            ev,
+                            current=current_frame,
+                            previous=prev_frame,
+                            meta=emit_payload,
+                            focus_crops=meta.get("focus_crops") or [],
+                        )
+                        if key_paths:
+                            emit_payload["key_captures"] = key_paths
 
                 self._emit(emit_payload)
+                # Persist a learning record (current+previous focus crops, the
+                # LLM step-2 reason, and the ground truth label) so the doze
+                # worker can later use it to teach itself each app's true vs
+                # false notification visual signature.
+                try:
+                    learn_key = emit_payload.get("key_captures") or {}
+                    learn_focus = []
+                    for fc in (learn_key.get("focus_crops") or []):
+                        learn_focus.append({
+                            "index": int(fc.get("index", 0) or 0),
+                            "x0": int(fc.get("x0", 0) or 0),
+                            "x1": int(fc.get("x1", 0) or 0),
+                            "current": fc.get("current"),
+                            "previous": fc.get("previous"),
+                        })
+                    self._capture_store.append_learn_record({
+                        "ts_ms": int(time.time() * 1000),
+                        "kind": "confirmed" if has_new else "rejected",
+                        "diff_score": meta.get("diff_score"),
+                        "app_candidates": list(emit_payload.get("app_candidates") or []),
+                        "reason": str(emit_payload.get("reason") or ""),
+                        "current_capture": learn_key.get("current") or emit_payload.get("current_capture"),
+                        "previous_capture": learn_key.get("previous") or emit_payload.get("previous_capture"),
+                        "focus_crops": learn_focus,
+                        "processed": False,
+                    })
+                except Exception:
+                    pass
                 if has_new and self._on_confirmed is not None:
                     self._on_confirmed(emit_payload)
 

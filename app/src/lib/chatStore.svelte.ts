@@ -193,8 +193,8 @@ function handleEvent(v: any) {
 export async function ensureChatListeners(): Promise<void> {
   if (started) return;
   started = true;
-  unlistenEvent = await listen<any>("klawbot://event", (e) => handleEvent(e.payload));
-  unlistenSidecar = await listen<any>("klawbot://sidecar", (e) => {
+  unlistenEvent = await listen<any>("otterscope://event", (e) => handleEvent(e.payload));
+  unlistenSidecar = await listen<any>("otterscope://sidecar", (e) => {
     const v = e.payload;
     if (v.kind === "stderr") {
       chat.sidecarStderr = [...chat.sidecarStderr, v.line].slice(-50);

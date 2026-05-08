@@ -36,7 +36,7 @@ from typing import Any, Iterable
 
 from .config import Config
 
-_log = logging.getLogger("klawbot.launcher_icons")
+_log = logging.getLogger("otterscope.launcher_icons")
 # Layout: <user_data>/icons/launchers/{index.json, <key>_<safe_name>.png}
 # 与 icon_memory 的 icons/atlas/ 同在 icons/ 下，便于用户管理。
 _PARENT = "icons"
@@ -48,10 +48,10 @@ def _user_data_dir() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.klawbot"
+            return Path(local_app) / "dev.otterscope"
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".klawbot"
+        return Path(home) / ".otterscope"
     return Path.cwd()
 
 
@@ -827,15 +827,31 @@ def _write_atlas_cache(cfg: Config, items: list[dict]) -> None:
     txt_path.write_text(captions, "utf-8")
 
 
-def build_atlas(cfg: Config, *, max_items: int = 80) -> "LauncherAtlas | None":
+def build_atlas(cfg: Config, *, max_items: int = 80,
+                names: list[str] | None = None) -> "LauncherAtlas | None":
     """返回 launcher icons 的 atlas（一张大合集图 + captions 索引）。
 
     优先读 <user_data>/icons/atlas.png 缓存；若缺失或比 launcher index 旧则按需重建。
-    无任何图标时返回 None。
+    传入 ``names`` 时只保留名字严格匹配（不区分大小写）的项，并会重新渲染
+    一张临时 atlas（不进缓存）。无任何图标时返回 None。
     """
     items = list_icons(cfg)
     if not items:
         return None
+    if names:
+        wanted = {str(n).strip().lower() for n in names if str(n).strip()}
+        if wanted:
+            items = [it for it in items if str(it.get("name") or "").strip().lower() in wanted]
+            if not items:
+                return None
+            # 白名单分支：重新渲染一张小图，不动缓存。
+            src_dir = store_dir(cfg)
+            try:
+                png_bytes, captions, w, h = _render_atlas(items[:max_items], src_dir)
+            except Exception as exc:
+                _log.warning("atlas (filtered) render failed: %s", exc)
+                return None
+            return LauncherAtlas(png_bytes=png_bytes, width=w, height=h, captions=captions)
     items = items[:max_items]
     png_path, txt_path = _atlas_cache_paths(cfg)
     idx_path = _index_path(cfg)

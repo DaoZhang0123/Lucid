@@ -1,6 +1,6 @@
-"""klawbot · stdio JSON-RPC sidecar 模式
+"""otterscope · stdio JSON-RPC sidecar 模式
 
-让 Tauri / Rust 主进程把 klawbot 拉起来后，通过 **行分隔 JSON（NDJSON）**
+让 Tauri / Rust 主进程把 otterscope 拉起来后，通过 **行分隔 JSON（NDJSON）**
 互相通信。设计要点：
 
 - 协议帧：每行一个 JSON 对象，UTF-8。
@@ -39,7 +39,7 @@
 - ``run_start`` ``{instruction, run_dir, model, max_steps, autonomy}``
 - ``error`` ``{message}``
 
-启动方式：``python -m klawbot --sidecar``。
+启动方式：``python -m otterscope --sidecar``。
 """
 from __future__ import annotations
 
@@ -283,7 +283,7 @@ instruction in this run.
             _writeln({"event": "launcher_scan_schedule_register_failed",
                       "message": f"{type(exc).__name__}: {exc}"})
         # 同样注册（幂等）每日把所有系统托盘图标 IsPromoted=1 的扫描，
-        # 让任务栏不再藏 klawbot / 微信 / 等图标到 "^" 溢出菜单里。
+        # 让任务栏不再藏 otterscope / 微信 / 等图标到 "^" 溢出菜单里。
         try:
             scheduler_mod.ensure_schedule(
                 name=self._TRAY_PROMOTE_NAME,
@@ -417,39 +417,58 @@ instruction in this run.
                         "判断任务栏中是否出现了新的即时消息提醒。\n"
                         "注意：整张任务栏 strip 比例细长，缩放后细节可能不清。"
                         "如果消息中提供了\"聚焦区域\"放大图，请以聚焦区域的对比结果为准。\n"
-                        "判定规则（任意一条满足即视为有新消息，has_new_message=true）：\n"
-                        "1) 某个应用图标新增了红点 / 红色徽章 / 未读数字；\n"
-                        "2) 某个应用图标的整体背景从普通色变为红色 / 橙红色 / 黄色等高亮报警色（这是 Windows 任务栏闪烁通知的典型表现）；\n"
-                        "3) 某个应用图标出现明显闪烁高亮（背景颜色相对上一帧明显变深/变亮/变红）；\n"
-                        "4) 某个应用图标新增了进度条、橙色下划线条 等通知样式。\n"
-                        "不算新消息的情况：\n"
-                        "- 鼠标 hover 引起的浅灰高亮；\n"
-                        "- 图标自身动画但颜色基调没变；\n"
-                        "- 任务栏开关按钮（开始菜单、搜索等）变化。\n"
-                        "只输出 JSON，包含两个字段："
-                        "{\"has_new_message\": bool, \"app_candidates\": [str, ...]}。"
+                        "唯一判定规则（满足才设 has_new_message=true）：\n"
+                        "某个应用图标新增了红点 / 红色徽章 / 未读数字。\n"
+                        "明确不算新消息的情况（看到这些一律设 false）：\n"
+                        "- 鼠标 hover 引起的浅灰高亮、背景变亮变暗、闪烁高亮；\n"
+                        "- 进度条、橙色下划线、图标动画、转场过渡；\n"
+                        "- 任务栏开关按钮（开始菜单、搜索、输入法、时钟分钟跳转等）变化；\n"
+                        "- 某个 App 被打开 / 关闭导致图标新增或消失；\n"
+                        "- 只是背景色调变动但未出现红点 / 未读数字 / 红色徽章。\n"
+                        "只输出 JSON，包含三个字段："
+                        "{\"has_new_message\": bool, \"app_candidates\": [str, ...], \"reason\": str}。"
                         "app_candidates 用下面\"已安装应用合集\"图中 [N] 后的应用名命中（可多个）；"
                         "若无法识别则填 [\"unknown\"]。"
+                        "reason 用 1-2 句话客观描述你看到的视觉证据（哪个图标出现了什么红点/未读数）；"
+                        "如果没有看到明确的红点/未读数字/红色徽章，请把 has_new_message 置为 false 并在 reason 写明原因。"
+                        "重要：不要因为某个 App 出名就猜它有新消息——必须看到明显的红色徽章。"
                     ),
                 },
             ]
-            # 用户在 schedule 上勾选了 auto-reply 的 App 白名单时，告诉模型只
-            # 关心这些 App 的图标变化，避免对无关 App（系统托盘、浏览器等）
-            # 误报。
+            # 不再把 auto-reply 白名单暴露给模型 —— 之前那段「请优先判断微信/Teams」
+            # 的 prompt 会诱导模型在视觉证据不足时凭空挑出白名单里的 App 报告
+            # 「有新消息」（典型 prompt-priming 偏置）。改为客户端事后过滤：
+            # 模型保持中立判断，只识别变化；_taskbar_enqueue_auto_chat 那边再用
+            # whitelist 把不感兴趣的命中丢弃。
+            # 但是 doze 反思过的「该 App 出现 / 没有出现 新消息」的视觉标志会被
+            # 写到 apps/<slug>/tips.md 里，专门用 [taskbar_visual] 标记行；这里
+            # 把这些行（且只有这些行）注入 prompt，让模型看到 App 自己的图标长
+            # 什么样、之前哪些是误报，避免模型每次重头猜。
             try:
                 wl = [str(a).strip() for a in (self._visual_notify_filter_apps or []) if str(a).strip()]
             except Exception:
                 wl = []
-            if wl:
-                content.append({
-                    "type": "text",
-                    "text": (
-                        "用户当前只关心以下 App 的新消息（auto-reply 白名单）："
-                        + "、".join(wl)
-                        + "。请优先判断这些 App 的图标是否出现红点/高亮/闪烁。"
-                        "如果变化只发生在白名单之外的 App，请把 has_new_message 置为 false。"
-                    ),
-                })
+            if wl and self.cfg.tools.enabled:
+                visual_blocks: list[str] = []
+                for app in wl:
+                    try:
+                        body = tooltips_mod.read_app_tips(self.cfg.tools, app)
+                    except Exception:
+                        body = ""
+                    lines = [ln.strip() for ln in (body or "").splitlines()
+                             if "[taskbar_visual]" in ln.lower()]
+                    if lines:
+                        visual_blocks.append(f"[{app}]\n" + "\n".join(lines))
+                if visual_blocks:
+                    content.append({
+                        "type": "text",
+                        "text": (
+                            "以下是过去打盹反思阶段从你之前的判定结果中学到的、"
+                            "针对相关 App 的视觉判定经验（每条以 [taskbar_visual] 标记）："
+                            "\n" + "\n\n".join(visual_blocks)
+                            + "\n请把这些经验作为本次判定的优先参考，避免重复犯错。"
+                        ),
+                    })
             content.extend([
                 {"type": "text", "text": "当前帧（current）如下："},
                 {"type": "image_url", "image_url": {"url": cur_url}},
@@ -505,9 +524,17 @@ instruction in this run.
                 ])
 
             # 已扫描的"已安装应用"图标合集——让模型能用具体的 App 名字命中是哪一个
-            # 任务栏图标变红了。规模 ~80 个，用紧凑布局；缺失或为空时静默跳过。
+            # 任务栏图标变红了。只传 auto-reply 白名单内的应用，避免把不关心的 ~80
+            # 个 icon 全部发过去（减少 token + 减少误识别为其他 App）；白名单为空时退
+            # 回全量表（取前 80 个）。
             try:
-                launcher_atlas = launcher_icons_mod.build_atlas(self.cfg)
+                wl_for_atlas = [str(a).strip() for a in (self._visual_notify_filter_apps or []) if str(a).strip()]
+            except Exception:
+                wl_for_atlas = []
+            try:
+                launcher_atlas = launcher_icons_mod.build_atlas(
+                    self.cfg, names=wl_for_atlas if wl_for_atlas else None,
+                )
             except Exception as exc:
                 launcher_atlas = None
                 _writeln({"event": "launcher_atlas_build_failed",
@@ -531,15 +558,27 @@ instruction in this run.
             # Debug: 把发给 LLM 的 content 摘要打印出来（去掉 base64 大字符串），
             # 写入 detector log + stdout 事件，便于核对到底放了哪几张图。
             # 图片按出现顺序对应来源路径（来自 meta），方便回查实际文件。
+            # 优先用 key/ 下的持久路径（taskbar_monitor 在排队时已经预存），
+            # 这样即使 recent/ 被轮转裁剪了也能追回原图；缺失时再回落到 recent/。
             key_caps = meta.get("key_captures") or {}
+            key_focus = key_caps.get("focus_crops") or []
+            key_focus_by_idx: dict[int, dict[str, Any]] = {}
+            for fc in key_focus:
+                try:
+                    key_focus_by_idx[int(fc.get("index", 0))] = fc
+                except Exception:
+                    continue
             image_sources: list[str | None] = [
-                meta.get("current_capture") or key_caps.get("current"),
+                key_caps.get("current") or meta.get("current_capture"),
             ]
             if prev_img is not None:
-                image_sources.append(meta.get("previous_capture") or key_caps.get("previous"))
+                image_sources.append(key_caps.get("previous") or meta.get("previous_capture"))
             for ce in crop_entries:
-                image_sources.append(f"<focus_crop #{ce['index']} current x={ce['x0']}..{ce['x1']}>")
-                image_sources.append(f"<focus_crop #{ce['index']} previous x={ce['x0']}..{ce['x1']}>")
+                kf = key_focus_by_idx.get(int(ce["index"]))
+                cur_src = (kf or {}).get("current") if kf else None
+                prv_src = (kf or {}).get("previous") if kf else None
+                image_sources.append(cur_src or f"<focus_crop #{ce['index']} current x={ce['x0']}..{ce['x1']}>")
+                image_sources.append(prv_src or f"<focus_crop #{ce['index']} previous x={ce['x0']}..{ce['x1']}>")
             if launcher_atlas is not None:
                 image_sources.append("<launcher_atlas>")
             content_summary: list[dict[str, Any]] = []

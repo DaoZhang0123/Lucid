@@ -37,7 +37,7 @@ class AnthropicConfig:
 class CopilotConfig:
     r"""GitHub Copilot 接入。OAuth device code 拿 GitHub token 后换
     Copilot 临时 token（~30 min），直接打 Copilot 的 chat completions 端点。
-    api_key / cached token 保存在 state_file（默认 %LOCALAPPDATA%\dev.klawbot\copilot.json），
+    api_key / cached token 保存在 state_file（默认 %LOCALAPPDATA%\dev.otterscope\copilot.json），
     不应写入 config.toml。这里只放公开选项。
     """
     model: str = "claude-opus-4-6"
@@ -192,7 +192,7 @@ class LoggingConfig:
 class MemoryConfig:
     """长期记忆 memory.md 的配置。"""
     enabled: bool = True
-    path: str = "memory.md"            # 相对路径会落到 LOCALAPPDATA/dev.klawbot/
+    path: str = "memory.md"            # 相对路径会落到 LOCALAPPDATA/dev.otterscope/
     max_entries: int = 200             # 超过则丢最早
     max_entry_chars: int = 500         # 单条最大字符数
     max_chars: int = 8000              # 注入 prompt 时的总裁剪上限
@@ -374,6 +374,14 @@ class DozeConfig:
     log_path: str = "logs/doze.log"
     # Bump when prompt format changes — past threads will be re-learned.
     prompt_version: int = 1
+    # Taskbar visual learning: each doze pass also drains a small batch of
+    # confirmed/rejected taskbar_notify events (with their focus_crop images)
+    # and asks the LLM to write per-app `[taskbar_visual]` tips. The Step-2
+    # confirm prompt later injects these tips so the same false positive
+    # doesn't keep happening.
+    taskbar_learn_enabled: bool = True
+    taskbar_learn_max_events_per_pass: int = 6
+    taskbar_learn_max_tokens: int = 500
 
 
 @dataclass
@@ -408,7 +416,7 @@ def load_config(path: str | Path | None = None) -> Config:
     """读取 toml；缺失时返回全默认。"""
     cfg = Config()
     if path is None:
-        env_path = os.environ.get("KLAWBOT_CONFIG")
+        env_path = os.environ.get("OTTERSCOPE_CONFIG")
         if env_path:
             path = env_path
     if path is None:

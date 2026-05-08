@@ -1,7 +1,7 @@
-"""klawbot CLI 入口：
+"""otterscope CLI 入口：
 
-    python -m klawbot "打开记事本，输入 hello"
-    python -m klawbot --smoke-test "你是谁？一句话。"
+    python -m otterscope "打开记事本，输入 hello"
+    python -m otterscope --smoke-test "你是谁？一句话。"
 
 默认走本地 LiteLLM 代理（OpenAI 兼容 /chat/completions），
 读取 config.toml 中 [llm.proxy].base_url / model / api_key，
@@ -24,7 +24,7 @@ _console = Console()
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        prog="klawbot",
+        prog="otterscope",
         description="Windows desktop agent driven by Claude vision (no MCP).",
     )
     parser.add_argument("instruction", nargs="*", help="自然语言任务描述")
@@ -71,7 +71,7 @@ def main() -> int:
 
         prompt = " ".join(args.instruction).strip() or "Hello, who are you? Reply in one short sentence."
         proxy = cfg.llm.proxy
-        _console.rule("[bold green]klawbot · smoke test")
+        _console.rule("[bold green]otterscope · smoke test")
         _console.print(f"[dim]POST {proxy.base_url}/chat/completions  model={proxy.model}[/dim]")
         _console.print(f"[bold]Prompt[/bold]: {prompt}")
         try:
@@ -93,7 +93,7 @@ def main() -> int:
         parser.error("instruction is required (or pass --smoke-test)")
 
     if sys.platform != "win32":
-        _console.print("[red]klawbot ReAct 主循环仅支持 Windows（鼠标键盘驱动）。[/red]")
+        _console.print("[red]otterscope ReAct 主循环仅支持 Windows（鼠标键盘驱动）。[/red]")
         return 2
 
     if not (
@@ -110,7 +110,7 @@ def main() -> int:
     set_dpi_aware()
 
     instruction = " ".join(args.instruction).strip()
-    _console.rule("[bold green]klawbot")
+    _console.rule("[bold green]otterscope")
     _console.print(f"[bold]任务[/bold]: {instruction}")
     _console.print(
         f"[dim]代理: {cfg.llm.proxy.base_url}  ·  模型: {cfg.llm.proxy.model}  ·  "

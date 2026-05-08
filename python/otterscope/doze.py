@@ -9,12 +9,17 @@ See ``Docs/doze.md`` for the design. v0 scope:
   ``learn_tip`` / ``remember`` calls from its ``events.jsonl``.
 - Tools available to the reflector are restricted to ``learn_tip`` / ``remember``
   / ``load_app_tips`` (no GUI). v0 deliberately skips the icon channel.
+- v1 add-on: also drains ``logs/taskbar-monitor/learn-queue.jsonl`` (one record
+  per confirmed/rejected ``visual_notify`` event, with focus_crop image paths)
+  and asks the LLM to write per-app ``[taskbar_visual]`` tips so the Step-2
+  confirm prompt stops repeating known mistakes.
 - Cooperative cancel: the worker checks ``cancel_event`` before each LLM call
   and after each tool dispatch; user activity (``bump_activity()``) sets the
   flag.
 """
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -30,7 +35,7 @@ from .config import Config
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
 from . import meta_tools as meta_tools_mod
-from .runlog import ThreadLog, resolve_threads_root
+from .runlog import ThreadLog, resolve_logs_root, resolve_threads_root
 from .llm_client import LLMClient
 
 
@@ -42,10 +47,10 @@ def _user_data_dir() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.klawbot"
+            return Path(local_app) / "dev.otterscope"
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".klawbot"
+        return Path(home) / ".otterscope"
     return Path.cwd()
 
 
@@ -221,7 +226,7 @@ def _delete_entry_from_file(target: Path, entry_line: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are Klawbot's "doze reflector": a low-priority background reviewer that runs while
+You are OtterScope's "doze reflector": a low-priority background reviewer that runs while
 the user is idle. Your job is to read ONE past task transcript and decide what
 reusable knowledge (if any) should be promoted to long-term storage.
 
@@ -322,6 +327,173 @@ def build_user_prompt(cfg: Config, thread: dict[str, Any]) -> str:
         f"Decide: zero or more learn_tip / remember calls (within"
         f" the limits in the system prompt). End with one short summary sentence.\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# Taskbar visual learning queue (consumes the JSONL written by
+# TaskbarCaptureStore.append_learn_record after each confirmed/rejected event).
+# ---------------------------------------------------------------------------
+
+def _taskbar_queue_path(cfg: Config) -> Path:
+    return resolve_logs_root(cfg.logging) / "taskbar-monitor" / "learn-queue.jsonl"
+
+
+def _taskbar_processed_path(cfg: Config) -> Path:
+    return _user_data_dir() / "logs" / "taskbar_learn_processed.json"
+
+
+def _load_taskbar_processed(cfg: Config) -> set[int]:
+    p = _taskbar_processed_path(cfg)
+    if not p.is_file():
+        return set()
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        items = data.get("items") if isinstance(data, dict) else None
+        if isinstance(items, list):
+            return {int(x) for x in items if isinstance(x, (int, float))}
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    return set()
+
+
+def _save_taskbar_processed(cfg: Config, ts_set: set[int]) -> None:
+    p = _taskbar_processed_path(cfg)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    # Cap to last ~1000 entries so the file doesn't grow forever.
+    items = sorted(ts_set)[-1000:]
+    p.write_text(json.dumps({"items": items}, ensure_ascii=False), encoding="utf-8")
+
+
+def _load_taskbar_queue(cfg: Config) -> list[dict[str, Any]]:
+    p = _taskbar_queue_path(cfg)
+    if not p.is_file():
+        return []
+    out: list[dict[str, Any]] = []
+    try:
+        with p.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(rec, dict) and isinstance(rec.get("ts_ms"), (int, float)):
+                    out.append(rec)
+    except OSError:
+        return []
+    return out
+
+
+def _png_to_data_url(path: str | None) -> str | None:
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    return "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+
+
+_TASKBAR_LEARN_SYSTEM = """\
+You are OtterScope's "doze taskbar learner". The taskbar monitor takes periodic
+diffs of the Windows taskbar; whenever something changed, a Step-2 LLM judge
+decides whether the change means a new message arrived for some App. You are
+now reviewing those past judgements (BOTH confirmed-true-positive AND
+confirmed-false-positive) together with the focus-crop screenshots of the
+icon strip that triggered each judgement.
+
+Your one job: write **concrete visual tips** that will help the Step-2 judge
+do better next time. Use only the `learn_tip` tool. Rules:
+
+  1. `kind` MUST be `"tip"`. Set `app` to the actual App slug
+     (e.g. `wechat`, `microsoft-teams`) when the example clearly belongs to
+     one App; otherwise omit `app`.
+  2. The `text` MUST start with the literal marker `[taskbar_visual]` and be
+     a single declarative sentence describing what the icon looks like in
+     that state (color, badge shape, position, what is NOT a notification).
+     Examples:
+       "[taskbar_visual] WeChat: a true new-message indicator is a small
+        solid red dot at the upper-right of the green chat bubble icon;
+        green pulses or dim/bright shifts of the bubble itself are NOT
+        notifications."
+       "[taskbar_visual] Teams: a purple circle with a white number badge
+        overlaid on the lower-right of the icon means new messages; the
+        idle purple icon alone does not."
+  3. Look at multiple examples per App before writing. Prefer to write ONE
+     well-distilled tip per App over many shallow ones. At most 4 tips
+     across all Apps per pass.
+  4. If the evidence is ambiguous, write nothing. Bad visual rules WILL cause
+     either spam auto-replies or missed messages — both are costly.
+  5. Before writing a tip for an App you should call `load_app_tips(app)` to
+     check what is already there and avoid duplicates / contradictions.
+  6. End with one short sentence summarising what you wrote (or
+     "nothing worth saving").
+"""
+
+
+def _build_taskbar_learn_user_content(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build the multimodal user message content for one learn pass.
+
+    Each record contributes a small text header (label, app candidates, the
+    Step-2 reason) plus the focus_crop PNGs that the judge actually saw.
+    """
+    parts: list[dict[str, Any]] = []
+    intro = (
+        f"You are reviewing {len(records)} past taskbar visual judgements.\n"
+        f"For each one you'll see: ground-truth label (CONFIRMED = a real new "
+        f"message; REJECTED = the Step-2 judge initially said yes but the "
+        f"client filter or follow-up dropped it), the apps the judge picked, "
+        f"the judge's own reason, then the icon-strip focus crops that "
+        f"triggered it (current vs previous).\n"
+    )
+    parts.append({"type": "text", "text": intro})
+
+    for idx, rec in enumerate(records, 1):
+        label = "CONFIRMED" if rec.get("kind") == "confirmed" else "REJECTED"
+        apps = ", ".join(str(a) for a in (rec.get("app_candidates") or [])) or "(none)"
+        reason = (rec.get("reason") or "").strip() or "(no reason)"
+        ts_ms = int(rec.get("ts_ms") or 0)
+        ts_iso = datetime.fromtimestamp(ts_ms / 1000.0).strftime("%Y-%m-%d %H:%M:%S") if ts_ms else "?"
+        diff = rec.get("diff_score")
+        header = (
+            f"\n--- Example {idx} ---\n"
+            f"Label: {label}\n"
+            f"Apps the judge picked: {apps}\n"
+            f"Time: {ts_iso}\n"
+            f"Diff score: {diff}\n"
+            f"Judge's reason: {reason}\n"
+        )
+        parts.append({"type": "text", "text": header})
+
+        focus_crops = rec.get("focus_crops") or []
+        if not focus_crops:
+            parts.append({"type": "text", "text": "(no focus crops saved)"})
+            continue
+        for fc in focus_crops[:4]:  # cap per record so we don't blow context
+            cur_url = _png_to_data_url(fc.get("current"))
+            prev_url = _png_to_data_url(fc.get("previous"))
+            crop_label = f"focus crop #{fc.get('index')} (x={fc.get('x0')}-{fc.get('x1')})"
+            if cur_url:
+                parts.append({"type": "text", "text": f"{crop_label} CURRENT:"})
+                parts.append({"type": "image_url", "image_url": {"url": cur_url}})
+            if prev_url:
+                parts.append({"type": "text", "text": f"{crop_label} PREVIOUS:"})
+                parts.append({"type": "image_url", "image_url": {"url": prev_url}})
+
+    parts.append({
+        "type": "text",
+        "text": (
+            "\n## Your turn\n"
+            "Write at most 4 `learn_tip` calls (each starting with "
+            "`[taskbar_visual]`) and end with one summary sentence."
+        ),
+    })
+    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +668,15 @@ class DozeWorker:
         idle_ms = int(time.time() * 1000) - self._last_activity_ms
         if idle_ms < self.cfg.doze.idle_threshold_sec * 1000:
             return
+        # Two kinds of work: (a) reflect on a past task thread, (b) learn from
+        # the taskbar visual-judge queue. Run whichever has work; if both, do
+        # the taskbar pass first (it's bounded and cheap).
         thread = self._pick_thread()
+        did_taskbar = False
+        if self.cfg.doze.taskbar_learn_enabled:
+            did_taskbar = self._maybe_run_taskbar_learn_pass()
+            if did_taskbar and self._cancel.is_set():
+                return
         if thread is None:
             return
         self._cancel.clear()
@@ -551,6 +731,156 @@ class DozeWorker:
                 continue
             return full
         return None
+
+    # ---- taskbar visual learning ----
+
+    def _maybe_run_taskbar_learn_pass(self) -> bool:
+        """Drain a small batch of unprocessed taskbar visual-judge events and
+        ask the LLM to write per-app `[taskbar_visual]` tips. Returns True if
+        any work happened (so the caller knows the pass is non-trivial)."""
+        try:
+            queue = _load_taskbar_queue(self.cfg)
+        except Exception as exc:
+            self._last_error = f"taskbar queue: {type(exc).__name__}: {exc}"
+            return False
+        if not queue:
+            return False
+        processed = _load_taskbar_processed(self.cfg)
+        pending = [r for r in queue if int(r.get("ts_ms") or 0) not in processed]
+        if not pending:
+            return False
+        # Take the most recent N — they reflect the user's current setup best.
+        pending.sort(key=lambda r: int(r.get("ts_ms") or 0))
+        batch_size = max(1, int(self.cfg.doze.taskbar_learn_max_events_per_pass))
+        batch = pending[-batch_size:]
+        try:
+            client = self._llm_factory()
+        except Exception as exc:
+            self._last_error = f"llm_factory: {type(exc).__name__}: {exc}"
+            return False
+
+        all_schemas = meta_tools_mod.build_meta_tool_schemas(self.cfg)
+        tools = [s for s in all_schemas
+                 if (s.get("function") or {}).get("name") in ("learn_tip", "load_app_tips")]
+        user_content = _build_taskbar_learn_user_content(batch)
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": _TASKBAR_LEARN_SYSTEM},
+            {"role": "user", "content": user_content},
+        ]
+
+        self._cancel.clear()
+        self._running = True
+        self._event_sink({
+            "event": "doze_taskbar_learn_start",
+            "batch_size": len(batch),
+            "queue_pending": len(pending),
+        })
+        outcome = {"learn_tip": 0, "load_app_tips": 0, "rounds": 0}
+        try:
+            total_calls = 0
+            for round_idx in range(2):  # at most 2 rounds (load_app_tips → learn_tip)
+                if self._cancel.is_set():
+                    break
+                try:
+                    resp = client.chat(
+                        messages=messages,
+                        tools=tools,
+                        max_tokens=int(self.cfg.doze.taskbar_learn_max_tokens),
+                        temperature=0.2,
+                    )
+                except Exception as exc:
+                    self._last_error = f"taskbar chat: {type(exc).__name__}: {exc}"
+                    _append_log(self.cfg, f"[{_now_iso()}] taskbar chat error: {self._last_error}")
+                    break
+                outcome["rounds"] += 1
+                calls = list(resp.tool_calls or [])
+                text = resp.text or ""
+                _append_log(self.cfg, f"[{_now_iso()}] taskbar round={round_idx} text={text[:200]!r} calls={len(calls)}")
+                if not calls:
+                    break
+                asst_calls = [{
+                    "id": c.id,
+                    "type": "function",
+                    "function": {"name": c.name, "arguments": c.arguments_json},
+                } for c in calls]
+                messages.append({"role": "assistant", "content": text, "tool_calls": asst_calls})
+                for c in calls:
+                    if self._cancel.is_set():
+                        break
+                    if total_calls >= max(2, int(self.cfg.doze.max_tool_calls_per_pass)):
+                        break
+                    total_calls += 1
+                    if c.name not in ("learn_tip", "load_app_tips"):
+                        out_text = f"[doze-taskbar] tool {c.name!r} not allowed"
+                        error_text = out_text
+                    else:
+                        try:
+                            args = json.loads(c.arguments_json or "{}")
+                        except json.JSONDecodeError:
+                            args = {}
+                        # Force kind=tip and the [taskbar_visual] prefix on
+                        # every learn_tip call so sidecar's grep filter
+                        # catches them. The LLM is also instructed to do this
+                        # but be defensive.
+                        if c.name == "learn_tip":
+                            args["kind"] = "tip"
+                            t = (args.get("text") or "").strip()
+                            if t and "[taskbar_visual]" not in t.lower():
+                                args["text"] = f"[taskbar_visual] {t}"
+                        res = meta_tools_mod.dispatch_meta_tool(
+                            c.name, args, self.cfg, last_png_by_level={}, sensor=None,
+                        )
+                        if res is None:
+                            out_text = error_text = f"[doze-taskbar] dispatch returned None for {c.name}"
+                        else:
+                            out_text = res.output or ""
+                            error_text = res.error or ""
+                            if c.name in outcome and not error_text:
+                                outcome[c.name] += 1
+                    _append_log(self.cfg, f"[{_now_iso()}]   taskbar call {c.name}({c.arguments_json[:200]}) -> {(error_text or out_text)[:200]}")
+                    if not error_text and c.name == "learn_tip":
+                        try:
+                            full_args = json.loads(c.arguments_json or "{}")
+                        except json.JSONDecodeError:
+                            full_args = {}
+                        # Mirror the prefix/kind correction into the ledger.
+                        full_args["kind"] = "tip"
+                        t = (full_args.get("text") or "").strip()
+                        if t and "[taskbar_visual]" not in t.lower():
+                            full_args["text"] = f"[taskbar_visual] {t}"
+                        app = full_args.get("app") or "*global*"
+                        tip_text = (full_args.get("text") or "").replace("\n", " ").strip()
+                        _append_log(
+                            self.cfg,
+                            f"[{_now_iso()}]   SAVED taskbar tip app={app}: {tip_text}",
+                        )
+                        _record_output(self.cfg, name="learn_tip", args=full_args, thread_id="taskbar-learn")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": c.id,
+                        "content": error_text or out_text or "(no output)",
+                    })
+                if total_calls >= max(2, int(self.cfg.doze.max_tool_calls_per_pass)):
+                    break
+            # Mark this batch processed regardless of outcome, so a stubborn
+            # ambiguous record doesn't keep blocking the queue.
+            new_processed = set(processed)
+            for rec in batch:
+                new_processed.add(int(rec.get("ts_ms") or 0))
+            try:
+                _save_taskbar_processed(self.cfg, new_processed)
+            except OSError:
+                pass
+            self._event_sink({
+                "event": "doze_taskbar_learn_done",
+                "batch_size": len(batch),
+                "outcome": outcome,
+                "interrupted": self._cancel.is_set(),
+            })
+            _append_log(self.cfg, f"[{_now_iso()}] taskbar pass batch={len(batch)} outcome={outcome} interrupted={self._cancel.is_set()}")
+        finally:
+            self._running = False
+        return True
 
     # ---- LLM round ----
 

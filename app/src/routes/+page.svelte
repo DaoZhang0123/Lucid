@@ -93,7 +93,7 @@
   // Thread ids look like `thread-20260508-110047-d381f6-⏰_每日新闻简介` or
   // `20260508-110047-d381f6` (no prefix). Surface the 6-hex random suffix
   // so the user can quickly correlate a sidebar row with files on disk
-  // (`%LOCALAPPDATA%\dev.klawbot\logs\threads\thread-*-<hex>-*\`).
+  // (`%LOCALAPPDATA%\dev.otterscope\logs\threads\thread-*-<hex>-*\`).
   function extractHex(id?: string): string {
     if (!id) return "";
     const m = id.match(/-([0-9a-f]{6})(?:-|$)/);

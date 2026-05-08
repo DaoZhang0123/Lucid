@@ -1,7 +1,7 @@
-# Klawbot 运行时配置
+# OtterScope 运行时配置
 #
 # 这个文件是「示例 / 默认模板」，会被打进发行包；安装后真实的用户配置在
-#   %LOCALAPPDATA%\dev.klawbot\config.toml
+#   %LOCALAPPDATA%\dev.otterscope\config.toml
 # 里改它，不要改这个文件（会在升级时被覆盖）。
 #
 # 三个 LLM 后端任选其一，靠 [llm].provider 切换。
@@ -42,7 +42,7 @@ anthropic_version = "2023-06-01"
 # === provider = "copilot" 时使用 ===
 [llm.copilot]
 model = "claude-opus-4.6"
-# 留空走默认路径 %LOCALAPPDATA%\dev.klawbot\copilot.json
+# 留空走默认路径 %LOCALAPPDATA%\dev.otterscope\copilot.json
 state_file = ""
 
 # === provider = "proxy" 时使用 ===
@@ -60,7 +60,7 @@ api_key = ""
 [logging]
 # 是否把每次运行的主要信息与截图持久化到本地
 enabled = true
-# 日志根目录（相对路径会落到 %LOCALAPPDATA%\dev.klawbot\logs）
+# 日志根目录（相对路径会落到 %LOCALAPPDATA%\dev.otterscope\logs）
 dir = "logs"
 # 文本日志等级：DEBUG | INFO | WARNING | ERROR | OFF
 text_level = "INFO"

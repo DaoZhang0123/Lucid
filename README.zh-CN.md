@@ -1,15 +1,20 @@
-# Klawbot
+# OtterScope 🦦
 
-> **桌面里的对话型分身。**
-> 把要做的事说给 Klawbot，它看屏幕、动鼠键，再把桌面原样还回来。
+> **为你的 Windows 桌面配上一双灵巧的爪子、一双不眨的眼睛。**
+> 把要做的事说给 OtterScope，它会看屏幕、动鼠键；你不在的时候，它替你看消息、替你回话。
 > **不依赖任何 MCP / 应用 API / 浏览器插件。** 仅靠 **Claude 的多模态视觉**指挥真实的鼠标和键盘。
+
+> **名字从哪来？** 海獅是那种极少见的、会用工具的野生动物——胸口抱一块随身小石头，
+> 付身浮在水面，两只爪子都腔贝壳。**Otter** 是动手的那一半，**Scope** 是看东西的那一半——
+> 三级截图金字塔 + 任务栏监听，盘在桌面上一动不动地看。
+> 两者合起来就是 **OtterScope = 看得见的眼 · 能动手的爪**。
 
 **语言：** [English](README.md) · **简体中文** · [Français](README.fr-FR.md)
 
 ```
 你：     "打开 Microsoft Teams，给我自己发一句 'Hello'"
           ↓
-Klawbot：  *截一张屏*
+OtterScope：  *截一张屏*
           *看到桌面*
           → launch_app("Microsoft Teams")
           → click(和自己的对话)
@@ -17,13 +22,13 @@ Klawbot：  *截一张屏*
           → "完成。"
 ```
 
-Klawbot 是一个 Windows 桌面应用（`klawbot.exe` 引擎 + Tauri/WebView2 GUI）。下面是它已经能做的事，以及一大把可直接抄的指令例子。
+OtterScope 是一个 Windows 桌面应用（`otterscope.exe` 引擎 + Tauri/WebView2 GUI）。下面是它已经能做的事，以及一大把可直接抄的指令例子。
 
 ---
 
-## 为什么是 Klawbot
+## 为什么是 OtterScope
 
-| | 传统 RPA / 走 API 的 bot | **Klawbot** |
+| | 传统 RPA / 走 API 的 bot | **OtterScope** |
 | --- | --- | --- |
 | 适配每个 App | 每个都要 SDK / 插件 / MCP server | **零适配。** 人能用，它就能用。 |
 | 闭源/老旧软件（网银、ERP、游戏、微信…） | ❌ 通常不行 | ✅ 像素就是像素 |
@@ -33,7 +38,7 @@ Klawbot 是一个 Windows 桌面应用（`klawbot.exe` 引擎 + Tauri/WebView2 G
 
 ---
 
-## Klawbot 现在能做什么（`v0.3.0`）
+## OtterScope 现在能做什么（`v0.3.0`）
 
 ### 跟你聊天
 - 对话式聊天壳（Tauri 2 + SvelteKit + WebView2），系统托盘，全局急停热键 `Ctrl+Alt+Esc`。
@@ -61,14 +66,14 @@ Klawbot 是一个 Windows 桌面应用（`klawbot.exe` 引擎 + Tauri/WebView2 G
 - **同 thread context 持久化** —— 同一对话里下一句会自动续上之前的消息（旧图压缩）。
 
 ### 越用越聪明
-- **`memory.md`** —— 长期记忆，自动并入 system prompt；Klawbot 可以调 `remember(text)` 主动写，你也可以在记忆页手编。
-- **`tools.md`** —— 进化中的"操作技巧"库；任务结束后 Klawbot 会用 `learn_tip(text)` 把成功路径或失败教训记下来。
-- **每个 App 单文件**（`apps/<slug>.py`）—— drop-a-file = 教 Klawbot 一个新 App，包含自定义启动方式 + 技巧。
-- **打盹学习** —— 你 5 分钟没动作时 Klawbot 会安静地反思已结束的 thread，挖掘技巧 + *icon proposals*（它从截图里裁出来的小图标候选；你在打盹页接受后它就学会了"这个图标 = 这个 App"）。
+- **`memory.md`** —— 长期记忆，自动并入 system prompt；OtterScope 可以调 `remember(text)` 主动写，你也可以在记忆页手编。
+- **`tools.md`** —— 进化中的"操作技巧"库；任务结束后 OtterScope 会用 `learn_tip(text)` 把成功路径或失败教训记下来。
+- **每个 App 单文件**（`apps/<slug>.py`）—— drop-a-file = 教 OtterScope 一个新 App，包含自定义启动方式 + 技巧。
+- **打盹学习** —— 你 5 分钟没动作时 OtterScope 会安静地反思已结束的 thread，挖掘技巧 + *icon proposals*（它从截图里裁出来的小图标候选；你在打盹页接受后它就学会了"这个图标 = 这个 App"）。
 - **自检** —— 显示器 / DPI / Win+R 别名 / 点击坐标偏移。
 
 ### 对自己诚实
-- 每次运行落盘 `%LOCALAPPDATA%\dev.klawbot\logs\threads\<thread>\` —— `events.jsonl`、`messages.json`、所有截图、完整的 LLM context dump。
+- 每次运行落盘 `%LOCALAPPDATA%\dev.otterscope\logs\threads\<thread>\` —— `events.jsonl`、`messages.json`、所有截图、完整的 LLM context dump。
 - 三档自动度：`full` / `confirm_critical` / `confirm_each`。HITL 关键字列表（`删除` / `format` / `转账` / `确认付款` …）即使 `full` 也会拦下危险动作。
 
 ---
@@ -113,7 +118,7 @@ Klawbot 是一个 Windows 桌面应用（`klawbot.exe` 引擎 + Tauri/WebView2 G
 
 > *"`D:\Photos\unsorted` 里所有 `IMG_*.JPG`，按当前顺序重命名为 `2026-05-08-<NNNN>.jpg`。"*
 
-> *"`C:\Users\me\Downloads` 里最大的 5 个文件是哪几个？"*（这种 Klawbot 会用 `run_shell`，不会点来点去。）
+> *"`C:\Users\me\Downloads` 里最大的 5 个文件是哪几个？"*（这种 OtterScope 会用 `run_shell`，不会点来点去。）
 
 ### 🎮 游戏 / 小众软件
 
@@ -127,7 +132,7 @@ Klawbot 是一个 Windows 桌面应用（`klawbot.exe` 引擎 + Tauri/WebView2 G
 
 > *"截一张全屏，告诉我有几个明显的窗口。"*
 
-> *"读 `C:\Users\me\AppData\Local\dev.klawbot\config.toml`，告诉我现在用的是哪个 LLM provider。"*（走 `read_file` meta tool，不动 GUI。）
+> *"读 `C:\Users\me\AppData\Local\dev.otterscope\config.toml`，告诉我现在用的是哪个 LLM provider。"*（走 `read_file` meta tool，不动 GUI。）
 
 ### 🔁 值得存下来的模板
 
@@ -151,7 +156,7 @@ Klawbot 是一个 Windows 桌面应用（`klawbot.exe` 引擎 + Tauri/WebView2 G
 └──────────────────────┬─────────────────────────────┘
                        │ JSON-RPC over stdio
 ┌──────────────────────┴─────────────────────────────┐
-│  Python sidecar (klawbot.exe)                       │
+│  Python sidecar (otterscope.exe)                       │
 │  ReAct · 调度器 · 任务栏监听 · 打盹 · 记忆          │
 │        ↓ mss 截图          ↓ pyautogui 注入         │
 │        ↓ HTTP                                       │
@@ -159,13 +164,13 @@ Klawbot 是一个 Windows 桌面应用（`klawbot.exe` 引擎 + Tauri/WebView2 G
 └─────────────────────────────────────────────────────┘
 ```
 
-用户数据：`%LOCALAPPDATA%\dev.klawbot\`（配置、日志、计划、记忆、图标缓存、Copilot token）。
+用户数据：`%LOCALAPPDATA%\dev.otterscope\`（配置、日志、计划、记忆、图标缓存、Copilot token）。
 
 ---
 
 ## 安装（终端用户）
 
-去 release 下载 `klawbot_<版本>_x64-setup.exe`，跑安装包，从开始菜单启动 **Klawbot**。
+去 release 下载 `otterscope_<版本>_x64-setup.exe`，跑安装包，从开始菜单启动 **OtterScope**。
 
 首次启动后进**设置**，挑一个 LLM 后端：
 
@@ -186,14 +191,14 @@ Klawbot 是一个 Windows 桌面应用（`klawbot.exe` 引擎 + Tauri/WebView2 G
 ### 1）Python sidecar
 
 ```powershell
-cd D:\Project\Klawbot
+cd D:\Project\OtterScope
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
 
 pip install pyinstaller
-pyinstaller packaging\klawbot.spec
-# → dist\klawbot.exe
+pyinstaller packaging\otterscope.spec
+# → dist\otterscope.exe
 ```
 
 ### 2）Tauri 应用
@@ -202,10 +207,10 @@ pyinstaller packaging\klawbot.spec
 cd app
 npm install
 npm run tauri build
-# → app\src-tauri\target\release\bundle\nsis\klawbot_<版本>_x64-setup.exe
+# → app\src-tauri\target\release\bundle\nsis\otterscope_<版本>_x64-setup.exe
 ```
 
-Rust 壳期望 `klawbot.exe` 就在它旁边（或装在 `%LOCALAPPDATA%\klawbot\` 下）；本地开发跑前先把 PyInstaller 输出拷过去。
+Rust 壳期望 `otterscope.exe` 就在它旁边（或装在 `%LOCALAPPDATA%\otterscope\` 下）；本地开发跑前先把 PyInstaller 输出拷过去。
 
 ---
 
@@ -215,17 +220,17 @@ Rust 壳期望 `klawbot.exe` 就在它旁边（或装在 `%LOCALAPPDATA%\klawbot
 
 ```powershell
 # 连通性烟雾测试（单轮，不动鼠键）
-python -m klawbot --smoke-test "你是谁？一句话。"
+python -m otterscope --smoke-test "你是谁？一句话。"
 
 # 谨慎模式：每步 y/n
-python -m klawbot --max-steps 4 --autonomy confirm_each `
+python -m otterscope --max-steps 4 --autonomy confirm_each `
     "截一张全屏图，告诉我屏幕上有几个明显的窗口"
 
 # 换模型
-python -m klawbot --model claude-sonnet-4.5 "打开记事本，输入 hello"
+python -m otterscope --model claude-sonnet-4.5 "打开记事本，输入 hello"
 
 # 全自动（只在虚拟机 / 干净桌面里跑）
-python -m klawbot --autonomy full "打开记事本，输入 hello world，保存到桌面"
+python -m otterscope --autonomy full "打开记事本，输入 hello world，保存到桌面"
 ```
 
 `Ctrl+C` 中断；把鼠标快速甩到屏幕**左上角**会触发 PyAutoGUI 的 fail-safe。
@@ -234,7 +239,7 @@ python -m klawbot --autonomy full "打开记事本，输入 hello world，保存
 
 ## 配置
 
-默认模板在仓库根 [config.toml](config.toml)。**真正生效**的用户配置在 `%LOCALAPPDATA%\dev.klawbot\config.toml`，要改就改这个（仓里那份升级会被覆盖）。
+默认模板在仓库根 [config.toml](config.toml)。**真正生效**的用户配置在 `%LOCALAPPDATA%\dev.otterscope\config.toml`，要改就改这个（仓里那份升级会被覆盖）。
 
 主要段落：
 
@@ -278,11 +283,11 @@ GUI 设置页保存后会热重载 sidecar。
 
 ## Stargazers · 对标 OpenAdapt
 
-[![GitHub stars](https://img.shields.io/github/stars/codetrek/Klawbot?style=social)](https://github.com/codetrek/Klawbot/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/codetrek/OtterScope?style=social)](https://github.com/codetrek/OtterScope/stargazers)
 
 我们和同赛道的老前辈 [OpenAdaptAI/OpenAdapt](https://github.com/OpenAdaptAI/OpenAdapt) 做月度对照（同样定位"通用 computer-use agent"，比我们早开始），看自己的增长曲线在哪个相对位置：
 
-| 日期 | Klawbot ★ | OpenAdapt ★ | 备注 |
+| 日期 | OtterScope ★ | OpenAdapt ★ | 备注 |
 | ---: | ---: | ---: | --- |
 | 2026-05-01 | _tbd_ | ~1566 | OpenAdapt 同期 233 forks |
 | 2026-06-01 |  |  |  |
@@ -291,5 +296,5 @@ GUI 设置页保存后会热重载 sidecar。
 
 ```powershell
 gh api repos/OpenAdaptAI/OpenAdapt --jq '.stargazers_count'
-gh api repos/codetrek/Klawbot --jq '.stargazers_count'
+gh api repos/codetrek/OtterScope --jq '.stargazers_count'
 ```

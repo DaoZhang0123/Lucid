@@ -1,12 +1,12 @@
 """长期记忆 memory.md。
 
-设计：把 ``%LOCALAPPDATA%\\dev.klawbot\\memory.md`` 当作一个**带时间戳条目的
+设计：把 ``%LOCALAPPDATA%\\dev.otterscope\\memory.md`` 当作一个**带时间戳条目的
 追加式 Markdown 文件**。每次任务起手时，把整份文件的正文塞到 system prompt
 末尾，让模型知道用户的偏好/常用路径/约束。
 
 文件格式（人可读 + 机器可读）::
 
-    # klawbot 长期记忆
+    # otterscope 长期记忆
 
     - [2026-05-01 10:23 · user] 我的桌面在 D:\\Desktop
     - [2026-05-01 10:24 · agent] 用户偏好用 PowerShell 而不是 cmd
@@ -27,7 +27,7 @@ from pathlib import Path
 
 from .config import MemoryConfig
 
-_HEADER = "# klawbot Long-term Memory\n"
+_HEADER = "# otterscope Long-term Memory\n"
 _ENTRY_RE = re.compile(r"^- \[", re.MULTILINE)
 
 
@@ -39,10 +39,10 @@ def memory_path(cfg: MemoryConfig) -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.klawbot" / cfg.path
+            return Path(local_app) / "dev.otterscope" / cfg.path
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".klawbot" / cfg.path
+        return Path(home) / ".otterscope" / cfg.path
     return Path.cwd() / cfg.path
 
 

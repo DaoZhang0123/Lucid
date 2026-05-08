@@ -40,7 +40,7 @@ from . import apps as apps_pkg
 #   window_title   窗口标题完全 / 子串（用于 find_window）
 #   window_title_re 窗口标题正则（优先于 window_title）
 #
-# 默认值不再写死在这个文件里 —— 每个 App 在 ``klawbot.apps.<slug>`` 模块里自己声明
+# 默认值不再写死在这个文件里 —— 每个 App 在 ``otterscope.apps.<slug>`` 模块里自己声明
 # ``LAUNCHER = {...}``。新增 App 只要加一个文件。运行时用户可以通过
 # ``<user data>/launchers.json`` 覆盖（前端 UI / agent 的 ``update_launcher`` meta tool）。
 
@@ -58,10 +58,10 @@ def _user_data_dir() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.klawbot"
+            return Path(local_app) / "dev.otterscope"
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".klawbot"
+        return Path(home) / ".otterscope"
     return Path.cwd()
 
 

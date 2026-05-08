@@ -1,15 +1,21 @@
-# Klawbot
+# OtterScope 🦦
 
-> **Votre doublure conversationnelle pour Windows.**
-> Dites à Klawbot ce que vous voulez faire — il regarde l'écran, manipule la souris, puis vous rend le bureau dans l'état attendu.
+> **Une paire de pattes habiles — et un œil vigilant — pour votre bureau Windows.**
+> Dites à OtterScope ce que vous voulez faire. Il scrute l'écran, manipule la souris ; quand vous n'êtes pas là, il lit les messages entrants et répond poliment à votre place.
 > **Sans MCP. Sans API par application. Sans plugin de navigateur.** Juste la **vision multimodale de Claude** qui pilote votre vrai clavier et votre vraie souris.
+
+> **Pourquoi ce nom ?** La loutre de mer est l'un des rares animaux sauvages qui **utilise des outils avec ses deux pattes** —
+> elle garde un caillou préféré sous l'aisselle et casse des coquillages sur son ventre,
+> flottant sur le dos, parfaitement composée. **Otter** c'est la patte qui agit ;
+> **Scope** c'est l'œil qui regarde — pyramide de captures à trois niveaux + moniteur de la barre des tâches qui ne cligne jamais.
+> **OtterScope = l'œil qui voit + les pattes qui agissent.**
 
 **Langues :** [English](README.md) · [简体中文](README.zh-CN.md) · **Français**
 
 ```
 Vous :   « Ouvre Microsoft Teams et envoie-moi 'Hello' à moi-même »
           ↓
-Klawbot :  *prend une capture d'écran*
+OtterScope :  *prend une capture d'écran*
           *voit le bureau*
           → launch_app("Microsoft Teams")
           → click(conversation avec moi-même)
@@ -17,15 +23,15 @@ Klawbot :  *prend une capture d'écran*
           → « Fait. »
 ```
 
-Klawbot est livré comme une appli de bureau Windows (`klawbot.exe` comme moteur + GUI Tauri/WebView2). Voici ce qu'il sait déjà faire et une bonne brassée d'exemples de prompts.
+OtterScope est livré comme une appli de bureau Windows (`otterscope.exe` comme moteur + GUI Tauri/WebView2). Voici ce qu'il sait déjà faire et une bonne brassée d'exemples de prompts.
 
 ---
 
-## Pourquoi Klawbot ?
+## Pourquoi OtterScope ?
 
-| | RPA traditionnel / bots liés à des API | **Klawbot** |
+| | RPA traditionnel / bots liés à des API | **OtterScope** |
 | --- | --- | --- |
-| Intégration par appli | Chaque appli demande un SDK / plugin / serveur MCP | **Zéro.** Si un humain peut l'utiliser, Klawbot le peut aussi. |
+| Intégration par appli | Chaque appli demande un SDK / plugin / serveur MCP | **Zéro.** Si un humain peut l'utiliser, OtterScope le peut aussi. |
 | Marche avec les applis fermées (banques, ERP, jeux, WeChat…) | ❌ rarement | ✅ les pixels restent des pixels |
 | Mise en place | Des heures de glue code | Installer, choisir un LLM, taper une phrase |
 | Casse à chaque mise à jour d'API | En permanence | Seulement si l'UI change visuellement |
@@ -33,7 +39,7 @@ Klawbot est livré comme une appli de bureau Windows (`klawbot.exe` comme moteur
 
 ---
 
-## Ce que Klawbot sait faire aujourd'hui (`v0.3.0`)
+## Ce que OtterScope sait faire aujourd'hui (`v0.3.0`)
 
 ### Vous parle
 - Coquille de chat conversationnelle (Tauri 2 + SvelteKit + WebView2), icône de barre des tâches, raccourci global d'arrêt d'urgence (`Ctrl+Alt+Esc`).
@@ -44,7 +50,7 @@ Klawbot est livré comme une appli de bureau Windows (`klawbot.exe` comme moteur
 - **Per-Monitor V2 DPI** + coordonnées virtuelles multi-écrans.
 - **Pyramide de captures à trois niveaux** que le modèle choisit lui-même : L1 plein écran, L2 fenêtre active, L3 voisinage du curseur (resserré par UIA — colle au vrai cadre de l'élément UI sous le curseur, pas une bête boîte 200×200).
 - Gestion de contexte intelligente : fenêtres de rétention par niveau + recompression JPEG des anciennes captures + résumé automatique quand le contexte dépasse le budget du modèle.
-- **Mode démarrage léger :** quand fournir le L1 initial n'apporte rien, Klawbot communique seulement la taille du bureau et laisse le modèle décider s'il doit regarder.
+- **Mode démarrage léger :** quand fournir le L1 initial n'apporte rien, OtterScope communique seulement la taille du bureau et laisse le modèle décider s'il doit regarder.
 
 ### Pilote votre vrai bureau
 - Outil `computer` complet : clic / glisser / molette / raccourci / `type` compatible chinois (via presse-papiers — contourne complètement l'IME).
@@ -52,7 +58,7 @@ Klawbot est livré comme une appli de bureau Windows (`klawbot.exe` comme moteur
 - Lancement natif : `launch_app("VS Code")` utilise les API Windows (raccourcis Menu Démarrer + scan des manifestes UWP MSIX), épingle la fenêtre active et évite l'aller-retour « cherche l'icône ».
 
 ### Surveille pour vous quand vous êtes ailleurs
-- **Notification visuelle de la barre des tâches** — diff dHash périodique sur la barre ; si un changement candidat apparaît, un appel LLM bon marché confirme s'il s'agit d'un nouveau message et *quelle* appli l'a déclenché. **Liste blanche d'applis** par planification — Klawbot ne touche que ce que vous autorisez.
+- **Notification visuelle de la barre des tâches** — diff dHash périodique sur la barre ; si un changement candidat apparaît, un appel LLM bon marché confirme s'il s'agit d'un nouveau message et *quelle* appli l'a déclenché. **Liste blanche d'applis** par planification — OtterScope ne touche que ce que vous autorisez.
 - **Auto-réponse** avec une **AUTO-REPLY SAFETY POLICY** codée en dur dans le system prompt : ne jamais divulguer d'infos perso ou de codes, ne jamais cliquer sur payer / accepter / installer, ne jamais accepter fichiers / demandes d'amis / partage d'écran, escalade-et-arrêt en cas d'ambiguïté.
 
 ### Planifications et modèles
@@ -61,14 +67,14 @@ Klawbot est livré comme une appli de bureau Windows (`klawbot.exe` comme moteur
 - **Persistance de contexte par thread** — chaque réponse dans le même thread réutilise les messages précédents (après compression d'images).
 
 ### Apprend dans le temps
-- **`memory.md`** — mémoire long terme injectée dans le system prompt ; Klawbot peut appeler `remember(text)` pour écrire, vous éditez sur la page Mémoire.
-- **`tools.md`** — bibliothèque de « trucs et astuces » qui évolue ; Klawbot appelle `learn_tip(text)` après une exécution réussie ou ratée.
-- **Fichier par appli** (`apps/<slug>.py`) — déposer un fichier = apprendre une nouvelle appli à Klawbot, avec lanceur custom + tips.
-- **Apprentissage en veille** — quand vous êtes inactif depuis 5 minutes, Klawbot réfléchit en silence sur les threads terminés, en extrait des astuces et des *icon proposals* (petites icônes recadrées qu'il a repérées ; vous les acceptez sur la page Doze, il apprend ainsi le mapping icône → appli).
+- **`memory.md`** — mémoire long terme injectée dans le system prompt ; OtterScope peut appeler `remember(text)` pour écrire, vous éditez sur la page Mémoire.
+- **`tools.md`** — bibliothèque de « trucs et astuces » qui évolue ; OtterScope appelle `learn_tip(text)` après une exécution réussie ou ratée.
+- **Fichier par appli** (`apps/<slug>.py`) — déposer un fichier = apprendre une nouvelle appli à OtterScope, avec lanceur custom + tips.
+- **Apprentissage en veille** — quand vous êtes inactif depuis 5 minutes, OtterScope réfléchit en silence sur les threads terminés, en extrait des astuces et des *icon proposals* (petites icônes recadrées qu'il a repérées ; vous les acceptez sur la page Doze, il apprend ainsi le mapping icône → appli).
 - **Auto-diagnostic** — moniteurs / DPI / alias Win+R / décalage des coordonnées de clic.
 
 ### Honnête sur lui-même
-- Logs par exécution dans `%LOCALAPPDATA%\dev.klawbot\logs\threads\<thread>\` — `events.jsonl`, `messages.json`, toutes les captures, dump complet du contexte LLM.
+- Logs par exécution dans `%LOCALAPPDATA%\dev.otterscope\logs\threads\<thread>\` — `events.jsonl`, `messages.json`, toutes les captures, dump complet du contexte LLM.
 - Trois niveaux d'autonomie : `full` / `confirm_critical` / `confirm_each`. Liste de mots-clés HITL (`delete`, `format`, `transfer`, `confirm payment`, …) qui intercepte les actions dangereuses même en `full`.
 
 ---
@@ -113,7 +119,7 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 
 > *« Dans `D:\Photos\unsorted`, renomme tous les fichiers `IMG_*.JPG` en `2026-05-08-<NNNN>.jpg` en gardant l'ordre. »*
 
-> *« Quels sont les 5 plus gros fichiers sous `C:\Users\me\Downloads` ? »* (Klawbot utilisera `run_shell`, pas la souris.)
+> *« Quels sont les 5 plus gros fichiers sous `C:\Users\me\Downloads` ? »* (OtterScope utilisera `run_shell`, pas la souris.)
 
 ### 🎮 Jeux légers / applis de niche
 
@@ -127,7 +133,7 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 
 > *« Prends une capture plein écran et dis-moi combien de fenêtres sont visibles. »*
 
-> *« Lis `C:\Users\me\AppData\Local\dev.klawbot\config.toml` et dis-moi quel provider LLM est actif. »* (Utilise le meta tool `read_file`, pas de clic.)
+> *« Lis `C:\Users\me\AppData\Local\dev.otterscope\config.toml` et dis-moi quel provider LLM est actif. »* (Utilise le meta tool `read_file`, pas de clic.)
 
 ### 🔁 Modèles à garder
 
@@ -152,7 +158,7 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 └──────────────────────┬─────────────────────────────┘
                        │ JSON-RPC sur stdio
 ┌──────────────────────┴─────────────────────────────┐
-│  Sidecar Python (klawbot.exe)                       │
+│  Sidecar Python (otterscope.exe)                       │
 │  ReAct · planifs · monitor barre · doze · mémoire   │
 │        ↓ captures mss          ↓ saisie pyautogui   │
 │        ↓ HTTP                                       │
@@ -160,13 +166,13 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 └─────────────────────────────────────────────────────┘
 ```
 
-Données utilisateur : `%LOCALAPPDATA%\dev.klawbot\` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
+Données utilisateur : `%LOCALAPPDATA%\dev.otterscope\` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
 
 ---
 
 ## Installation (utilisateurs finaux)
 
-Téléchargez `klawbot_<version>_x64-setup.exe` depuis une release, lancez l'installateur, démarrez **Klawbot** depuis le menu Démarrer.
+Téléchargez `otterscope_<version>_x64-setup.exe` depuis une release, lancez l'installateur, démarrez **OtterScope** depuis le menu Démarrer.
 
 Au premier lancement, ouvrez **Paramètres** et choisissez un backend LLM :
 
@@ -187,14 +193,14 @@ Au premier lancement, ouvrez **Paramètres** et choisissez un backend LLM :
 ### 1) Sidecar Python
 
 ```powershell
-cd D:\Project\Klawbot
+cd D:\Project\OtterScope
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
 
 pip install pyinstaller
-pyinstaller packaging\klawbot.spec
-# → dist\klawbot.exe
+pyinstaller packaging\otterscope.spec
+# → dist\otterscope.exe
 ```
 
 ### 2) Application Tauri
@@ -203,10 +209,10 @@ pyinstaller packaging\klawbot.spec
 cd app
 npm install
 npm run tauri build
-# → app\src-tauri\target\release\bundle\nsis\klawbot_<ver>_x64-setup.exe
+# → app\src-tauri\target\release\bundle\nsis\otterscope_<ver>_x64-setup.exe
 ```
 
-La coquille Rust attend `klawbot.exe` à côté d'elle (ou installé sous `%LOCALAPPDATA%\klawbot\`) ; copiez la sortie PyInstaller avant de lancer la build de dev.
+La coquille Rust attend `otterscope.exe` à côté d'elle (ou installé sous `%LOCALAPPDATA%\otterscope\`) ; copiez la sortie PyInstaller avant de lancer la build de dev.
 
 ---
 
@@ -216,17 +222,17 @@ La CLI originale fonctionne toujours et reste le moyen le plus rapide de tester 
 
 ```powershell
 # Test de connectivité (un seul tour, ne touche pas la souris/clavier)
-python -m klawbot --smoke-test "Qui es-tu ? Une phrase."
+python -m otterscope --smoke-test "Qui es-tu ? Une phrase."
 
 # Mode prudent : confirmation y/n à chaque étape
-python -m klawbot --max-steps 4 --autonomy confirm_each `
+python -m otterscope --max-steps 4 --autonomy confirm_each `
     "Prends une capture plein écran et dis-moi combien de fenêtres sont visibles."
 
 # Changer de modèle
-python -m klawbot --model claude-sonnet-4.5 "Ouvre Notepad et tape hello"
+python -m otterscope --model claude-sonnet-4.5 "Ouvre Notepad et tape hello"
 
 # Autonomie totale (uniquement en VM / bureau jetable)
-python -m klawbot --autonomy full "Ouvre Notepad, tape hello world, enregistre sur le Bureau"
+python -m otterscope --autonomy full "Ouvre Notepad, tape hello world, enregistre sur le Bureau"
 ```
 
 `Ctrl+C` pour interrompre. Lancer la souris dans le **coin haut-gauche** déclenche le fail-safe de PyAutoGUI.
@@ -235,7 +241,7 @@ python -m klawbot --autonomy full "Ouvre Notepad, tape hello world, enregistre s
 
 ## Configuration
 
-Modèle par défaut : [config.toml](config.toml). La **vraie** config utilisateur est à `%LOCALAPPDATA%\dev.klawbot\config.toml` — c'est celle-là qu'il faut éditer (le fichier livré est écrasé à la mise à jour).
+Modèle par défaut : [config.toml](config.toml). La **vraie** config utilisateur est à `%LOCALAPPDATA%\dev.otterscope\config.toml` — c'est celle-là qu'il faut éditer (le fichier livré est écrasé à la mise à jour).
 
 Sections clés :
 
@@ -279,11 +285,11 @@ Sauvegarder dans Paramètres recharge le sidecar à chaud.
 
 ## Stargazers · benchmark vs OpenAdapt
 
-[![GitHub stars](https://img.shields.io/github/stars/codetrek/Klawbot?style=social)](https://github.com/codetrek/Klawbot/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/codetrek/OtterScope?style=social)](https://github.com/codetrek/OtterScope/stargazers)
 
 On suit notre courbe par rapport au voisin spirituel [OpenAdaptAI/OpenAdapt](https://github.com/OpenAdaptAI/OpenAdapt) — même créneau (RPA générative / agent computer-use), projet plus ancien. Mise à jour mensuelle :
 
-| Date | Klawbot ★ | OpenAdapt ★ | Note |
+| Date | OtterScope ★ | OpenAdapt ★ | Note |
 | --- | ---: | ---: | --- |
 | 2026-05-01 | _tbd_ | ~1566 | OpenAdapt à 233 forks |
 | 2026-06-01 |  |  |  |
@@ -292,5 +298,5 @@ Script de rafraîchissement :
 
 ```powershell
 gh api repos/OpenAdaptAI/OpenAdapt --jq '.stargazers_count'
-gh api repos/codetrek/Klawbot --jq '.stargazers_count'
+gh api repos/codetrek/OtterScope --jq '.stargazers_count'
 ```

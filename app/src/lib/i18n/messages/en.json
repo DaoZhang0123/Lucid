@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "Klawbot · Desktop Agent"
+    "title": "OtterScope · Desktop Agent"
   },
   "lang": {
     "picker_label": "Language"
@@ -55,7 +55,7 @@
     "stderr_summary": "sidecar log ({n})"
   },
   "settings": {
-    "page_title": "Klawbot · Settings",
+    "page_title": "OtterScope · Settings",
     "back_to_chat": "← Back to chat",
     "history_link": "History",
     "heading": "Settings",
@@ -98,7 +98,7 @@
     "save_button": "Save",
     "saving_button": "Saving…",
     "saved_at": "Saved @ {at}",
-    "hot_reload_hint": "Saving will hot-reload the sidecar; if a task is running, retry later or restart Klawbot.",
+    "hot_reload_hint": "Saving will hot-reload the sidecar; if a task is running, retry later or restart OtterScope.",
     "ping_section_title": "Connectivity",
     "ping_button": "ping sidecar",
     "selfcheck_section_title": "Adaptation self-check (Phase 1.5)",
@@ -112,7 +112,7 @@
     "back": "‹ Back"
   },
   "doze": {
-    "page_title": "Klawbot · Doze",
+    "page_title": "OtterScope · Doze",
     "hint": "Idle-time reflection: when the sidecar has been quiet for a while, a low-priority background pass scans your past threads and asks the LLM what's worth saving as long-term tips / memory.",
     "info_scheduled": "scheduled — next tick will pick a thread (status will update shortly)",
     "info_cleared": "processed index cleared",
@@ -163,7 +163,7 @@
     "cancel": "Cancel"
   },
   "memory": {
-    "page_title": "Klawbot · Memory",
+    "page_title": "OtterScope · Memory",
     "heading": "Long-term memory · memory.md",
     "hint": "At the start of every task this content is appended to the system prompt. The Agent can also write here via the <code>remember</code> tool. <strong>Do not</strong> store passwords / tokens here.",
     "status_label": "Status:",
@@ -178,7 +178,7 @@
     "saved_at": "Saved {at}"
   },
   "templates": {
-    "page_title": "Klawbot · Templates",
+    "page_title": "OtterScope · Templates",
     "heading": "Task templates",
     "hint": "Save commonly used instructions as templates and run them with one click (still uses the active thread; a running task is cancelled first).",
     "edit_heading": "Edit template",
@@ -202,7 +202,7 @@
     "empty": "No templates yet — create one above."
   },
   "tools_page": {
-    "page_title": "Klawbot · Tips",
+    "page_title": "OtterScope · Tips",
     "heading": "Operation tips · tools.md",
     "hint": "At the start of every task this content is appended to the system prompt as the \"operation tips library\". During a task the Agent can call <code>learn_tip</code> to append success/failure lessons. Put only <strong>operation techniques</strong> here (the safest way to drive an App / dialog) — not user preferences (those go in memory.md) or one-off facts.",
     "status_label": "Status:",
@@ -222,7 +222,7 @@
     "saved_at": "Saved {at}"
   },
   "schedules": {
-    "page_title": "Klawbot · Schedules",
+    "page_title": "OtterScope · Schedules",
     "heading": "Scheduled tasks",
     "hint": "The scheduler is resident in the main process and ticks dynamically (down to second-level when needed). If another task is running when one is due, the run is queued. <strong>Only fires while the app is in the foreground or tray.</strong>",
     "edit_heading": "Edit schedule",

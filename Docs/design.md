@@ -1,4 +1,4 @@
-# Klawbot — 设计文档
+# OtterScope — 设计文档
 
 > 一款运行在 Windows 上的"通用桌面助理"。它**不依赖任何 MCP / 应用插件 / 应用 API**，仅靠 **Claude Opus 4.6 的多模态（视觉 + 推理）能力**，以"模拟人类操作"的方式：截图 → 理解 → 决策 → 操作鼠标键盘，完成用户用自然语言下达的任意桌面任务。
 
@@ -70,7 +70,7 @@
 > 已抽出独立维护，详见：
 >
 > - **[competitor-analysis.md](competitor-analysis.md)** —— 桌面端 GUI Agent 横向对标 + 商业产品背景 + 评测基准
-> - **[mobile-agents-analysis.md](mobile-agents-analysis.md)** —— 5 个移动端 GUI Agent（MobiAgent / MobileAgent / AppAgent / mobile-use / mobilerun）深度分析 + 可平移到 Klawbot 的 10 项设计模式
+> - **[mobile-agents-analysis.md](mobile-agents-analysis.md)** —— 5 个移动端 GUI Agent（MobiAgent / MobileAgent / AppAgent / mobile-use / mobilerun）深度分析 + 可平移到 OtterScope 的 10 项设计模式
 
 **核心结论一句话**：
 - **直接对标** [agent.exe](https://github.com/corbt/agent.exe)（PoC 路线一致）；OSS 标杆 Agent-S / UFO² / self-operating-computer 都偏 Python 框架——**没人做"Windows 原生托盘聊天客户端"**，是本项目的差异化护城河。

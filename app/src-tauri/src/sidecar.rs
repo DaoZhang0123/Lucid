@@ -1,11 +1,11 @@
-//! Sidecar bridge: spawn `python -m klawbot --sidecar` and pipe NDJSON.
+//! Sidecar bridge: spawn `python -m otterscope --sidecar` and pipe NDJSON.
 //!
 //! - Frontend → Rust: invoke commands `sidecar_start_task / sidecar_cancel /
 //!   sidecar_get_status / sidecar_set_autonomy / sidecar_ping`.
 //! - Rust → Frontend: each line of sidecar stdout is forwarded as a Tauri
-//!   event named `klawbot://event`.
+//!   event named `otterscope://event`.
 //! - Crash recovery: if the child exits unexpectedly we emit
-//!   `klawbot://sidecar` with `{kind:"exit", code}` and respawn after 1s.
+//!   `otterscope://sidecar` with `{kind:"exit", code}` and respawn after 1s.
 
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -20,8 +20,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, Mutex};
 
-pub const EVENT_KLAWBOT: &str = "klawbot://event";
-pub const EVENT_SIDECAR: &str = "klawbot://sidecar";
+pub const EVENT_OTTERSCOPE: &str = "otterscope://event";
+pub const EVENT_SIDECAR: &str = "otterscope://sidecar";
 
 /// Tracks a running sidecar process & its inflight RPC requests.
 pub struct Sidecar {
@@ -75,13 +75,13 @@ pub fn instance() -> Arc<Sidecar> {
 }
 
 /// Resolve (and lazily seed) the user-writable config path. Priority:
-///   1. `KLAWBOT_CONFIG` env (explicit override).
-///   2. `<app_local_data_dir>/config.toml` (per-user, e.g. `%LOCALAPPDATA%\dev.klawbot\config.toml`).
+///   1. `OTTERSCOPE_CONFIG` env (explicit override).
+///   2. `<app_local_data_dir>/config.toml` (per-user, e.g. `%LOCALAPPDATA%\dev.otterscope\config.toml`).
 ///      If missing, copy from the bundled default at `<resource_dir>/config.toml`.
 ///   3. Bundled default at `<resource_dir>/config.toml` (read-only fallback).
 ///   4. `<cwd>/config.toml` (dev mode).
 pub fn ensure_user_config(app: &AppHandle) -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("KLAWBOT_CONFIG") {
+    if let Ok(p) = std::env::var("OTTERSCOPE_CONFIG") {
         return std::path::PathBuf::from(p);
     }
     if let Ok(dir) = app.path().app_local_data_dir() {
@@ -136,15 +136,15 @@ fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
 }
 
 /// How to invoke the python sidecar. Resolution priority:
-///   1. `KLAWBOT_SIDECAR_EXE`  → spawn that binary directly with `--sidecar`.
-///   2. Bundled `resources/klawbot/klawbot.exe` (PyInstaller output for packaged builds).
-///   3. `KLAWBOT_PYTHON` env (path to a python.exe) + `-m klawbot --sidecar` (dev mode).
-///   4. `python -m klawbot --sidecar` (system python on PATH).
+///   1. `OTTERSCOPE_SIDECAR_EXE`  → spawn that binary directly with `--sidecar`.
+///   2. Bundled `resources/otterscope/otterscope.exe` (PyInstaller output for packaged builds).
+///   3. `OTTERSCOPE_PYTHON` env (path to a python.exe) + `-m otterscope --sidecar` (dev mode).
+///   4. `python -m otterscope --sidecar` (system python on PATH).
 fn build_command(app: &AppHandle) -> (Command, String) {
     let cfg_path = ensure_user_config(app);
     let cfg_str = cfg_path.display().to_string();
     // 1) explicit binary override
-    if let Ok(exe) = std::env::var("KLAWBOT_SIDECAR_EXE") {
+    if let Ok(exe) = std::env::var("OTTERSCOPE_SIDECAR_EXE") {
         let mut cmd = Command::new(&exe);
         cmd.arg("--sidecar").arg("--config").arg(&cfg_str);
         configure_common(&mut cmd, &cfg_str);
@@ -154,8 +154,8 @@ fn build_command(app: &AppHandle) -> (Command, String) {
     if let Ok(res_dir) = app.path().resource_dir() {
         let res_dir = strip_verbatim(res_dir);
         // PyInstaller onefile output: a single self-extracting exe at the
-        // resource_dir root (see packaging/klawbot.spec).
-        let candidate = res_dir.join("klawbot.exe");
+        // resource_dir root (see packaging/otterscope.spec).
+        let candidate = res_dir.join("otterscope.exe");
         if candidate.exists() {
             let mut cmd = Command::new(&candidate);
             cmd.arg("--sidecar").arg("--config").arg(&cfg_str);
@@ -164,19 +164,19 @@ fn build_command(app: &AppHandle) -> (Command, String) {
         }
     }
     // 3) dev mode: explicit python interpreter via env
-    let py = std::env::var("KLAWBOT_PYTHON").unwrap_or_else(|_| "python".into());
+    let py = std::env::var("OTTERSCOPE_PYTHON").unwrap_or_else(|_| "python".into());
     let mut cmd = Command::new(&py);
-    cmd.arg("-m").arg("klawbot").arg("--sidecar").arg("--config").arg(&cfg_str);
+    cmd.arg("-m").arg("otterscope").arg("--sidecar").arg("--config").arg(&cfg_str);
     configure_common(&mut cmd, &cfg_str);
-    (cmd, format!("{py} -m klawbot"))
+    (cmd, format!("{py} -m otterscope"))
 }
 
 fn configure_common(cmd: &mut Command, cfg_path: &str) {
-    if let Ok(cwd) = std::env::var("KLAWBOT_CWD") {
+    if let Ok(cwd) = std::env::var("OTTERSCOPE_CWD") {
         cmd.current_dir(cwd);
     }
     // Make the config path discoverable even if --config is dropped or wrapped.
-    cmd.env("KLAWBOT_CONFIG", cfg_path);
+    cmd.env("OTTERSCOPE_CONFIG", cfg_path);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -254,7 +254,7 @@ async fn spawn_once(app: &AppHandle) -> Result<Option<i32>, String> {
                 continue;
             }
             // Otherwise it's an event; forward verbatim.
-            let _ = app_out.emit(EVENT_KLAWBOT, v);
+            let _ = app_out.emit(EVENT_OTTERSCOPE, v);
         }
     });
 
@@ -843,10 +843,10 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
 }
 
 fn settings_path() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("KLAWBOT_CONFIG") {
+    if let Ok(p) = std::env::var("OTTERSCOPE_CONFIG") {
         return std::path::PathBuf::from(p);
     }
-    if let Ok(cwd) = std::env::var("KLAWBOT_CWD") {
+    if let Ok(cwd) = std::env::var("OTTERSCOPE_CWD") {
         return std::path::PathBuf::from(cwd).join("config.toml");
     }
     std::env::current_dir()
@@ -897,15 +897,15 @@ fn rewrite_kv_raw(line: &str, key: &str, new_val: &str) -> Option<String> {
     Some(format!("{key} = {new_val}"))
 }
 
-/// Run an adaptation self-check (Phase 1.5) by invoking `python -m klawbot.selfcheck <what>`
+/// Run an adaptation self-check (Phase 1.5) by invoking `python -m otterscope.selfcheck <what>`
 /// out-of-band and returning the parsed JSON. Does NOT use the long-lived sidecar pipe;
 /// each call is a one-shot subprocess so it works even before/after the sidecar is alive.
 #[tauri::command]
 pub async fn run_selfcheck(what: String) -> Result<Value, String> {
-    let py = std::env::var("KLAWBOT_PYTHON").unwrap_or_else(|_| "python".into());
+    let py = std::env::var("OTTERSCOPE_PYTHON").unwrap_or_else(|_| "python".into());
     let mut cmd = Command::new(py);
-    cmd.arg("-m").arg("klawbot.selfcheck").arg(&what);
-    if let Ok(cwd) = std::env::var("KLAWBOT_CWD") { cmd.current_dir(cwd); }
+    cmd.arg("-m").arg("otterscope.selfcheck").arg(&what);
+    if let Ok(cwd) = std::env::var("OTTERSCOPE_CWD") { cmd.current_dir(cwd); }
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
     { const CREATE_NO_WINDOW: u32 = 0x0800_0000; cmd.creation_flags(CREATE_NO_WINDOW); }
@@ -1004,14 +1004,14 @@ pub async fn read_image_b64(app: AppHandle, run_name: String, file_name: String)
 
 /// Resolve the logs directory the sidecar writes to.
 /// Priority:
-///   1. `KLAWBOT_LOGS_DIR` env (explicit override)
-///   2. `<KLAWBOT_CWD>/logs`
+///   1. `OTTERSCOPE_LOGS_DIR` env (explicit override)
+///   2. `<OTTERSCOPE_CWD>/logs`
 ///   3. `<app_local_data_dir>/logs` (default in installed builds)
 fn logs_root(app: &AppHandle) -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("KLAWBOT_LOGS_DIR") {
+    if let Ok(p) = std::env::var("OTTERSCOPE_LOGS_DIR") {
         return std::path::PathBuf::from(p);
     }
-    if let Ok(cwd) = std::env::var("KLAWBOT_CWD") {
+    if let Ok(cwd) = std::env::var("OTTERSCOPE_CWD") {
         let p = std::path::PathBuf::from(cwd).join("logs");
         if p.exists() { return p; }
     }
