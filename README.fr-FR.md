@@ -73,28 +73,69 @@ Klawbot est livré comme une appli de bureau Windows (`ctrlapp.exe` comme moteur
 
 ---
 
-## Exemple de prompt — à essayer en premier
+## Exemples de prompts — à quoi ça sert vraiment
 
-La phrase canonique à coller direct dans le chat :
+Ce sont de vraies phrases à coller dans le chat. Ajustez chemins / noms. Le niveau d'autonomie se règle dans le pied de page.
 
-> *« Ouvre Microsoft Teams et envoie-moi 'Hello' à moi-même. »*
+### 📝 Bureautique
 
-Klawbot va :
+> *« Ouvre le Bloc-notes, tape les notes de réunion que je viens de dicter, enregistre-les en `D:\notes\2026-05-08.txt`. »*
 
-1. `launch_app("Microsoft Teams")` (scan menu Démarrer / UWP, Teams n'a pas besoin d'être déjà ouvert).
-2. Prendre une capture, repérer la liste des conversations, cliquer la discussion **avec vous-même** (celle étiquetée avec votre propre nom).
-3. `type("Hello")` via le presse-papiers (les caprices d'IME ne posent pas problème), puis `key("enter")`.
-4. Répondre `"Fait."` dans le chat.
+> *« Ouvre `expenses.xlsx` sur mon bureau, descends en bas de la colonne C, dis-moi la somme. »*
 
-Variantes à coller telles quelles :
+> *« Prends le PDF actuellement ouvert dans Edge, résume l'executive summary en 5 puces, colle-les dans un nouveau brouillon Outlook pour alice@…, sujet `Résumé PDF`. »*
 
-> *« Ouvre Microsoft Teams, dans la conversation avec moi-même envoie 'Hello' cinq fois, une par ligne. »*
+### 💬 Messagerie pendant que vous êtes absent (avec une planification)
 
-> *« Tous les jours ouvrés à 9 h — ouvre Microsoft Teams et envoie-moi 'Hello' à moi-même. »* (à coller dans une **planification → action : task**, cron quotidien.)
+Créez une **planification → action : visual_notify**, liste blanche `WeChat` + `Microsoft Teams`. Instruction par défaut :
 
-> *« (visual_notify) Quand Microsoft Teams affiche un nouveau message, ouvre la conversation avec moi-même et réponds 'Hello'. »* (à coller dans une **planification → action : visual_notify**, liste blanche `Microsoft Teams` uniquement.)
+> *« Ouvre le client de messagerie correspondant, lis le dernier message non lu, et envoie une réponse courte et polie si c'est sans risque. »*
 
-L'`AUTO-REPLY SAFETY POLICY` (côté system prompt) reste active dans la variante visual_notify : pas de fuite d'infos perso, pas d'acceptation de fichier / lien / code, escalade-et-arrêt sur tout ce qui est bizarre.
+L'`AUTO-REPLY SAFETY POLICY` (côté system prompt) impose : pas de fuite d'infos perso, pas d'acceptation de fichier / lien / code, aucune autorisation, escalade-et-arrêt si la conversation devient bizarre.
+
+### ⏰ Tâches récurrentes (cron)
+
+Action `task` avec déclencheur quotidien / hebdo / interval :
+
+> *« Tous les jours ouvrés à 9 h — ouvre Outlook, scanne les non-lus, écris-moi un résumé en 3 lignes en toast. »*
+
+> *« Tous les vendredis 17 h — ouvre `D:\Reports\template.xlsx`, mets la date de la semaine en A1, enregistre sous `weekly-<YYYY-MM-DD>.xlsx` dans le même dossier. »*
+
+> *« Toutes les 30 minutes — regarde la barre git de Visual Studio Code ; si la branche affiche `*` (non sauvegardé), pousse-moi un toast. »*
+
+### 🌐 Navigateur / recherche
+
+> *« Ouvre Chrome, cherche "meilleurs claviers ergonomiques 2026", ouvre les 3 premiers résultats dans des onglets, donne-moi un paragraphe de résumé pour chacun. »*
+
+> *« Dans l'onglet GitHub déjà connecté, va sur l'issue #142 du dépôt `acme/foo`, colle le commentaire que je vais dicter, clique Comment. »*
+
+### 🛠️ Fichiers / système
+
+> *« Dans `D:\Photos\unsorted`, renomme tous les fichiers `IMG_*.JPG` en `2026-05-08-<NNNN>.jpg` en gardant l'ordre. »*
+
+> *« Quels sont les 5 plus gros fichiers sous `C:\Users\me\Downloads` ? »* (Klawbot utilisera `run_shell`, pas la souris.)
+
+### 🎮 Jeux légers / applis de niche
+
+> *« Joue un tour dans Civilization VI : recherche Poterie, construit un Travailleur, finis le tour. »*
+
+> *« Dans FL Studio, mute la piste 3, exporte le projet vers `D:\music\demo.wav`. »*
+
+(Les UI de jeux sont visuellement particulières — mettez l'autonomie sur `confirm_each` la première fois pour avancer pas à pas.)
+
+### 🧪 Sanity checks (sans souris ni clavier)
+
+> *« Prends une capture plein écran et dis-moi combien de fenêtres sont visibles. »*
+
+> *« Lis `C:\Users\me\AppData\Local\dev.ctrlapp\config.toml` et dis-moi quel provider LLM est actif. »* (Utilise le meta tool `read_file`, pas de clic.)
+
+### 🔁 Modèles à garder
+
+| Nom | Instruction |
+| --- | --- |
+| **Brouillon de standup quotidien** | « Ouvre ma page OneNote Daily Standup, résume les commits d'hier et le calendrier d'aujourd'hui en 3 puces chacun, colle dans la page. » |
+| **Capture vers presse-papiers** | « Prends une capture de la fenêtre active, copie-la dans le presse-papiers, dis-moi 'fait'. » |
+| **Auto-réponse heures calmes** | (planification visual_notify) « Si WeChat ou Teams pingue entre 19 h et 8 h, réponds 'Je suis AFK, je reviens demain' et termine. » |
 
 ---
 

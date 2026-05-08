@@ -401,7 +401,7 @@ READ_WEBPAGE_SCHEMA: dict = {
                 "browser": {
                     "type": "string",
                     "enum": ["chrome", "edge"],
-                    "description": "Which browser executable to invoke for headless mode. Default 'chrome'.",
+                    "description": "Which browser executable to invoke for headless mode. Default 'edge' (preinstalled on Windows). Auto-falls back to the other browser if the requested one is not installed.",
                 },
                 "max_chars": {
                     "type": "integer",
@@ -1254,8 +1254,18 @@ def _dispatch_run_shell(args: dict[str, Any], cfg: Config) -> ToolResult:
     if shell == "cmd":
         argv = ["cmd.exe", "/d", "/c", cmd]
     elif shell == "powershell":
+        # Windows PowerShell 5.1 defaults to SSL3/TLS1.0 for ServicePointManager,
+        # which makes Invoke-WebRequest / Invoke-RestMethod against modern HTTPS
+        # endpoints (bing.com, github.com, …) fail with "基础连接已经关闭 / 发送时
+        # 发生错误". Auto-enable TLS 1.2+1.3 so HTTP one-liners just work. Cheap,
+        # idempotent, no observable side effects on offline commands.
+        tls_prelude = (
+            "try { [Net.ServicePointManager]::SecurityProtocol = "
+            "[Net.ServicePointManager]::SecurityProtocol -bor "
+            "[Net.SecurityProtocolType]::Tls12 } catch {}; "
+        )
         argv = ["powershell.exe", "-NoProfile", "-NonInteractive",
-                "-ExecutionPolicy", "Bypass", "-Command", cmd]
+                "-ExecutionPolicy", "Bypass", "-Command", tls_prelude + cmd]
     else:  # pwsh
         argv = ["pwsh.exe", "-NoProfile", "-NonInteractive",
                 "-ExecutionPolicy", "Bypass", "-Command", cmd]

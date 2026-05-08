@@ -104,6 +104,12 @@ def _store_path() -> Path:
     return Path.cwd() / _BASENAME
 
 
+# Auto-reply whitelist defaults injected on load() for legacy visual_notify
+# schedules that were created before the whitelist feature existed. Keep in
+# sync with DEFAULT_AUTO_CHAT_EXACT in app/src/routes/schedules/+page.svelte.
+_LEGACY_VISUAL_NOTIFY_DEFAULT_APPS = ["微信", "Microsoft Teams"]
+
+
 def _load() -> list[dict[str, Any]]:
     p = _store_path()
     if not p.is_file():
@@ -111,7 +117,28 @@ def _load() -> list[dict[str, Any]]:
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
         if isinstance(data, list):
-            return [t for t in data if isinstance(t, dict) and t.get("id")]
+            items = [t for t in data if isinstance(t, dict) and t.get("id")]
+            # One-time migration: legacy visual_notify schedules saved before
+            # the auto_chat_apps field existed would be treated as "no
+            # whitelist => fire on any app the LLM names" by sidecar — which
+            # is exactly the bug where VS Code triggers an auto-reply even
+            # though the user only ever wanted WeChat / Teams. Inject a
+            # safe default and persist so later reads stay consistent.
+            mutated = False
+            for it in items:
+                action = str((it.get("action") or "task")).strip().lower()
+                if action != "visual_notify":
+                    continue
+                if "auto_chat_apps" in it and isinstance(it["auto_chat_apps"], list):
+                    continue
+                it["auto_chat_apps"] = list(_LEGACY_VISUAL_NOTIFY_DEFAULT_APPS)
+                mutated = True
+            if mutated:
+                try:
+                    _save(items)
+                except OSError:
+                    pass
+            return items
     except (OSError, ValueError):
         pass
     return []

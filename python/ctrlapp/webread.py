@@ -50,26 +50,37 @@ _EDGE_CANDIDATES = (
 )
 
 
-def find_browser_exe(browser: str = "chrome") -> str | None:
+def find_browser_exe(browser: str = "edge") -> str | None:
     """Locate a browser executable; returns absolute path or None.
 
-    Honours ``%LOCALAPPDATA%`` install location for Chrome too.
+    Default backend is Edge (preinstalled on every Windows 10+/11). If the
+    requested browser is missing, automatically fall back to the other one
+    so a default `read_webpage(url=...)` call still works on Chrome-less
+    machines (and vice versa).
     """
-    browser = (browser or "chrome").strip().lower()
-    if browser == "edge":
-        cands = list(_EDGE_CANDIDATES)
-    else:
-        cands = list(_CHROME_CANDIDATES)
-        local = os.environ.get("LOCALAPPDATA")
-        if local:
-            cands.append(str(Path(local) / "Google" / "Chrome" / "Application" / "chrome.exe"))
-    for p in cands:
-        if p and Path(p).is_file():
-            return p
-    # PATH fallback
-    name = "msedge.exe" if browser == "edge" else "chrome.exe"
-    found = shutil.which(name) or shutil.which(name.replace(".exe", ""))
-    return found
+    browser = (browser or "edge").strip().lower()
+
+    def _lookup(b: str) -> str | None:
+        if b == "edge":
+            cands = list(_EDGE_CANDIDATES)
+        else:
+            cands = list(_CHROME_CANDIDATES)
+            local = os.environ.get("LOCALAPPDATA")
+            if local:
+                cands.append(str(Path(local) / "Google" / "Chrome" / "Application" / "chrome.exe"))
+        for p in cands:
+            if p and Path(p).is_file():
+                return p
+        name = "msedge.exe" if b == "edge" else "chrome.exe"
+        return shutil.which(name) or shutil.which(name.replace(".exe", ""))
+
+    primary = _lookup(browser)
+    if primary:
+        return primary
+    # Auto-fallback: try the other browser. Most Windows machines have at
+    # least one of Edge / Chrome.
+    other = "chrome" if browser == "edge" else "edge"
+    return _lookup(other)
 
 
 # ---------------------------------------------------------------------------
@@ -205,8 +216,8 @@ def html_to_text(html: str, max_chars: int = 8000) -> tuple[str, str]:
 
 def dump_dom_headless(
     url: str,
-    browser: str = "chrome",
-    timeout_s: float = 25.0,
+    browser: str = "edge",
+    timeout_s: float = 60.0,
     extra_args: tuple[str, ...] = (),
 ) -> str:
     """Run ``<browser> --headless --dump-dom <url>`` and return raw HTML.
@@ -220,6 +231,15 @@ def dump_dom_headless(
         )
     if not url or not urlparse(url).scheme:
         raise RuntimeError(f"invalid url: {url!r} (must include scheme, e.g. https://...)")
+    # Use a per-call unique user-data-dir so that a foreground Edge / Chrome
+    # process the user already has running can't lock our headless instance
+    # (which would manifest as a silent 25s+ hang on `--dump-dom`).
+    udd_root = Path(os.environ.get("TEMP", ".")) / "ctrlapp-headless"
+    udd = udd_root / f"{browser}-{os.getpid()}-{secrets.token_hex(4)}"
+    try:
+        udd.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     args = [
         exe,
         "--headless=new",
@@ -229,7 +249,9 @@ def dump_dom_headless(
         "--hide-scrollbars",
         "--mute-audio",
         "--disable-software-rasterizer",
-        "--user-data-dir=" + str(Path(os.environ.get("TEMP", ".")) / f"ctrlapp-headless-{browser}"),
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--user-data-dir=" + str(udd),
         *extra_args,
         "--dump-dom",
         url,
@@ -243,6 +265,13 @@ def dump_dom_headless(
         )
     except subprocess.TimeoutExpired as e:
         raise RuntimeError(f"{browser} --headless --dump-dom timed out after {timeout_s}s") from e
+    finally:
+        # Best-effort cleanup of the per-call profile dir to avoid bloating
+        # %TEMP% over time. Ignore failures (file still locked, etc.).
+        try:
+            shutil.rmtree(udd, ignore_errors=True)
+        except Exception:
+            pass
     if proc.returncode != 0 and not proc.stdout:
         stderr = (proc.stderr or b"").decode("utf-8", errors="replace")[-400:]
         raise RuntimeError(
@@ -506,7 +535,7 @@ def cdp_read_active_tab(
 def read_webpage(
     url: str | None = None,
     active_tab: bool = False,
-    browser: str = "chrome",
+    browser: str = "edge",
     url_match: str | None = None,
     cdp_port: int = 9222,
     max_chars: int = 8000,
