@@ -107,10 +107,10 @@ def _user_data_dir() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.ctrlapp"
+            return Path(local_app) / "dev.klawbot"
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".ctrlapp"
+        return Path(home) / ".klawbot"
     return Path.cwd()
 
 

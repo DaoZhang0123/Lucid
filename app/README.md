@@ -1,20 +1,20 @@
-# ctrlapp · App (Tauri + SvelteKit)
+# Klawbot · App (Tauri + SvelteKit)
 
-Desktop shell for the ctrlapp Windows agent. See repo root README + design.md
+Desktop shell for the Klawbot Windows agent (Python sidecar still ships as `klawbot.exe` for backward compat). See repo root README + design.md
 for the big picture; this file is a developer cheatsheet.
 
 ## Dev mode
 
 ```powershell
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
-$env:CTRLAPP_PYTHON = "D:\Project\ctrlAppWithoutMCP\.venv\Scripts\python.exe"
-$env:CTRLAPP_CWD    = "D:\Project\ctrlAppWithoutMCP"
+$env:KLAWBOT_PYTHON = "D:\Project\Klawbot\.venv\Scripts\python.exe"
+$env:KLAWBOT_CWD    = "D:\Project\Klawbot"
 $env:LITELLM_MASTER_KEY = (
     Get-Content D:\Project\litellm-ghc-proxy-lite\.env |
     Select-String '^LITELLM_MASTER_KEY=' |
     ForEach-Object { ($_ -split '=', 2)[1] }
 )
-cd D:\Project\ctrlAppWithoutMCP\app
+cd D:\Project\Klawbot\app
 pnpm install
 pnpm tauri dev
 ```
@@ -26,35 +26,35 @@ First Rust build pulls Tauri/wry/webview2-com (~5–10 min); incremental is seco
 In the Settings page click "多屏 + DPI" / "Win+R 别名" / "点击坐标偏差", or:
 
 ```powershell
-python -m ctrlapp.selfcheck monitors
-python -m ctrlapp.selfcheck winr
-python -m ctrlapp.selfcheck click
+python -m klawbot.selfcheck monitors
+python -m klawbot.selfcheck winr
+python -m klawbot.selfcheck click
 ```
 
 ## 5 example scenarios (Phase 1.6)
 
 ```powershell
-python -m ctrlapp.examples list
-python -m ctrlapp.examples run notepad
-python -m ctrlapp.examples run wechat --autonomy confirm_each
-python -m ctrlapp.examples run all
+python -m klawbot.examples list
+python -m klawbot.examples run notepad
+python -m klawbot.examples run wechat --autonomy confirm_each
+python -m klawbot.examples run all
 ```
 
 ## Packaging (Phase 1.7)
 
 ```powershell
 # (a) Bundle the Python sidecar
-cd D:\Project\ctrlAppWithoutMCP
+cd D:\Project\Klawbot
 pip install pyinstaller
 # Important: clean the previous bloated output first.
 Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
-pyinstaller --noconfirm packaging/ctrlapp.spec
-# Output: dist/ctrlapp/ctrlapp.exe (should be ~hundreds of files, NOT thousands)
+pyinstaller --noconfirm packaging/klawbot.spec
+# Output: dist/klawbot/klawbot.exe (should be ~hundreds of files, NOT thousands)
 
 # (b) Wrap shell + sidecar into NSIS installer
 cd app
 pnpm tauri build
-# Output: app/src-tauri/target/release/bundle/nsis/ctrlapp_*.exe
+# Output: app/src-tauri/target/release/bundle/nsis/klawbot_*.exe
 ```
 
 > NSIS is the only enabled target. WiX/MSI was disabled because `light.exe`
@@ -62,10 +62,10 @@ pnpm tauri build
 
 Sidecar resolution priority (`src-tauri/src/sidecar.rs::build_command`):
 
-1. `CTRLAPP_SIDECAR_EXE` env override
-2. Bundled `<resource_dir>/ctrlapp/ctrlapp.exe`
-3. `CTRLAPP_PYTHON -m ctrlapp --sidecar`
-4. `python -m ctrlapp --sidecar`
+1. `KLAWBOT_SIDECAR_EXE` env override
+2. Bundled `<resource_dir>/klawbot/klawbot.exe`
+3. `KLAWBOT_PYTHON -m klawbot --sidecar`
+4. `python -m klawbot --sidecar`
 0
 ---
 

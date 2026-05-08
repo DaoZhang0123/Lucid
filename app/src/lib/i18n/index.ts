@@ -25,7 +25,7 @@ export const SUPPORTED_LOCALES = ["en", "zh-CN", "fr-FR"] as const;
 export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
 export const FALLBACK_LOCALE: SupportedLocale = "en";
-export const LOCALE_STORAGE_KEY = "ctrlapp.locale";
+export const LOCALE_STORAGE_KEY = "klawbot.locale";
 
 /** Human-readable names shown in the language picker. */
 export const LOCALE_LABELS: Record<SupportedLocale, string> = {

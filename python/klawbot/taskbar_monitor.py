@@ -273,7 +273,7 @@ class TaskbarMonitor:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="ctrlapp-taskbar-monitor", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="klawbot-taskbar-monitor", daemon=True)
         self._thread.start()
         # 如果启用 LLM 确认，启动确认处理线程
         self._ensure_confirm_worker()
@@ -293,7 +293,7 @@ class TaskbarMonitor:
             return
         self._stop.clear()
         self._confirm_thread = threading.Thread(
-            target=self._confirm_worker, name="ctrlapp-taskbar-confirm", daemon=True
+            target=self._confirm_worker, name="klawbot-taskbar-confirm", daemon=True
         )
         self._confirm_thread.start()
         self._log_step("confirm_worker_started")

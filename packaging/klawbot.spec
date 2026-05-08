@@ -1,13 +1,13 @@
-# PyInstaller spec for ctrlapp sidecar (Phase 1.7).
+# PyInstaller spec for klawbot sidecar (Phase 1.7).
 #
 # Build:
 #     pip install pyinstaller
-#     pyinstaller --noconfirm packaging/ctrlapp.spec
+#     pyinstaller --noconfirm packaging/klawbot.spec
 #
-# Output:  dist/ctrlapp/ctrlapp.exe  (folder mode, lighter on AV scans than --onefile)
+# Output:  dist/klawbot/klawbot.exe  (folder mode, lighter on AV scans than --onefile)
 # 这个目录会被 Tauri 通过 tauri.conf.json `bundle.resources` 整体打进 .msi，
 # 启动时 Rust 侧 (sidecar.rs::build_command) 会优先找
-# `<resource_dir>/ctrlapp/ctrlapp.exe` 起子进程。
+# `<resource_dir>/klawbot/klawbot.exe` 起子进程。
 #
 # Notes:
 # * 不用 --onefile，启动更快、避免被 AV 解压一次又一次扫；
@@ -21,7 +21,7 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 
-# Output to repo root dist/ so tauri.conf.json resource path ../../dist/ctrlapp.exe works
+# Output to repo root dist/ so tauri.conf.json resource path ../../dist/klawbot.exe works
 import sys
 sys.argv += ["--distpath", os.path.join(ROOT, "dist")]
 
@@ -32,18 +32,18 @@ hidden += collect_submodules("pyperclip")
 hidden += collect_submodules("rich")
 hidden += collect_submodules("PIL")
 hidden += collect_submodules("tzdata")  # zoneinfo on Windows needs the tzdata pkg
-hidden += collect_submodules("psutil")  # used by ctrlapp.launchers for process detection
-# Per-app registry: every `python/ctrlapp/apps/<slug>.py` is a hot-plug module.
+hidden += collect_submodules("psutil")  # used by klawbot.launchers for process detection
+# Per-app registry: every `python/klawbot/apps/<slug>.py` is a hot-plug module.
 # We need PyInstaller to (a) bundle each module AND (b) emit them as .pyc files
-# under MEIPASS/ctrlapp/apps/ so `pkgutil.iter_modules` works at runtime.
+# under MEIPASS/klawbot/apps/ so `pkgutil.iter_modules` works at runtime.
 # `collect_submodules` alone bundles the bytecode into the PYZ archive but does
 # NOT lay them out as filesystem entries — so we additionally enumerate the
 # folder and pin each module by name. Drop a new `apps/<slug>.py` and it'll be
 # picked up automatically on next build, no edits to this spec required.
-_APPS_DIR = os.path.join(ROOT, "python", "ctrlapp", "apps")
-hidden += collect_submodules("ctrlapp.apps")
+_APPS_DIR = os.path.join(ROOT, "python", "klawbot", "apps")
+hidden += collect_submodules("klawbot.apps")
 hidden += [
-    f"ctrlapp.apps.{os.path.splitext(fn)[0]}"
+    f"klawbot.apps.{os.path.splitext(fn)[0]}"
     for fn in os.listdir(_APPS_DIR)
     if fn.endswith(".py") and not fn.startswith("_")
 ]
@@ -87,7 +87,7 @@ datas = [
 datas += collect_data_files("tzdata")  # IANA 时区原始文件
 
 a = Analysis(
-    [os.path.join(ROOT, "packaging", "ctrlapp_entry.py")],
+    [os.path.join(ROOT, "packaging", "klawbot_entry.py")],
     pathex=[os.path.join(ROOT, "python")],
     binaries=[],
     datas=datas,
@@ -138,7 +138,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name="ctrlapp",
+    name="klawbot",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -151,7 +151,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
-# NOTE: onefile mode — one self-extracting `dist/ctrlapp.exe`. Tauri's
+# NOTE: onefile mode — one self-extracting `dist/klawbot.exe`. Tauri's
 # `bundle.resources` glob preserves no directory structure, so onedir mode
 # would break PyInstaller's `_internal/` and Python packages (numpy/PIL/...).
 # Onefile pays a one-time extraction cost on first launch but is bulletproof

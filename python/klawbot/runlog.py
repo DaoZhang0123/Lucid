@@ -1,6 +1,6 @@
 """Thread-scoped 日志：一个 thread 是一段对话上下文，可包含多次 start_task。
 
-目录结构（默认在 %LOCALAPPDATA%\\dev.ctrlapp\\logs\\ 下）::
+目录结构（默认在 %LOCALAPPDATA%\\dev.klawbot\\logs\\ 下）::
 
     thread-20260430-235012-苏州天气/
         meta.json         # {id, title, created_ms, updated_ms, task_count}
@@ -51,9 +51,9 @@ def resolve_logs_root(cfg: LoggingConfig) -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.ctrlapp" / cfg.dir
+            return Path(local_app) / "dev.klawbot" / cfg.dir
     elif (home := os.environ.get("HOME")):
-        return Path(home) / ".ctrlapp" / cfg.dir
+        return Path(home) / ".klawbot" / cfg.dir
     return Path(__file__).resolve().parents[2] / cfg.dir
 
 

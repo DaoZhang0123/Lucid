@@ -1,4 +1,4 @@
-﻿# Klawbot
+# Klawbot
 
 > **Your conversational stand-in for Windows.**
 > Tell Klawbot what you want done — it watches the screen, works the mouse, and hands the desktop back the way you wanted it.
@@ -17,7 +17,7 @@ Klawbot:   *takes a screenshot*
           → "Done."
 ```
 
-Klawbot ships as a Windows desktop app (`ctrlapp.exe` engine + Tauri/WebView2 GUI). Below is what it can already do today and a generous helping of example prompts.
+Klawbot ships as a Windows desktop app (`klawbot.exe` engine + Tauri/WebView2 GUI). Below is what it can already do today and a generous helping of example prompts.
 
 ---
 
@@ -68,7 +68,7 @@ Klawbot ships as a Windows desktop app (`ctrlapp.exe` engine + Tauri/WebView2 GU
 - **Self-check** for monitors / DPI / Win+R alias / click-coordinate offset.
 
 ### Honest about itself
-- Per-run logs at `%LOCALAPPDATA%\dev.ctrlapp\logs\threads\<thread>\` — `events.jsonl`, `messages.json`, every screenshot, full LLM context dumps.
+- Per-run logs at `%LOCALAPPDATA%\dev.klawbot\logs\threads\<thread>\` — `events.jsonl`, `messages.json`, every screenshot, full LLM context dumps.
 - Three autonomy levels: `full` / `confirm_critical` / `confirm_each`. HITL keyword list (`delete`, `format`, `transfer`, `confirm payment`, …) intercepts the dangerous ones even on `full`.
 
 ---
@@ -127,7 +127,7 @@ Schedules of action `task` with a daily / weekly / interval trigger:
 
 > *"Take a fullscreen screenshot and tell me how many windows are visible."*
 
-> *"Read `C:\Users\me\AppData\Local\dev.ctrlapp\config.toml` and tell me which LLM provider is active."* (Uses the `read_file` meta tool, no GUI clicks.)
+> *"Read `C:\Users\me\AppData\Local\dev.klawbot\config.toml` and tell me which LLM provider is active."* (Uses the `read_file` meta tool, no GUI clicks.)
 
 ### 🔁 Templates worth saving
 
@@ -151,7 +151,7 @@ Schedules of action `task` with a daily / weekly / interval trigger:
 └──────────────────────┬─────────────────────────────┘
                        │ JSON-RPC over stdio
 ┌──────────────────────┴─────────────────────────────┐
-│  Python sidecar (ctrlapp.exe)                       │
+│  Python sidecar (klawbot.exe)                       │
 │  ReAct · scheduler · taskbar monitor · doze · mem.  │
 │        ↓ mss screenshots          ↓ pyautogui       │
 │        ↓ HTTP                                       │
@@ -159,13 +159,13 @@ Schedules of action `task` with a daily / weekly / interval trigger:
 └─────────────────────────────────────────────────────┘
 ```
 
-User data: `%LOCALAPPDATA%\dev.ctrlapp\` (config, logs, schedules, memory, icons cache, Copilot token).
+User data: `%LOCALAPPDATA%\dev.klawbot\` (config, logs, schedules, memory, icons cache, Copilot token).
 
 ---
 
 ## Install (end users)
 
-Download `ctrlapp_<version>_x64-setup.exe` from a release, run it, launch **Klawbot** from the Start menu.
+Download `klawbot_<version>_x64-setup.exe` from a release, run it, launch **Klawbot** from the Start menu.
 
 On first run, open **Settings** and pick an LLM provider:
 
@@ -186,14 +186,14 @@ On first run, open **Settings** and pick an LLM provider:
 ### 1) Python sidecar
 
 ```powershell
-cd D:\Project\ctrlAppWithoutMCP
+cd D:\Project\Klawbot
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
 
 pip install pyinstaller
-pyinstaller packaging\ctrlapp.spec
-# → dist\ctrlapp.exe
+pyinstaller packaging\klawbot.spec
+# → dist\klawbot.exe
 ```
 
 ### 2) Tauri app
@@ -202,10 +202,10 @@ pyinstaller packaging\ctrlapp.spec
 cd app
 npm install
 npm run tauri build
-# → app\src-tauri\target\release\bundle\nsis\ctrlapp_<ver>_x64-setup.exe
+# → app\src-tauri\target\release\bundle\nsis\klawbot_<ver>_x64-setup.exe
 ```
 
-The Rust shell expects `ctrlapp.exe` next to it (or installed under `%LOCALAPPDATA%\ctrlapp\`); copy the PyInstaller output into place before launching the dev build.
+The Rust shell expects `klawbot.exe` next to it (or installed under `%LOCALAPPDATA%\klawbot\`); copy the PyInstaller output into place before launching the dev build.
 
 ---
 
@@ -215,17 +215,17 @@ The original CLI still works and is the fastest way to smoke-test a setup:
 
 ```powershell
 # Connectivity smoke test (single round, no mouse/keyboard)
-python -m ctrlapp --smoke-test "Who are you? One sentence."
+python -m klawbot --smoke-test "Who are you? One sentence."
 
 # Cautious mode: ask y/n on each step
-python -m ctrlapp --max-steps 4 --autonomy confirm_each `
+python -m klawbot --max-steps 4 --autonomy confirm_each `
     "Take a fullscreen screenshot and tell me how many windows are visible."
 
 # Switch model
-python -m ctrlapp --model claude-sonnet-4.5 "Open Notepad and type hello"
+python -m klawbot --model claude-sonnet-4.5 "Open Notepad and type hello"
 
 # Full autonomy (only on a sandbox / VM)
-python -m ctrlapp --autonomy full "Open Notepad, type hello world, save to Desktop"
+python -m klawbot --autonomy full "Open Notepad, type hello world, save to Desktop"
 ```
 
 `Ctrl+C` to abort. Slamming the mouse to the **top-left corner** triggers PyAutoGUI's fail-safe.
@@ -234,7 +234,7 @@ python -m ctrlapp --autonomy full "Open Notepad, type hello world, save to Deskt
 
 ## Configuration
 
-Default template: [config.toml](config.toml). The **real** user config is at `%LOCALAPPDATA%\dev.ctrlapp\config.toml` — edit that one (the bundled file is overwritten on upgrade).
+Default template: [config.toml](config.toml). The **real** user config is at `%LOCALAPPDATA%\dev.klawbot\config.toml` — edit that one (the bundled file is overwritten on upgrade).
 
 Key sections:
 
@@ -278,7 +278,7 @@ GUI Settings hot-reloads the sidecar after saving.
 
 ## Stargazers · benchmark vs OpenAdapt
 
-[![GitHub stars](https://img.shields.io/github/stars/codetrek/ctrlAppWithoutMCP?style=social)](https://github.com/codetrek/ctrlAppWithoutMCP/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/codetrek/Klawbot?style=social)](https://github.com/codetrek/Klawbot/stargazers)
 
 We track our reach against the spiritual neighbour [OpenAdaptAI/OpenAdapt](https://github.com/OpenAdaptAI/OpenAdapt) — same lane (generative RPA / computer-use agent), longer-running project. Updated monthly:
 
@@ -291,5 +291,5 @@ Refresh script:
 
 ```powershell
 gh api repos/OpenAdaptAI/OpenAdapt --jq '.stargazers_count'
-gh api repos/codetrek/ctrlAppWithoutMCP --jq '.stargazers_count'
+gh api repos/codetrek/Klawbot --jq '.stargazers_count'
 ```

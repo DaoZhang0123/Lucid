@@ -234,7 +234,7 @@ def dump_dom_headless(
     # Use a per-call unique user-data-dir so that a foreground Edge / Chrome
     # process the user already has running can't lock our headless instance
     # (which would manifest as a silent 25s+ hang on `--dump-dom`).
-    udd_root = Path(os.environ.get("TEMP", ".")) / "ctrlapp-headless"
+    udd_root = Path(os.environ.get("TEMP", ".")) / "klawbot-headless"
     udd = udd_root / f"{browser}-{os.getpid()}-{secrets.token_hex(4)}"
     try:
         udd.mkdir(parents=True, exist_ok=True)

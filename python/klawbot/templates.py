@@ -1,6 +1,6 @@
 """任务模板 templates.json。
 
-存放在 ``%LOCALAPPDATA%\\dev.ctrlapp\\templates.json``。一个模板是一段可复用
+存放在 ``%LOCALAPPDATA%\\dev.klawbot\\templates.json``。一个模板是一段可复用
 的 instruction + 默认自动度 + 默认步数。前端可以一键发送（仍然走正常的
 ``start_task`` RPC）。
 
@@ -21,10 +21,10 @@ def _store_path() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.ctrlapp" / _BASENAME
+            return Path(local_app) / "dev.klawbot" / _BASENAME
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".ctrlapp" / _BASENAME
+        return Path(home) / ".klawbot" / _BASENAME
     return Path.cwd() / _BASENAME
 
 

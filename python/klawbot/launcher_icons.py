@@ -36,7 +36,7 @@ from typing import Any, Iterable
 
 from .config import Config
 
-_log = logging.getLogger("ctrlapp.launcher_icons")
+_log = logging.getLogger("klawbot.launcher_icons")
 # Layout: <user_data>/icons/launchers/{index.json, <key>_<safe_name>.png}
 # 与 icon_memory 的 icons/atlas/ 同在 icons/ 下，便于用户管理。
 _PARENT = "icons"
@@ -48,10 +48,10 @@ def _user_data_dir() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.ctrlapp"
+            return Path(local_app) / "dev.klawbot"
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".ctrlapp"
+        return Path(home) / ".klawbot"
     return Path.cwd()
 
 

@@ -1,6 +1,6 @@
 """Per-app configuration registry —— 每个 App 一个文件，热插拔。
 
-每个 ``ctrlapp.apps.<slug>`` 模块约定导出：
+每个 ``klawbot.apps.<slug>`` 模块约定导出：
 
 * ``SLUG``: str            —— ASCII 小写、`-` 分隔的标识。也是文件名。
 * ``TITLE``: str           —— 人类可读的名字（用作 tips.md 的 ``# Title``）

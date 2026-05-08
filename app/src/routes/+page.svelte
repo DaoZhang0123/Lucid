@@ -90,6 +90,16 @@
     return `${d.getMonth() + 1}/${d.getDate()}`;
   }
 
+  // Thread ids look like `thread-20260508-110047-d381f6-⏰_每日新闻简介` or
+  // `20260508-110047-d381f6` (no prefix). Surface the 6-hex random suffix
+  // so the user can quickly correlate a sidebar row with files on disk
+  // (`%LOCALAPPDATA%\dev.klawbot\logs\threads\thread-*-<hex>-*\`).
+  function extractHex(id?: string): string {
+    if (!id) return "";
+    const m = id.match(/-([0-9a-f]{6})(?:-|$)/);
+    return m ? m[1] : "";
+  }
+
   // -------- Sidebar pagination --------
   const THREAD_PAGE_SIZE = 10;
   let threadPage = $state(0);
@@ -121,10 +131,12 @@
 
 <div class="app">
   <header>
-    <button class="toggle" title={sidebarOpen ? $_("header.sidebar_hide") : $_("header.sidebar_show")}
-            onclick={() => { sidebarOpen = !sidebarOpen; if (sidebarOpen) void refreshThreadList(); }}>
-      {sidebarOpen ? "‹" : "›"}
-    </button>
+    {#if !sidebarOpen}
+      <button class="toggle" title={$_("header.sidebar_show")}
+              onclick={() => { sidebarOpen = true; void refreshThreadList(); }}>
+        ›
+      </button>
+    {/if}
     <div class="title">{$_("app.title")}</div>
     <div class="status" class:on={chat.sidecarReady} class:running={chat.running}>
       {#if chat.running}
@@ -155,7 +167,11 @@
     {#if sidebarOpen}
       <aside class="sidebar">
         <div class="side-head">
-          <span>{$_("sidebar.heading")}</span>
+          <button class="side-toggle" title={$_("header.sidebar_hide")}
+                  onclick={() => { sidebarOpen = false; }}>
+            ‹
+          </button>
+          <span class="side-heading">{$_("sidebar.heading")}</span>
           <button class="side-new" title={$_("sidebar.new_thread_title")} onclick={newThread}>+</button>
         </div>
         <div class="thread-list">
@@ -169,6 +185,7 @@
                 {t.title || $_("sidebar.thread_unnamed")}
               </div>
               <div class="t-meta">
+                {#if extractHex(t.id)}<span class="t-id" title={t.id}>{extractHex(t.id)}</span>{/if}
                 <span>{fmtTime(t.updated_ms)}</span>
                 {#if t.task_count}<span>{$_("sidebar.thread_task_count", { values: { n: t.task_count } })}</span>{/if}
               </div>
@@ -296,10 +313,16 @@
   .sidebar { width: 16rem; background: #111827; color: #e5e7eb;
              display: flex; flex-direction: column; border-right: 1px solid #1f2937;
              min-width: 0; overflow: hidden; }
-  .side-head { display: flex; align-items: center; padding: 0.6rem 0.8rem; font-size: 0.85rem;
+  .side-head { display: flex; align-items: center; gap: 0.4rem; padding: 0.6rem 0.8rem; font-size: 0.85rem;
                opacity: 0.85; border-bottom: 1px solid #1f2937; }
-  .side-new { margin-left: auto; background: #2563eb; color: #fff; border: 0; border-radius: 4px;
-              width: 1.6rem; height: 1.6rem; font-size: 1.1rem; line-height: 1; cursor: pointer; }
+  .side-toggle { background: transparent; color: #fff; border: 1px solid #4b5563; width: 1.6rem;
+                 height: 1.6rem; border-radius: 4px; cursor: pointer; font-size: 1rem; line-height: 1;
+                 padding: 0; flex: 0 0 auto; }
+  .side-toggle:hover { background: #1f2937; }
+  .side-heading { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-new { background: #2563eb; color: #fff; border: 0; border-radius: 4px;
+              width: 1.6rem; height: 1.6rem; font-size: 1.1rem; line-height: 1; cursor: pointer;
+              flex: 0 0 auto; }
   .thread-list { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0.3rem; min-width: 0; }
   .pager { display: flex; align-items: center; justify-content: space-between; gap: 0.4rem;
            padding: 0.35rem 0.6rem; border-top: 1px solid #1f2937; background: #0b1220;
@@ -316,7 +339,10 @@
   .thread.active { background: #2563eb; }
   .t-title { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
              padding-right: 1.2rem; }
-  .t-meta { font-size: 0.7rem; opacity: 0.65; margin-top: 0.15rem; display: flex; gap: 0.3rem; }
+  .t-meta { font-size: 0.7rem; opacity: 0.65; margin-top: 0.15rem; display: flex; gap: 0.3rem; align-items: center; }
+  .t-id { font-family: ui-monospace, Consolas, monospace; font-size: 0.65rem;
+          background: rgba(148, 163, 184, 0.18); color: #cbd5e1; padding: 0.02rem 0.3rem;
+          border-radius: 3px; letter-spacing: 0.02em; }
   .t-tag { display: inline-block; font-size: 0.65rem; padding: 0.05rem 0.3rem; border-radius: 3px;
            margin-right: 0.3rem; vertical-align: middle; opacity: 0.95; }
   .t-tag.run { background: rgba(34,197,94,0.25); color: #22c55e; }

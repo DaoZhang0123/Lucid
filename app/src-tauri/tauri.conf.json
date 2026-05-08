@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ctrlapp",
+  "productName": "Klawbot",
   "version": "0.4.0",
-  "identifier": "dev.ctrlapp",
+  "identifier": "dev.klawbot",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "ctrlapp",
+        "title": "Klawbot",
         "width": 960,
         "height": 720,
         "minWidth": 600,
@@ -35,7 +35,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../dist/ctrlapp.exe": "ctrlapp.exe",
+      "../../dist/klawbot.exe": "klawbot.exe",
       "../../config.toml": "config.toml"
     }
   },

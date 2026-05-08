@@ -386,7 +386,7 @@ class CopilotClient:
     }
 
     def __init__(self, *, token_manager: Any, model: str) -> None:
-        # token_manager: ctrlapp.auth.copilot.CopilotTokenManager
+        # token_manager: klawbot.auth.copilot.CopilotTokenManager
         self._tm = token_manager
         self.model = model
 

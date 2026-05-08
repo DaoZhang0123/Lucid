@@ -333,7 +333,7 @@ LOAD_SCREENSHOT_SCHEMA: dict = {
             "instead of re-visiting the App and taking a fresh shot. "
             "**When to use:** an old user message has been replaced by a placeholder like "
             "`[old screenshot omitted ...; level=L2; file=step-005-post-active_window.png; "
-            "path=C:\\Users\\you\\AppData\\Local\\dev.ctrlapp\\logs\\thread-...\\step-005-post-active_window.png]` "
+            "path=C:\\Users\\you\\AppData\\Local\\dev.klawbot\\logs\\thread-...\\step-005-post-active_window.png]` "
             "and you still need the visual content (e.g. you saw a webpage, switched to another App, and now need to "
             "transcribe the page text). Pass the **exact `path`** from that placeholder. "
             "**Do NOT** invent paths or try to read arbitrary files — only paths emitted by the placeholder lines are valid. "
@@ -996,7 +996,7 @@ def _dispatch_schedule(fn_name: str, args: dict[str, Any], cfg: Config) -> ToolR
 def _dispatch_load_screenshot(args: dict[str, Any]) -> ToolResult:
     """Read a previously-saved screenshot from disk and re-attach it to the
     next request. Validates that the path looks like one of our log files
-    (under ``%LOCALAPPDATA%\\dev.ctrlapp\\logs``) so a model can't use this to
+    (under ``%LOCALAPPDATA%\\dev.klawbot\\logs``) so a model can't use this to
     exfiltrate arbitrary local files.
     """
     import os
@@ -1019,11 +1019,11 @@ def _dispatch_load_screenshot(args: dict[str, Any]) -> ToolResult:
     if p.suffix.lower() not in (".png", ".jpg", ".jpeg"):
         return ToolResult(error=f"unsupported file type {p.suffix!r}; expected .png/.jpg")
 
-    # Allowlist: must live under %LOCALAPPDATA%\dev.ctrlapp\logs (or any platform's equivalent).
+    # Allowlist: must live under %LOCALAPPDATA%\dev.klawbot\logs (or any platform's equivalent).
     allowed_root: Path | None = None
     local_app = os.environ.get("LOCALAPPDATA")
     if local_app:
-        allowed_root = (Path(local_app) / "dev.ctrlapp" / "logs").resolve()
+        allowed_root = (Path(local_app) / "dev.klawbot" / "logs").resolve()
     if allowed_root is not None:
         try:
             p.relative_to(allowed_root)

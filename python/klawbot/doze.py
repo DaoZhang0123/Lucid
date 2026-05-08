@@ -42,10 +42,10 @@ def _user_data_dir() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.ctrlapp"
+            return Path(local_app) / "dev.klawbot"
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".ctrlapp"
+        return Path(home) / ".klawbot"
     return Path.cwd()
 
 
@@ -221,7 +221,7 @@ def _delete_entry_from_file(target: Path, entry_line: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are ctrlapp's "doze reflector": a low-priority background reviewer that runs while
+You are Klawbot's "doze reflector": a low-priority background reviewer that runs while
 the user is idle. Your job is to read ONE past task transcript and decide what
 reusable knowledge (if any) should be promoted to long-term storage.
 

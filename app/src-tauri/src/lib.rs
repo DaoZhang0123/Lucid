@@ -1,4 +1,4 @@
-// ctrlapp Tauri shell entry. See `sidecar.rs` for the bridge to the Python
+// klawbot Tauri shell entry. See `sidecar.rs` for the bridge to the Python
 // agent process.
 mod sidecar;
 
@@ -174,7 +174,7 @@ pub fn run() {
             // its absolute path via env so both the sidecar process and the
             // settings UI agree on the same file.
             let cfg_path = sidecar::ensure_user_config(&app.handle());
-            std::env::set_var("CTRLAPP_CONFIG", &cfg_path);
+            std::env::set_var("KLAWBOT_CONFIG", &cfg_path);
             log::info!("user config resolved at {}", cfg_path.display());
             sidecar::supervise(app.handle().clone());
             Ok(())

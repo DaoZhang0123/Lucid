@@ -1,11 +1,11 @@
 # 截图（Screen Sensor）逻辑总览
 
-> ctrlapp 当前截图链路（采集 → 编码 → 发送 → 历史压缩 → 落盘）的实现备忘。
-> 主要代码：[python/ctrlapp/screen.py](../python/ctrlapp/screen.py),
-> [python/ctrlapp/loop.py](../python/ctrlapp/loop.py),
-> [python/ctrlapp/context_manager.py](../python/ctrlapp/context_manager.py),
-> [python/ctrlapp/tools.py](../python/ctrlapp/tools.py),
-> [python/ctrlapp/config.py](../python/ctrlapp/config.py).
+> Klawbot 当前截图链路（采集 → 编码 → 发送 → 历史压缩 → 落盘）的实现备忘。
+> 主要代码：[python/klawbot/screen.py](../python/klawbot/screen.py),
+> [python/klawbot/loop.py](../python/klawbot/loop.py),
+> [python/klawbot/context_manager.py](../python/klawbot/context_manager.py),
+> [python/klawbot/tools.py](../python/klawbot/tools.py),
+> [python/klawbot/config.py](../python/klawbot/config.py).
 
 ---
 
@@ -63,7 +63,7 @@ _capture_cursor_local(cx, cy):
     clamp 到屏幕边界
 ```
 
-实现：[python/ctrlapp/uia.py](../python/ctrlapp/uia.py) 是一个纯 `ctypes` COM 包装（~150 行，不引入新依赖），第一次调用 ~60ms（COM 初始化），后续 <5ms。
+实现：[python/klawbot/uia.py](../python/klawbot/uia.py) 是一个纯 `ctypes` COM 包装（~150 行，不引入新依赖），第一次调用 ~60ms（COM 初始化），后续 <5ms。
 
 为什么引入这个：原固定 200×200 遇到计算器显示区这种细长控件（约 280×60）会拍不全上下文；遇到侧边栏这种细高窓口也一样。参考 Snipaste “鼠标隐居 UI 元素 bbox” 的交互，UIA 取到的 rect 往往是“语义上最小有意义的 widget”，拍下来后上下文完整。这不破坏“纯视觉”原则——L3 **给模型的仍然只是像素**，UIA 只决定 crop 矩形。
 
@@ -90,7 +90,7 @@ LLM 给 `coordinate` 时必须用**当前 `last_capture` 的 sent_size 坐标系
 
 ### 3.3 动作后自动补图（post-step）—— **L2 只补一次，之后默认 L3**
 
-这是当前最关键的一条策略，由 `tool.active_app_rect` 和 `tool.active_app_l2_shown` 两个状态位驱动（[loop.py L1102-1150](../python/ctrlapp/loop.py#L1102-L1150)）：
+这是当前最关键的一条策略，由 `tool.active_app_rect` 和 `tool.active_app_l2_shown` 两个状态位驱动（[loop.py L1102-1150](../python/klawbot/loop.py#L1102-L1150)）：
 
 ```
 本步是否调用了 screenshot？
@@ -114,7 +114,7 @@ LLM 给 `coordinate` 时必须用**当前 `last_capture` 的 sent_size 坐标系
 要点：
 - **同一个 pin 下，post-step 的 L2 通常只拍一次。** 之后每一步 post 默认是小尺寸 L3 cursor-local，省 token、省网络、省模型 vision pass。
 - L3 拍完**不覆盖** `last_capture`，所以模型下一步给的坐标继续按 L2 map 的尺寸算。
-- **鼠标越界守卫**（[loop.py L1283-1326](../python/ctrlapp/loop.py#L1283-L1326)）：拍 L3 之前会用 `window.cursor_pos()` 校验当前光标位置是否还在 `active_app_rect` 矩形内。如果不在（典型场景：点击意外把焦点切到别的 app、模态弹窗抢焦点、`focus_window` 把目标窗口移到新位置但鼠标仍停在旧坐标），L3 cursor-local 拍出来全是无关像素——这种时候直接降级到"重拍一张 active_app_rect 的 L2"，并刷新 `last_capture` 让坐标系重新对齐。tag 文本里会注明 `cursor outside app rect → L3 skipped; cursor=(cx,cy) rect=(...)`，方便事后排查。
+- **鼠标越界守卫**（[loop.py L1283-1326](../python/klawbot/loop.py#L1283-L1326)）：拍 L3 之前会用 `window.cursor_pos()` 校验当前光标位置是否还在 `active_app_rect` 矩形内。如果不在（典型场景：点击意外把焦点切到别的 app、模态弹窗抢焦点、`focus_window` 把目标窗口移到新位置但鼠标仍停在旧坐标），L3 cursor-local 拍出来全是无关像素——这种时候直接降级到"重拍一张 active_app_rect 的 L2"，并刷新 `last_capture` 让坐标系重新对齐。tag 文本里会注明 `cursor outside app rect → L3 skipped; cursor=(cx,cy) rect=(...)`，方便事后排查。
 - 想刷新 L2 map：模型显式 `screenshot(level="active_window")`，会同时把 `active_app_l2_shown` 置 True，下一步仍走 L3。
 - 离开 App / 释放 pin：模型显式 `screenshot(level="fullscreen")`，`active_app_rect` 被清掉，恢复到无 pin 的 L1 默认。
 - L2 / L3 两条路径任何一步异常都会回退到 L1（并清掉 pin），保证至少有图。
@@ -122,7 +122,7 @@ LLM 给 `coordinate` 时必须用**当前 `last_capture` 的 sent_size 坐标系
 
 ### 3.3.1 例外：click_verify 判定 miss 会附一张 L3 提醒
 
-`screenshot.click_verify_enabled = True` 时，每次点击走"前后像素差校验"（[tools.py L260-310](../python/ctrlapp/tools.py#L260-L310)）：
+`screenshot.click_verify_enabled = True` 时，每次点击走"前后像素差校验"（[tools.py L260-310](../python/klawbot/tools.py#L260-L310)）：
 
 ```
 [拍] pre_l3  = capture_around(x, y, r)
@@ -148,7 +148,7 @@ else:
 `safety.verify_click_with_l3 = True` 时，本步若出现了点击类动作（`left/right/middle/double/triple_click` / `left_click_drag`），且 post 主图本身不是 L3，则**额外**抓一张鼠标周围 L3，跟主图一起回送，方便模型核对"我刚刚点中了什么"。
 
 ### 3.5 两阶段点击预览（preview L3）
-`safety.verify_click_target_before = True` 时，每个含 `coordinate` 的点击走"先预览再确认"协议（[`tools.py::_maybe_pre_click_verify`](../python/ctrlapp/tools.py)）：
+`safety.verify_click_target_before = True` 时，每个含 `coordinate` 的点击走"先预览再确认"协议（[`tools.py::_maybe_pre_click_verify`](../python/klawbot/tools.py)）：
 
 1. 模型第一次提交点击（不带 `confirmed`）：系统**不真正点**，用 `sensor.capture_around(sx, sy, radius_screen)` 在目标坐标周围抓一张 L3 tile 回送；
 2. 模型核对 tile 后，重发同一动作并带 `confirmed=true` 才真正落点。
@@ -199,7 +199,7 @@ else:
 
 每张截图无论是否被发给 LLM，都会落盘：
 
-- 路径 `%LOCALAPPDATA%\dev.ctrlapp\logs\<thread-id>\step-NNN-*.png`
+- 路径 `%LOCALAPPDATA%\dev.klawbot\logs\<thread-id>\step-NNN-*.png`
 - 同时在 `events.jsonl` 写一条 `step_image`：`{step, level, width, height, file, path, phase: init|post}`。
 - `Agent._record_img` 维护 `md5(发送字节) → 文件名` dict，让 `context_manager.compress_old_images` 把图替换成占位文字时能写出准确的 `file=`。
 - `_sanitize_for_log` 在写 `context.log`（每步发给 LLM 的 messages 全文）时把 base64 数据块替换成 `[image: <文件名>]`，避免 log 出现兆级 base64。
@@ -345,11 +345,11 @@ verify_click_target_radius_px   = 60
 
 想"看到 1+1= 的显示框"，三种思路：
 
-- **A. 退回 L2（零代码）。** 计算器整窗 ~320×500，L2 active_window 完全够看清显示框。在 [calculator.py](../python/ctrlapp/apps/calculator.py) 的 tip 里加一条「输入完用 L2 校验结果」即可。当前 §3.3 的 post-step 状态机在第一次 pin 时拍的就是 L2，模型显式 `screenshot(level="active_window")` 也能强制刷新。
-- **B. 用 UIA 直接读结果文本（不截图）。** [uia.py](../python/ctrlapp/uia.py) 已有 IUIAutomation 实例，扩展一个 `find_element_by_automation_id(hwnd, "CalculatorResults")` 就能把 Win11 计算器结果框的字符串原样取出来（Name 属性形如 `"显示为 2"`）。比让 LLM 看像素更准、更快、Token 更少。
-- **C. 让 L3 中心 = 焦点控件中心。** 扩展 [uia.py](../python/ctrlapp/uia.py) 加 `focused_element_rect()`（`IUIAutomation::GetFocusedElement` vtable 第 8 槽 + `CurrentBoundingRectangle`），在 `_capture_cursor_local` 里加 `cfg.l3_follow_focus` 开关：开启时优先用 focused element 的 rect，没有再退回 cursor。这样 `keyboard.type` 后续步骤的 L3 自动落在显示框上。
+- **A. 退回 L2（零代码）。** 计算器整窗 ~320×500，L2 active_window 完全够看清显示框。在 [calculator.py](../python/klawbot/apps/calculator.py) 的 tip 里加一条「输入完用 L2 校验结果」即可。当前 §3.3 的 post-step 状态机在第一次 pin 时拍的就是 L2，模型显式 `screenshot(level="active_window")` 也能强制刷新。
+- **B. 用 UIA 直接读结果文本（不截图）。** [uia.py](../python/klawbot/uia.py) 已有 IUIAutomation 实例，扩展一个 `find_element_by_automation_id(hwnd, "CalculatorResults")` 就能把 Win11 计算器结果框的字符串原样取出来（Name 属性形如 `"显示为 2"`）。比让 LLM 看像素更准、更快、Token 更少。
+- **C. 让 L3 中心 = 焦点控件中心。** 扩展 [uia.py](../python/klawbot/uia.py) 加 `focused_element_rect()`（`IUIAutomation::GetFocusedElement` vtable 第 8 槽 + `CurrentBoundingRectangle`），在 `_capture_cursor_local` 里加 `cfg.l3_follow_focus` 开关：开启时优先用 focused element 的 rect，没有再退回 cursor。这样 `keyboard.type` 后续步骤的 L3 自动落在显示框上。
 
-目前**未实现**任何一种，留作后续可选改进。三个方向取舍：A 最省事，B 最准（适合数值/文本类 App，写进 [meta_tools.py](../python/ctrlapp/meta_tools.py) 当独立工具更合适），C 改动小但只解决"看清焦点控件"这一个 use case。
+目前**未实现**任何一种，留作后续可选改进。三个方向取舍：A 最省事，B 最准（适合数值/文本类 App，写进 [meta_tools.py](../python/klawbot/meta_tools.py) 当独立工具更合适），C 改动小但只解决"看清焦点控件"这一个 use case。
 
 ---
 

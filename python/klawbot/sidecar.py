@@ -1,6 +1,6 @@
-"""ctrlapp · stdio JSON-RPC sidecar 模式
+"""klawbot · stdio JSON-RPC sidecar 模式
 
-让 Tauri / Rust 主进程把 ctrlapp 拉起来后，通过 **行分隔 JSON（NDJSON）**
+让 Tauri / Rust 主进程把 klawbot 拉起来后，通过 **行分隔 JSON（NDJSON）**
 互相通信。设计要点：
 
 - 协议帧：每行一个 JSON 对象，UTF-8。
@@ -39,7 +39,7 @@
 - ``run_start`` ``{instruction, run_dir, model, max_steps, autonomy}``
 - ``error`` ``{message}``
 
-启动方式：``python -m ctrlapp --sidecar``。
+启动方式：``python -m klawbot --sidecar``。
 """
 from __future__ import annotations
 
@@ -283,7 +283,7 @@ instruction in this run.
             _writeln({"event": "launcher_scan_schedule_register_failed",
                       "message": f"{type(exc).__name__}: {exc}"})
         # 同样注册（幂等）每日把所有系统托盘图标 IsPromoted=1 的扫描，
-        # 让任务栏不再藏 ctrlapp / 微信 / 等图标到 "^" 溢出菜单里。
+        # 让任务栏不再藏 klawbot / 微信 / 等图标到 "^" 溢出菜单里。
         try:
             scheduler_mod.ensure_schedule(
                 name=self._TRAY_PROMOTE_NAME,
@@ -335,7 +335,7 @@ instruction in this run.
             on_confirmed=self._on_taskbar_notify_confirmed,
         )
         self._append_startup_log(
-            f"taskbar_monitor ready: manual_schedule_required name={self._VISUAL_NOTIFY_SCHEDULE_NAME} instruction={self._VISUAL_NOTIFY_INSTRUCTION} action={self._VISUAL_NOTIFY_ACTION}"
+            f"taskbar_monitor ready: name={self._VISUAL_NOTIFY_SCHEDULE_NAME} instruction={self._VISUAL_NOTIFY_INSTRUCTION} action={self._VISUAL_NOTIFY_ACTION}"
         )
         self._append_startup_log(
             f"taskbar_height_diag: auto_detect={self._taskbar_monitor._auto_detect_taskbar_height}"
@@ -344,16 +344,29 @@ instruction in this run.
             f" effective_px={self._taskbar_monitor._strip_height_px}"
             f" source={self._taskbar_monitor._strip_height_source}"
         )
-        # 不再自动创建内部监听定时任务：由用户在“定时”页手动添加。
+        # 自动注册（幂等）任务栏监听内部定时任务，确保安装后开箱可用。
+        # 已存在同类条目时不会覆盖用户的修改（auto_chat_apps 仅在缺失时种入）。
+        recommended_every = max(1, int(round(float(self.cfg.visual_notify.poll_interval_sec))))
+        try:
+            scheduler_mod.ensure_schedule(
+                name=self._VISUAL_NOTIFY_SCHEDULE_NAME,
+                instruction=self._VISUAL_NOTIFY_INSTRUCTION,
+                spec={"kind": "secondly", "every": recommended_every},
+                action=self._VISUAL_NOTIFY_ACTION,
+                autonomy="full",
+                max_steps=1,
+                enabled=True,
+                auto_chat_apps=["微信", "Microsoft Teams"],
+            )
+        except Exception as exc:
+            _writeln({"event": "visual_notify_schedule_register_failed",
+                      "message": f"{type(exc).__name__}: {exc}"})
         _writeln({
-            "event": "taskbar_monitor_ready_manual_schedule_required",
+            "event": "taskbar_monitor_ready",
             "name": self._VISUAL_NOTIFY_SCHEDULE_NAME,
             "instruction": self._VISUAL_NOTIFY_INSTRUCTION,
             "action": self._VISUAL_NOTIFY_ACTION,
-            "recommended_spec": {
-                "kind": "secondly",
-                "every": max(1, int(round(float(self.cfg.visual_notify.poll_interval_sec)))),
-            },
+            "recommended_spec": {"kind": "secondly", "every": recommended_every},
         })
 
     def _stop_taskbar_monitor(self) -> None:

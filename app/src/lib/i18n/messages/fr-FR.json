@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "ctrlapp · Agent de bureau"
+    "title": "Klawbot · Agent de bureau"
   },
   "lang": {
     "picker_label": "Langue"
@@ -55,7 +55,7 @@
     "stderr_summary": "journal sidecar ({n})"
   },
   "settings": {
-    "page_title": "ctrlapp · Paramètres",
+    "page_title": "Klawbot · Paramètres",
     "back_to_chat": "← Retour au chat",
     "history_link": "Historique",
     "heading": "Paramètres",
@@ -98,7 +98,7 @@
     "save_button": "Enregistrer",
     "saving_button": "Enregistrement…",
     "saved_at": "Enregistré @ {at}",
-    "hot_reload_hint": "L'enregistrement tente un rechargement à chaud du sidecar ; si une tâche tourne, réessayez plus tard ou redémarrez ctrlapp.",
+    "hot_reload_hint": "L'enregistrement tente un rechargement à chaud du sidecar ; si une tâche tourne, réessayez plus tard ou redémarrez Klawbot.",
     "ping_section_title": "Connectivité",
     "ping_button": "ping sidecar",
     "selfcheck_section_title": "Auto-vérification d'adaptation (Phase 1.5)",
@@ -112,7 +112,7 @@
     "back": "‹ Retour"
   },
   "doze": {
-    "page_title": "ctrlapp · Sommeil",
+    "page_title": "Klawbot · Sommeil",
     "hint": "Réflexion en temps libre : quand le sidecar est au repos, une passe en arrière-plan analyse vos threads passés et demande au LLM ce qui mérite d'être conservé comme astuce ou mémoire long terme.",
     "info_scheduled": "planiﬁé — le prochain tick choisira un thread (statut bientôt mis à jour)",
     "info_cleared": "index traité vidé",
@@ -163,7 +163,7 @@
     "cancel": "Annuler"
   },
   "memory": {
-    "page_title": "ctrlapp · Mémoire",
+    "page_title": "Klawbot · Mémoire",
     "heading": "Mémoire à long terme · memory.md",
     "hint": "Au début de chaque tâche, ce contenu est ajouté à la fin du system prompt. L'Agent peut aussi y écrire via l'outil <code>remember</code>. <strong>N'y stockez pas</strong> de mots de passe ni de jetons.",
     "status_label": "Statut :",
@@ -178,7 +178,7 @@
     "saved_at": "Enregistré {at}"
   },
   "templates": {
-    "page_title": "ctrlapp · Modèles",
+    "page_title": "Klawbot · Modèles",
     "heading": "Modèles de tâche",
     "hint": "Enregistrez les instructions courantes comme modèles et lancez-les en un clic (utilise toujours le thread actif ; une tâche en cours est annulée d'abord).",
     "edit_heading": "Modifier le modèle",
@@ -202,7 +202,7 @@
     "empty": "Aucun modèle — créez-en un ci-dessus."
   },
   "tools_page": {
-    "page_title": "ctrlapp · Astuces",
+    "page_title": "Klawbot · Astuces",
     "heading": "Astuces d'opération · tools.md",
     "hint": "Au début de chaque tâche, ce contenu est ajouté à la fin du system prompt comme « bibliothèque d'astuces d'opération ». Pendant une tâche, l'Agent peut appeler <code>learn_tip</code> pour ajouter des leçons de succès/échec. Mettez ici uniquement des <strong>techniques d'opération</strong> (la façon la plus sûre de piloter une App / boîte de dialogue), pas les préférences utilisateur (qui vont dans memory.md) ni les faits ponctuels.",
     "status_label": "Statut :",
@@ -222,7 +222,7 @@
     "saved_at": "Enregistré {at}"
   },
   "schedules": {
-    "page_title": "ctrlapp · Planifications",
+    "page_title": "Klawbot · Planifications",
     "heading": "Tâches planifiées",
     "hint": "Le planificateur est résident dans le processus principal et tique dynamiquement (jusqu'au niveau de la seconde si nécessaire). Si une autre tâche s'exécute au moment prévu, l'exécution est mise en queue. <strong>Ne se déclenche que lorsque l'app est au premier plan ou en barre d'état.</strong>",
     "edit_heading": "Modifier la planification",

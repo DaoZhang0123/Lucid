@@ -159,8 +159,8 @@ llm_confirm_cooldown_sec = 5.0  # 防抖，避免连续触发
 
 已存在的 icon 识别相关能力可直接复用，不需要新增锚点定位链路：
 
-- `python/ctrlapp/icon_memory.py`：图标记忆与 atlas 构建
-- `python/ctrlapp/loop.py`：会把 icon atlas 注入到模型上下文
+- `python/klawbot/icon_memory.py`：图标记忆与 atlas 构建
+- `python/klawbot/loop.py`：会把 icon atlas 注入到模型上下文
 
 本方案中它们的作用是：在 Step 2 里提升模型识别任务栏图标与消息迹象的准确性。
 

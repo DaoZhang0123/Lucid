@@ -1,4 +1,4 @@
-﻿# Klawbot
+# Klawbot
 
 > **桌面里的对话型分身。**
 > 把要做的事说给 Klawbot，它看屏幕、动鼠键，再把桌面原样还回来。
@@ -17,7 +17,7 @@ Klawbot：  *截一张屏*
           → "完成。"
 ```
 
-Klawbot 是一个 Windows 桌面应用（`ctrlapp.exe` 引擎 + Tauri/WebView2 GUI）。下面是它已经能做的事，以及一大把可直接抄的指令例子。
+Klawbot 是一个 Windows 桌面应用（`klawbot.exe` 引擎 + Tauri/WebView2 GUI）。下面是它已经能做的事，以及一大把可直接抄的指令例子。
 
 ---
 
@@ -68,7 +68,7 @@ Klawbot 是一个 Windows 桌面应用（`ctrlapp.exe` 引擎 + Tauri/WebView2 G
 - **自检** —— 显示器 / DPI / Win+R 别名 / 点击坐标偏移。
 
 ### 对自己诚实
-- 每次运行落盘 `%LOCALAPPDATA%\dev.ctrlapp\logs\threads\<thread>\` —— `events.jsonl`、`messages.json`、所有截图、完整的 LLM context dump。
+- 每次运行落盘 `%LOCALAPPDATA%\dev.klawbot\logs\threads\<thread>\` —— `events.jsonl`、`messages.json`、所有截图、完整的 LLM context dump。
 - 三档自动度：`full` / `confirm_critical` / `confirm_each`。HITL 关键字列表（`删除` / `format` / `转账` / `确认付款` …）即使 `full` 也会拦下危险动作。
 
 ---
@@ -127,7 +127,7 @@ Klawbot 是一个 Windows 桌面应用（`ctrlapp.exe` 引擎 + Tauri/WebView2 G
 
 > *"截一张全屏，告诉我有几个明显的窗口。"*
 
-> *"读 `C:\Users\me\AppData\Local\dev.ctrlapp\config.toml`，告诉我现在用的是哪个 LLM provider。"*（走 `read_file` meta tool，不动 GUI。）
+> *"读 `C:\Users\me\AppData\Local\dev.klawbot\config.toml`，告诉我现在用的是哪个 LLM provider。"*（走 `read_file` meta tool，不动 GUI。）
 
 ### 🔁 值得存下来的模板
 
@@ -151,7 +151,7 @@ Klawbot 是一个 Windows 桌面应用（`ctrlapp.exe` 引擎 + Tauri/WebView2 G
 └──────────────────────┬─────────────────────────────┘
                        │ JSON-RPC over stdio
 ┌──────────────────────┴─────────────────────────────┐
-│  Python sidecar (ctrlapp.exe)                       │
+│  Python sidecar (klawbot.exe)                       │
 │  ReAct · 调度器 · 任务栏监听 · 打盹 · 记忆          │
 │        ↓ mss 截图          ↓ pyautogui 注入         │
 │        ↓ HTTP                                       │
@@ -159,13 +159,13 @@ Klawbot 是一个 Windows 桌面应用（`ctrlapp.exe` 引擎 + Tauri/WebView2 G
 └─────────────────────────────────────────────────────┘
 ```
 
-用户数据：`%LOCALAPPDATA%\dev.ctrlapp\`（配置、日志、计划、记忆、图标缓存、Copilot token）。
+用户数据：`%LOCALAPPDATA%\dev.klawbot\`（配置、日志、计划、记忆、图标缓存、Copilot token）。
 
 ---
 
 ## 安装（终端用户）
 
-去 release 下载 `ctrlapp_<版本>_x64-setup.exe`，跑安装包，从开始菜单启动 **Klawbot**。
+去 release 下载 `klawbot_<版本>_x64-setup.exe`，跑安装包，从开始菜单启动 **Klawbot**。
 
 首次启动后进**设置**，挑一个 LLM 后端：
 
@@ -186,14 +186,14 @@ Klawbot 是一个 Windows 桌面应用（`ctrlapp.exe` 引擎 + Tauri/WebView2 G
 ### 1）Python sidecar
 
 ```powershell
-cd D:\Project\ctrlAppWithoutMCP
+cd D:\Project\Klawbot
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
 
 pip install pyinstaller
-pyinstaller packaging\ctrlapp.spec
-# → dist\ctrlapp.exe
+pyinstaller packaging\klawbot.spec
+# → dist\klawbot.exe
 ```
 
 ### 2）Tauri 应用
@@ -202,10 +202,10 @@ pyinstaller packaging\ctrlapp.spec
 cd app
 npm install
 npm run tauri build
-# → app\src-tauri\target\release\bundle\nsis\ctrlapp_<版本>_x64-setup.exe
+# → app\src-tauri\target\release\bundle\nsis\klawbot_<版本>_x64-setup.exe
 ```
 
-Rust 壳期望 `ctrlapp.exe` 就在它旁边（或装在 `%LOCALAPPDATA%\ctrlapp\` 下）；本地开发跑前先把 PyInstaller 输出拷过去。
+Rust 壳期望 `klawbot.exe` 就在它旁边（或装在 `%LOCALAPPDATA%\klawbot\` 下）；本地开发跑前先把 PyInstaller 输出拷过去。
 
 ---
 
@@ -215,17 +215,17 @@ Rust 壳期望 `ctrlapp.exe` 就在它旁边（或装在 `%LOCALAPPDATA%\ctrlapp
 
 ```powershell
 # 连通性烟雾测试（单轮，不动鼠键）
-python -m ctrlapp --smoke-test "你是谁？一句话。"
+python -m klawbot --smoke-test "你是谁？一句话。"
 
 # 谨慎模式：每步 y/n
-python -m ctrlapp --max-steps 4 --autonomy confirm_each `
+python -m klawbot --max-steps 4 --autonomy confirm_each `
     "截一张全屏图，告诉我屏幕上有几个明显的窗口"
 
 # 换模型
-python -m ctrlapp --model claude-sonnet-4.5 "打开记事本，输入 hello"
+python -m klawbot --model claude-sonnet-4.5 "打开记事本，输入 hello"
 
 # 全自动（只在虚拟机 / 干净桌面里跑）
-python -m ctrlapp --autonomy full "打开记事本，输入 hello world，保存到桌面"
+python -m klawbot --autonomy full "打开记事本，输入 hello world，保存到桌面"
 ```
 
 `Ctrl+C` 中断；把鼠标快速甩到屏幕**左上角**会触发 PyAutoGUI 的 fail-safe。
@@ -234,7 +234,7 @@ python -m ctrlapp --autonomy full "打开记事本，输入 hello world，保存
 
 ## 配置
 
-默认模板在仓库根 [config.toml](config.toml)。**真正生效**的用户配置在 `%LOCALAPPDATA%\dev.ctrlapp\config.toml`，要改就改这个（仓里那份升级会被覆盖）。
+默认模板在仓库根 [config.toml](config.toml)。**真正生效**的用户配置在 `%LOCALAPPDATA%\dev.klawbot\config.toml`，要改就改这个（仓里那份升级会被覆盖）。
 
 主要段落：
 
@@ -278,7 +278,7 @@ GUI 设置页保存后会热重载 sidecar。
 
 ## Stargazers · 对标 OpenAdapt
 
-[![GitHub stars](https://img.shields.io/github/stars/codetrek/ctrlAppWithoutMCP?style=social)](https://github.com/codetrek/ctrlAppWithoutMCP/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/codetrek/Klawbot?style=social)](https://github.com/codetrek/Klawbot/stargazers)
 
 我们和同赛道的老前辈 [OpenAdaptAI/OpenAdapt](https://github.com/OpenAdaptAI/OpenAdapt) 做月度对照（同样定位"通用 computer-use agent"，比我们早开始），看自己的增长曲线在哪个相对位置：
 
@@ -291,5 +291,5 @@ GUI 设置页保存后会热重载 sidecar。
 
 ```powershell
 gh api repos/OpenAdaptAI/OpenAdapt --jq '.stargazers_count'
-gh api repos/codetrek/ctrlAppWithoutMCP --jq '.stargazers_count'
+gh api repos/codetrek/Klawbot --jq '.stargazers_count'
 ```

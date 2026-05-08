@@ -97,10 +97,10 @@ def _store_path() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.ctrlapp" / _BASENAME
+            return Path(local_app) / "dev.klawbot" / _BASENAME
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".ctrlapp" / _BASENAME
+        return Path(home) / ".klawbot" / _BASENAME
     return Path.cwd() / _BASENAME
 
 
@@ -360,7 +360,8 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
                     autonomy: str = "confirm_critical", max_steps: int = 25,
                     enabled: bool = True,
                     constraints: dict[str, Any] | None = None,
-                    action: str | None = None) -> dict[str, Any]:
+                    action: str | None = None,
+                    auto_chat_apps: list[str] | None = None) -> dict[str, Any]:
     """Ensure a schedule with the same (name, instruction, spec.kind) exists.
 
     If found, returns the existing item as-is. Otherwise creates one.
@@ -387,6 +388,12 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
 
     primary = next((it for it in items if _is_similar(it)), None)
     if primary is not None:
+        # Don't churn auto_chat_apps if the user already customised them; only
+        # seed when the field is missing entirely.
+        seed_apps = (
+            auto_chat_apps is not None
+            and "auto_chat_apps" not in primary
+        )
         need_update = (
             (primary.get("name") or "").strip() != n
             or (primary.get("instruction") or "").strip() != ins
@@ -396,11 +403,11 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
             or int(primary.get("max_steps") or 25) != int(max_steps)
             or bool(primary.get("enabled", True)) != bool(enabled)
             or (primary.get("constraints") or {}) != cons
+            or seed_apps
         )
         if not need_update:
             return primary
-        updated = update_schedule(
-            primary["id"],
+        update_kwargs: dict[str, Any] = dict(
             name=name,
             instruction=instruction,
             spec=spec,
@@ -410,6 +417,9 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
             enabled=enabled,
             constraints=cons,
         )
+        if seed_apps:
+            update_kwargs["auto_chat_apps"] = auto_chat_apps
+        updated = update_schedule(primary["id"], **update_kwargs)
         return updated or primary
     return add_schedule(
         name=name,
@@ -420,6 +430,7 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
         enabled=enabled,
         constraints=cons,
         action=schedule_action,
+        auto_chat_apps=auto_chat_apps,
     )
 
 
@@ -473,7 +484,7 @@ class Scheduler:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="ctrlapp-scheduler", daemon=True)
+        self._thread = threading.Thread(target=self._loop, name="klawbot-scheduler", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
