@@ -56,6 +56,7 @@ class Agent:
         event_sink: EventSink | None = None,
         cancel_event: threading.Event | None = None,
         thread_log: ThreadLog | None = None,
+        extra_system: str = "",
     ) -> None:
         self.cfg = cfg
         self.client = _build_llm_client(cfg, api_key)
@@ -67,6 +68,10 @@ class Agent:
         self.event_sink = event_sink
         self.cancel_event = cancel_event
         self.thread_log = thread_log
+        # 调用方追加在 system prompt 末尾的额外约束，例如 visual_notify 自动
+        # 回复任务的 AUTO-REPLY SAFETY POLICY。这样长策略不会污染 user 侧的
+        # instruction、不会进 thread 标题，也不会被 prune 掉。
+        self.extra_system = (extra_system or "").strip()
         self.context_mgr = ContextManager(cfg.context)
         # md5(png) -> 代表该截图的文件名，用于 context.log 里用文件名替换 base64 图。
         self._image_names: dict[str, str] = {}
@@ -526,6 +531,7 @@ class Agent:
                       and self.cfg.launchers.inject_catalog_in_system_prompt else "")
                 + (regions_mod.regions_for_prompt(self.cfg.regions)
                    if getattr(self.cfg, "regions", None) and self.cfg.regions.enabled else "")
+                + ("\n\n" + self.extra_system if self.extra_system else "")
             )},
         ]
         # 已安装应用图标合集图（每天定时全量扫描得到）：拼成一张大图注入到 system 之

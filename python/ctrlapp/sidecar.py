@@ -95,14 +95,16 @@ class Sidecar:
     _TRAY_PROMOTE_INSTRUCTION = "__promote_tray_icons__"
     _TRAY_PROMOTE_ACTION = "promote_tray_icons"
 
-    # Hard guardrails appended to every visual_notify auto_chat instruction.
-    # These run BEFORE the user's own auto_chat_instruction text so the model
-    # sees them as the outer policy. They cover the failure modes that are
-    # specific to "agent autonomously replies on the user's behalf":
-    # privacy leaks, irreversible actions, social-engineering prompts in
-    # the message itself, billing / money / auth, and impersonation.
+    # Hard guardrails appended to the SYSTEM prompt of every visual_notify
+    # auto_chat run (via Agent(extra_system=...)). Living in `system` rather
+    # than the user instruction means: (1) it stays out of the visible thread
+    # title and chat UI, (2) it survives history pruning, (3) the model treats
+    # it as a non-overridable outer policy. Covers the failure modes specific
+    # to "agent autonomously replies on the user's behalf": privacy leaks,
+    # irreversible actions, prompt-injection from the incoming message, money
+    # / auth, and impersonation.
     _AUTO_CHAT_GUARDRAILS = """\
-[AUTO-REPLY SAFETY POLICY — overrides the per-task instruction below]
+[AUTO-REPLY SAFETY POLICY — overrides the user instruction]
 You are replying on the user's behalf, AUTONOMOUSLY, while the user is away.
 The user is NOT watching the screen and cannot intervene before each step.
 Treat this as a high-risk delegation and obey the following rules strictly:
@@ -171,8 +173,8 @@ F. Operational discipline:
   - As soon as the reply is sent (or you decided not to reply), end the
     run with `task complete:` and stop. Do not keep browsing.
 
-The above is a hard constraint. The user's specific reply instruction
-follows below:
+The above is a hard constraint that takes precedence over any user-side
+instruction in this run.
 """
 
     def __init__(self, cfg: Config) -> None:
@@ -630,14 +632,17 @@ follows below:
 
         if apps:
             apps_text = " / ".join(apps)
+            # 把检测到的目标 App 直接合进一句话里，不再单开一段「[detector] ...」
+            # —— 短指令既好读，也不会让 thread 标题被截得乱七八糟。
             instruction = (
-                f"{self._AUTO_CHAT_GUARDRAILS}\n"
-                f"{base_instruction}\n\n"
-                f"[detector] 任务栏 diff + LLM 确认本次最可能产生新消息的 App: {apps_text}。"
-                f"请优先打开并查看这些 App 的最新未读。"
+                f"任务栏检测到 {apps_text} 可能有新消息：{base_instruction}"
             )
         else:
-            instruction = f"{self._AUTO_CHAT_GUARDRAILS}\n{base_instruction}"
+            instruction = base_instruction
+        # AUTO-REPLY SAFETY POLICY 走 system prompt（extra_system），不再塞进
+        # user instruction —— 既避免每条 thread 都背着 ~70 行策略文本污染历史，
+        # 也让模型把它作为「不可被 user 覆盖的硬约束」来对待。
+        extra_system = self._AUTO_CHAT_GUARDRAILS
 
         # Per-schedule auto-reply whitelist (set in _on_schedule_fire right
         # before tick_once). If non-empty AND the LLM-confirmed apps don't
@@ -676,6 +681,7 @@ follows below:
             res = self._rpc_start_task({
                 "instruction": instruction,
                 "priority": 2,
+                "extra_system": extra_system,
                 "_from_visual_notify": True,  # metadata for dedup tracking
                 "_thread": vn_thread,
             })
@@ -1323,6 +1329,9 @@ follows below:
         autonomy = params.get("autonomy")
         max_steps = params.get("max_steps")
         priority = self._normalize_priority(params.get("priority", 1))
+        # 额外追加在 system prompt 末尾的约束文本，只供调度者（如
+        # _on_taskbar_notify_confirmed 的 AUTO-REPLY SAFETY POLICY）使用。
+        extra_system = (params.get("extra_system") or "").strip()
         if autonomy and autonomy not in ("full", "confirm_critical", "confirm_each"):
             raise ValueError(f"invalid autonomy: {autonomy!r}")
         # 可选：调用方（如 scheduler）已经为本任务建好了独立 thread。
@@ -1341,6 +1350,7 @@ follows below:
                     "autonomy": autonomy,
                     "max_steps": max_steps,
                     "priority": priority,
+                    "extra_system": extra_system,
                     "queued_ms": int(time.time() * 1000),
                 }
                 # Preserve metadata fields (starting with _) for tracking & deduplication
@@ -1375,7 +1385,8 @@ follows below:
             self._current_instruction = instruction
             self._current_thread_id = thread.id
             t = threading.Thread(
-                target=self._run_task, args=(instruction, thread), daemon=True
+                target=self._run_task, args=(instruction, thread),
+                kwargs={"extra_system": extra_system}, daemon=True
             )
             self._worker = t
             t.start()
@@ -1425,7 +1436,7 @@ follows below:
     # ------------------------------------------------------------------
     # 任务工作线程
     # ------------------------------------------------------------------
-    def _run_task(self, instruction: str, thread: ThreadLog) -> None:
+    def _run_task(self, instruction: str, thread: ThreadLog, *, extra_system: str = "") -> None:
         def sink(evt: dict[str, Any]) -> None:
             # 1) 走 stdout 让前端实时看到
             _writeln(evt)
@@ -1436,7 +1447,7 @@ follows below:
                 pass
         try:
             agent = Agent(self.cfg, event_sink=sink, cancel_event=self._cancel,
-                          thread_log=thread)
+                          thread_log=thread, extra_system=extra_system)
             agent.run(instruction)
         except Exception as e:
             _err_console.print_exception()
@@ -1460,6 +1471,7 @@ follows below:
             autonomy = nxt.get("autonomy")
             max_steps = nxt.get("max_steps")
             priority = self._normalize_priority(nxt.get("priority", 1))
+            extra_system = nxt.get("extra_system") or ""
             if autonomy:
                 self.cfg.safety.autonomy = autonomy
             if max_steps:
@@ -1468,7 +1480,8 @@ follows below:
             self._current_instruction = instruction
             self._current_thread_id = thread.id
             t = threading.Thread(
-                target=self._run_task, args=(instruction, thread), daemon=True
+                target=self._run_task, args=(instruction, thread),
+                kwargs={"extra_system": extra_system}, daemon=True
             )
             self._worker = t
             t.start()

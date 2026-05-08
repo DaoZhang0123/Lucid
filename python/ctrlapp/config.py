@@ -318,8 +318,7 @@ class VisualNotifyConfig:
     # 检测到新消息后，是否自动发起一轮任务（查看消息并回复）。
     auto_chat_enabled: bool = False
     auto_chat_instruction: str = (
-        "检测到任务栏可能有新消息。请先查看 Teams/WeChat 最近未读消息，"
-        "基于上下文给出简短自然回复并发送。完成后返回继续监听。"
+        "请打开对应的聊天工具查看最近未读，结合上下文给出简短自然的回复后返回继续监听。"
     )
 
 
