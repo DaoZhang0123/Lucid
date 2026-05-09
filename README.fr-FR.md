@@ -1,8 +1,11 @@
-# OtterScope 🦦
+# <img src="app/src-tauri/icons/128x128.png" width="24" alt="OtterScope icon" /> OtterScope
+
+Un véritable assistant IA qui agit comme un humain sur ordinateur : sans MCP, contrôle direct de vos applications Windows, et auto-réponse continue quand vous êtes absent.
 
 > **Une paire de pattes habiles — et un œil vigilant — pour votre bureau Windows.**
 > Dites à OtterScope ce que vous voulez faire. Il scrute l'écran, manipule la souris ; quand vous n'êtes pas là, il lit les messages entrants et répond poliment à votre place.
 > **Sans MCP. Sans API par application. Sans plugin de navigateur.** Juste la **vision multimodale de Claude** qui pilote votre vrai clavier et votre vraie souris.
+> **Contrairement aux bots officiels (WeChat, Slack, Teams) — OtterScope contrôle votre vrai client**, donc il peut lire n'importe quel message, voir tout l'historique, répondre en votre nom, avec persistance d'état et sans enregistrement.
 
 > **Pourquoi ce nom ?** La loutre de mer est l'un des rares animaux sauvages qui **utilise des outils avec ses deux pattes** —
 > elle garde un caillou préféré sous l'aisselle et casse des coquillages sur son ventre,
@@ -33,13 +36,14 @@ OtterScope est livré comme une appli de bureau Windows (`otterscope.exe` comme 
 | --- | --- | --- |
 | Intégration par appli | Chaque appli demande un SDK / plugin / serveur MCP | **Zéro.** Si un humain peut l'utiliser, OtterScope le peut aussi. |
 | Marche avec les applis fermées (banques, ERP, jeux, WeChat…) | ❌ rarement | ✅ les pixels restent des pixels |
+| Auto-réponse aux messages | Bots officiels seulement ; approbation requise ; pas d'état ; ne voit pas l'historique complet | ✅ **Contrôle votre vrai client.** Lit n'importe quel message, voit l'historique complet, répond en votre nom, avec persistance d'état. |
 | Mise en place | Des heures de glue code | Installer, choisir un LLM, taper une phrase |
 | Casse à chaque mise à jour d'API | En permanence | Seulement si l'UI change visuellement |
 | Coût | Verrouillage fournisseur | Apportez votre propre LLM (Anthropic / Copilot / proxy) |
 
 ---
 
-## Ce que OtterScope sait faire aujourd'hui (`v0.3.0`)
+## Ce que OtterScope sait faire aujourd'hui
 
 ### Vous parle
 - Coquille de chat conversationnelle (Tauri 2 + SvelteKit + WebView2), icône de barre des tâches, raccourci global d'arrêt d'urgence (`Ctrl+Alt+Esc`).
@@ -59,7 +63,7 @@ OtterScope est livré comme une appli de bureau Windows (`otterscope.exe` comme 
 
 ### Surveille pour vous quand vous êtes ailleurs
 - **Notification visuelle de la barre des tâches** — diff dHash périodique sur la barre ; si un changement candidat apparaît, un appel LLM bon marché confirme s'il s'agit d'un nouveau message et *quelle* appli l'a déclenché. **Liste blanche d'applis** par planification — OtterScope ne touche que ce que vous autorisez.
-- **Auto-réponse** avec une **AUTO-REPLY SAFETY POLICY** codée en dur dans le system prompt : ne jamais divulguer d'infos perso ou de codes, ne jamais cliquer sur payer / accepter / installer, ne jamais accepter fichiers / demandes d'amis / partage d'écran, escalade-et-arrêt en cas d'ambiguïté.
+- **Auto-réponse** avec une **AUTO-REPLY SAFETY POLICY** codée en dur dans le system prompt : ne jamais divulguer d'infos perso ou de codes, ne jamais cliquer sur payer / accepter / installer, ne jamais accepter fichiers / demandes d'amis / partage d'écran, escalade-et-arrêt en cas d'ambiguïté. *Contrairement aux bots WeChat officiels (qui demandent une approbation, n'ont pas d'état persistant et ne peuvent pas contrôler les messages sortants), OtterScope pilote votre vrai client WeChat — vous obtenez donc une vraie auto-réponse autonome et intelligente.*
 
 ### Planifications et modèles
 - **Planifications** — modes cron + ponctuel + visual_notify. Pause / reprise / « exécuter maintenant ».
@@ -134,14 +138,6 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 > *« Prends une capture plein écran et dis-moi combien de fenêtres sont visibles. »*
 
 > *« Lis `C:\Users\me\AppData\Local\dev.otterscope\config.toml` et dis-moi quel provider LLM est actif. »* (Utilise le meta tool `read_file`, pas de clic.)
-
-### 🔁 Modèles à garder
-
-| Nom | Instruction |
-| --- | --- |
-| **Brouillon de standup quotidien** | « Ouvre ma page OneNote Daily Standup, résume les commits d'hier et le calendrier d'aujourd'hui en 3 puces chacun, colle dans la page. » |
-| **Capture vers presse-papiers** | « Prends une capture de la fenêtre active, copie-la dans le presse-papiers, dis-moi 'fait'. » |
-| **Auto-réponse heures calmes** | (planification visual_notify) « Si WeChat ou Teams pingue entre 19 h et 8 h, réponds 'Je suis AFK, je reviens demain' et termine. » |
 
 ---
 
@@ -218,22 +214,38 @@ La coquille Rust attend `otterscope.exe` à côté d'elle (ou installé sous `%L
 
 ## Utilisation en CLI (sans GUI)
 
-La CLI originale fonctionne toujours et reste le moyen le plus rapide de tester :
+Lancez les commandes depuis `D:\Project\OtterScope\python` (ou faites `cd python` depuis la racine du dépôt).
+
+Si votre provider demande une clé, définissez-la d'abord :
 
 ```powershell
+# provider proxy
+$env:LITELLM_MASTER_KEY = "your_proxy_key"
+
+# provider anthropic
+$env:ANTHROPIC_API_KEY = "sk-ant-..."
+```
+
+Puis exécutez :
+
+```powershell
+cd D:\Project\OtterScope\python
+
 # Test de connectivité (un seul tour, ne touche pas la souris/clavier)
-python -m otterscope --smoke-test "Qui es-tu ? Une phrase."
+..\.venv\Scripts\python.exe -m otterscope --smoke-test "Qui es-tu ? Une phrase."
 
 # Mode prudent : confirmation y/n à chaque étape
-python -m otterscope --max-steps 4 --autonomy confirm_each `
+..\.venv\Scripts\python.exe -m otterscope --max-steps 4 --autonomy confirm_each `
     "Prends une capture plein écran et dis-moi combien de fenêtres sont visibles."
 
 # Changer de modèle
-python -m otterscope --model claude-sonnet-4.5 "Ouvre Notepad et tape hello"
+..\.venv\Scripts\python.exe -m otterscope --model claude-sonnet-4.5 "Ouvre Notepad et tape hello"
 
 # Autonomie totale (uniquement en VM / bureau jetable)
-python -m otterscope --autonomy full "Ouvre Notepad, tape hello world, enregistre sur le Bureau"
+..\.venv\Scripts\python.exe -m otterscope --autonomy full "Ouvre Notepad, tape hello world, enregistre sur le Bureau"
 ```
+
+Si vous voyez `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`, renseignez `[llm.proxy].api_key` dans `%LOCALAPPDATA%\dev.otterscope\config.toml` ou exportez `LITELLM_MASTER_KEY`.
 
 `Ctrl+C` pour interrompre. Lancer la souris dans le **coin haut-gauche** déclenche le fail-safe de PyAutoGUI.
 
@@ -262,18 +274,6 @@ Sauvegarder dans Paramètres recharge le sidecar à chaud.
 
 ---
 
-## Problèmes courants
-
-- **`HTTP 500 … Connection error`** — soubresaut côté Copilot upstream ; le client retry les 5xx. Relancez.
-- **`HTTP 413 Request Entity Too Large`** — trop de captures accumulées. Réduisez `[llm].keep_recent_screenshots`, `[screenshot].l1_max_long_edge`, `--max-steps`, ou passez `[logging].image_format` à `"jpg"`.
-- **`AuthenticationError: Failed to refresh API key`** — le token device-login Copilot a expiré. Reconnectez-vous depuis Paramètres.
-- **`No such model …`** — modèle non activé sur votre proxy ou ID erroné. Changez dans Paramètres.
-- **`BitBlt: Access Denied`** — Windows est sur l'écran de verrouillage / le bureau sécurisé Winlogon. Déverrouillez ; ou utilisez *display off* (`nircmd monitor off`) au lieu de *lock* pour que les captures continuent à fonctionner.
-- **Saisie chinoise corrompue** — assurez-vous que `[input].chinese_input = "clipboard"` (défaut). Cela contourne complètement l'IME.
-- **Clics décalés en multi-écrans** — gardez la même mise à l'échelle sur tous les écrans, ou ajustez `[screenshot].l1_max_long_edge` pour ne pas trop réduire l'UI.
-
----
-
 ## Avertissement
 
 - Le modèle **prend complètement le contrôle de votre souris et de votre clavier**. À utiliser sur un bureau que vous pouvez interrompre, ou en VM.
@@ -283,20 +283,6 @@ Sauvegarder dans Paramètres recharge le sidecar à chaud.
 
 ---
 
-## Stargazers · benchmark vs OpenAdapt
+## Stargazers
 
 [![GitHub stars](https://img.shields.io/github/stars/codetrek/OtterScope?style=social)](https://github.com/codetrek/OtterScope/stargazers)
-
-On suit notre courbe par rapport au voisin spirituel [OpenAdaptAI/OpenAdapt](https://github.com/OpenAdaptAI/OpenAdapt) — même créneau (RPA générative / agent computer-use), projet plus ancien. Mise à jour mensuelle :
-
-| Date | OtterScope ★ | OpenAdapt ★ | Note |
-| --- | ---: | ---: | --- |
-| 2026-05-01 | _tbd_ | ~1566 | OpenAdapt à 233 forks |
-| 2026-06-01 |  |  |  |
-
-Script de rafraîchissement :
-
-```powershell
-gh api repos/OpenAdaptAI/OpenAdapt --jq '.stargazers_count'
-gh api repos/codetrek/OtterScope --jq '.stargazers_count'
-```

@@ -34,6 +34,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
+    },
     "resources": {
       "../../dist/otterscope.exe": "otterscope.exe",
       "../../config.toml": "config.toml"

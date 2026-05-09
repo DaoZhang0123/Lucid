@@ -14,3 +14,4 @@ pip_install.log
 
 # Runtime data
 logs/
+*.log

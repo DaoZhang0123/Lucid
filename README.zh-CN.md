@@ -1,8 +1,11 @@
-# OtterScope 🦦
+# <img src="app/src-tauri/icons/128x128.png" width="24" alt="OtterScope icon" /> OtterScope
+
+一个真正“像人操作电脑”的 AI 助手：无需 MCP，直接控制你的 Windows 应用，并在你不在时持续自动回复。
 
 > **为你的 Windows 桌面配上一双灵巧的爪子、一双不眨的眼睛。**
 > 把要做的事说给 OtterScope，它会看屏幕、动鼠键；你不在的时候，它替你看消息、替你回话。
 > **不依赖任何 MCP / 应用 API / 浏览器插件。** 仅靠 **Claude 的多模态视觉**指挥真实的鼠标和键盘。
+> **不同于官方 bot（微信等）——OtterScope 直接控制你的真实客户端**，所以能看任何消息、读到完整上下文、以你的身份回话，还有状态持久化、无需审核。
 
 > **名字从哪来？** 海獅是那种极少见的、会用工具的野生动物——胸口抱一块随身小石头，
 > 付身浮在水面，两只爪子都腔贝壳。**Otter** 是动手的那一半，**Scope** 是看东西的那一半——
@@ -32,13 +35,14 @@ OtterScope 是一个 Windows 桌面应用（`otterscope.exe` 引擎 + Tauri/WebV
 | --- | --- | --- |
 | 适配每个 App | 每个都要 SDK / 插件 / MCP server | **零适配。** 人能用，它就能用。 |
 | 闭源/老旧软件（网银、ERP、游戏、微信…） | ❌ 通常不行 | ✅ 像素就是像素 |
+| 给你自动回复消息 | 官方 bot 只能；需要审核；无状态；看不到完整历史 | ✅ **驱动你真实的客户端。** 能看任何消息、读完整历史、以你的身份回话、有状态持久化。 |
 | 上手成本 | 几小时胶水代码 | 装好 → 选 LLM → 一句话 |
 | App 一更新 API 就崩 | 经常 | 只在 UI 视觉变了之后崩 |
 | 成本 | 厂商锁定 | 自己挑 LLM（Anthropic / Copilot / 代理） |
 
 ---
 
-## OtterScope 现在能做什么（`v0.3.0`）
+## OtterScope 现在能做什么
 
 ### 跟你聊天
 - 对话式聊天壳（Tauri 2 + SvelteKit + WebView2），系统托盘，全局急停热键 `Ctrl+Alt+Esc`。
@@ -58,7 +62,7 @@ OtterScope 是一个 Windows 桌面应用（`otterscope.exe` 引擎 + Tauri/WebV
 
 ### 你不在的时候帮你盯着
 - **任务栏视觉通知** —— 周期性 dHash diff 任务栏；可疑变化触发一次便宜的 LLM 二次确认，判断是不是真有新消息、是哪个 App。每条计划自带**应用白名单**，只动你允许的程序。
-- **自动回复**带硬编码的 **AUTO-REPLY SAFETY POLICY**（已嵌进 system prompt 层）：不泄露个人信息 / 验证码，不点付款 / 同意 / 安装，不接收文件 / 好友请求 / 屏幕共享，遇到模糊情况立刻 escalate-and-stop。
+- **自动回复**带硬编码的 **AUTO-REPLY SAFETY POLICY**（已嵌进 system prompt 层）：不泄露个人信息 / 验证码，不点付款 / 同意 / 安装，不接收文件 / 好友请求 / 屏幕共享，遇到模糊情况立刻 escalate-and-stop。*不同于官方微信 bot（需要审核、无状态、无法控制出站消息），OtterScope 直接驱动你的真实微信客户端 —— 所以你能得到完整的、自主的、有状态的自动回复。*
 
 ### 计划任务 / 模板
 - **计划任务** —— cron 风格 + 单次 + visual_notify 三种模式。暂停 / 启用 / "立即执行"。
@@ -134,14 +138,6 @@ OtterScope 是一个 Windows 桌面应用（`otterscope.exe` 引擎 + Tauri/WebV
 
 > *"读 `C:\Users\me\AppData\Local\dev.otterscope\config.toml`，告诉我现在用的是哪个 LLM provider。"*（走 `read_file` meta tool，不动 GUI。）
 
-### 🔁 值得存下来的模板
-
-| 名字 | 指令 |
-| --- | --- |
-| **Daily standup 草稿** | "打开我的 Daily Standup OneNote 页，把昨天的 commit 和今天的日程各总结成 3 条粘进页面。" |
-| **截活动窗口到剪贴板** | "活动窗口截屏复制到剪贴板，告诉我 'done'。" |
-| **静默时段自动回复** | （visual_notify 计划）"19:00–次日 08:00 之间，微信 / Teams 来消息就回 '我现在不在键盘前，明天再回'，然后结束。" |
-
 ---
 
 ## 架构（一图）
@@ -216,22 +212,38 @@ Rust 壳期望 `otterscope.exe` 就在它旁边（或装在 `%LOCALAPPDATA%\otte
 
 ## CLI 用法（不带 GUI）
 
-最初的 CLI 仍能用，做烟雾测试最快：
+请在 `D:\Project\OtterScope\python` 目录运行（或在仓库根目录先 `cd python`）。
+
+如果当前 provider 需要 key，请先设置：
 
 ```powershell
+# proxy provider
+$env:LITELLM_MASTER_KEY = "your_proxy_key"
+
+# anthropic provider
+$env:ANTHROPIC_API_KEY = "sk-ant-..."
+```
+
+然后执行：
+
+```powershell
+cd D:\Project\OtterScope\python
+
 # 连通性烟雾测试（单轮，不动鼠键）
-python -m otterscope --smoke-test "你是谁？一句话。"
+..\.venv\Scripts\python.exe -m otterscope --smoke-test "你是谁？一句话。"
 
 # 谨慎模式：每步 y/n
-python -m otterscope --max-steps 4 --autonomy confirm_each `
+..\.venv\Scripts\python.exe -m otterscope --max-steps 4 --autonomy confirm_each `
     "截一张全屏图，告诉我屏幕上有几个明显的窗口"
 
 # 换模型
-python -m otterscope --model claude-sonnet-4.5 "打开记事本，输入 hello"
+..\.venv\Scripts\python.exe -m otterscope --model claude-sonnet-4.5 "打开记事本，输入 hello"
 
 # 全自动（只在虚拟机 / 干净桌面里跑）
-python -m otterscope --autonomy full "打开记事本，输入 hello world，保存到桌面"
+..\.venv\Scripts\python.exe -m otterscope --autonomy full "打开记事本，输入 hello world，保存到桌面"
 ```
+
+如果出现 `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`，请在 `%LOCALAPPDATA%\dev.otterscope\config.toml` 里设置 `[llm.proxy].api_key`，或导出 `LITELLM_MASTER_KEY` 环境变量。
 
 `Ctrl+C` 中断；把鼠标快速甩到屏幕**左上角**会触发 PyAutoGUI 的 fail-safe。
 
@@ -260,18 +272,6 @@ GUI 设置页保存后会热重载 sidecar。
 
 ---
 
-## 常见问题
-
-- **`HTTP 500 … Connection error`** —— 上游 Copilot 抖动；客户端已自动重试 5xx，再跑一次大概率就好。
-- **`HTTP 413 Request Entity Too Large`** —— 累计截图过多。调小 `[llm].keep_recent_screenshots`、`[screenshot].l1_max_long_edge`、`--max-steps`，或把 `[logging].image_format` 切成 `"jpg"`。
-- **`AuthenticationError: Failed to refresh API key`** —— Copilot 设备登录 token 过期，去设置页重新登录。
-- **`No such model …`** —— 代理没启用该 model_name 或填错了。设置页换一个。
-- **`BitBlt: 拒绝访问`** —— Windows 当前在锁屏 / Winlogon 安全桌面。解锁；或用「熄屏」（`nircmd monitor off`）替代「锁屏」，截图仍可工作。
-- **中文 type 乱码** —— 确认 `[input].chinese_input = "clipboard"`（默认），它直接走粘贴绕开输入法。
-- **多屏点击偏位** —— 所有屏保持同样缩放；必要时调 `[screenshot].l1_max_long_edge`，避免被过度缩小。
-
----
-
 ## 风险提醒
 
 - 模型会**完全接管你的鼠标键盘**。请在不重要的桌面 / 虚拟机里跑。
@@ -281,20 +281,6 @@ GUI 设置页保存后会热重载 sidecar。
 
 ---
 
-## Stargazers · 对标 OpenAdapt
+## Stargazers
 
 [![GitHub stars](https://img.shields.io/github/stars/codetrek/OtterScope?style=social)](https://github.com/codetrek/OtterScope/stargazers)
-
-我们和同赛道的老前辈 [OpenAdaptAI/OpenAdapt](https://github.com/OpenAdaptAI/OpenAdapt) 做月度对照（同样定位"通用 computer-use agent"，比我们早开始），看自己的增长曲线在哪个相对位置：
-
-| 日期 | OtterScope ★ | OpenAdapt ★ | 备注 |
-| ---: | ---: | ---: | --- |
-| 2026-05-01 | _tbd_ | ~1566 | OpenAdapt 同期 233 forks |
-| 2026-06-01 |  |  |  |
-
-刷新脚本：
-
-```powershell
-gh api repos/OpenAdaptAI/OpenAdapt --jq '.stargazers_count'
-gh api repos/codetrek/OtterScope --jq '.stargazers_count'
-```
