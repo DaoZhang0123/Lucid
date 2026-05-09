@@ -18,7 +18,8 @@
     "nav_memory": "Memory",
     "nav_tools": "Tips",
     "nav_doze": "Doze",
-    "nav_settings": "Settings"
+    "nav_settings": "Settings",
+    "theme_toggle": "Toggle light / dark theme"
   },
   "sidebar": {
     "heading": "Conversations",

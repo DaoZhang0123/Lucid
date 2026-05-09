@@ -6,6 +6,7 @@
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import type { UnlistenFn } from "@tauri-apps/api/event";
   import { appConfirm } from "$lib/appConfirm.svelte";
+  import { theme, toggleTheme } from "$lib/theme";
   import {
     chat,
     ensureChatListeners,
@@ -261,7 +262,17 @@
 
 <div class="app">
   <header>
-    <div class="title">{$_("app.title")}</div>
+    <div class="title">
+      <svg class="logo" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <circle cx="12" cy="12" r="2.6" fill="currentColor"/>
+        <line x1="12" y1="1.5" x2="12" y2="5.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <line x1="12" y1="18.5" x2="12" y2="22.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <line x1="1.5" y1="12" x2="5.5" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <line x1="18.5" y1="12" x2="22.5" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <span class="title-text">{$_("app.title")}</span>
+    </div>
     <div class="status" class:on={chat.sidecarReady} class:running={chat.running}>
       {#if chat.running}
         {#if chat.queuedThreadIds.length}
@@ -279,12 +290,80 @@
         {$_("header.status_disconnected")}
       {/if}
     </div>
-    <a class="link" href="/templates">{$_("header.nav_templates")}</a>
-    <a class="link" href="/schedules">{$_("header.nav_schedules")}</a>
-    <a class="link" href="/memory">{$_("header.nav_memory")}</a>
-    <a class="link" href="/tools">{$_("header.nav_tools")}</a>
-    <a class="link" href="/doze">{$_("header.nav_doze")}</a>
-    <a class="link" href="/settings">{$_("header.nav_settings")}</a>
+    <div class="nav-group">
+      <a class="nav-icon" href="/templates" data-tooltip={$_("header.nav_templates")} aria-label={$_("header.nav_templates")}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="5" y="3.5" width="14" height="17" rx="2"/>
+          <path d="M9 3.5v2h6v-2"/>
+          <line x1="8.5" y1="10" x2="15.5" y2="10"/>
+          <line x1="8.5" y1="13.5" x2="15.5" y2="13.5"/>
+          <line x1="8.5" y1="17" x2="13" y2="17"/>
+        </svg>
+      </a>
+      <a class="nav-icon" href="/schedules" data-tooltip={$_("header.nav_schedules")} aria-label={$_("header.nav_schedules")}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="13" r="7.5"/>
+          <path d="M12 9v4l2.5 1.8"/>
+          <path d="M5.5 4.5l-2 2"/>
+          <path d="M18.5 4.5l2 2"/>
+        </svg>
+      </a>
+      <a class="nav-icon" href="/memory" data-tooltip={$_("header.nav_memory")} aria-label={$_("header.nav_memory")}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="6" y="6" width="12" height="12" rx="2"/>
+          <rect x="9.5" y="9.5" width="5" height="5"/>
+          <line x1="9" y1="3" x2="9" y2="6"/>
+          <line x1="15" y1="3" x2="15" y2="6"/>
+          <line x1="9" y1="18" x2="9" y2="21"/>
+          <line x1="15" y1="18" x2="15" y2="21"/>
+          <line x1="3" y1="9" x2="6" y2="9"/>
+          <line x1="3" y1="15" x2="6" y2="15"/>
+          <line x1="18" y1="9" x2="21" y2="9"/>
+          <line x1="18" y1="15" x2="21" y2="15"/>
+        </svg>
+      </a>
+      <a class="nav-icon" href="/tools" data-tooltip={$_("header.nav_tools")} aria-label={$_("header.nav_tools")}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 17h6"/>
+          <path d="M10 20h4"/>
+          <path d="M12 3a6 6 0 0 0-3.6 10.8c.6.45 1 1.15 1.1 1.9l.05.3h5l.05-.3c.1-.75.5-1.45 1.1-1.9A6 6 0 0 0 12 3z"/>
+        </svg>
+      </a>
+      <a class="nav-icon" href="/doze" data-tooltip={$_("header.nav_doze")} aria-label={$_("header.nav_doze")}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 5h5l-5 6h5"/>
+          <path d="M5 12h4l-4 5h4"/>
+        </svg>
+      </a>
+      <a class="nav-icon" href="/settings" data-tooltip={$_("header.nav_settings")} aria-label={$_("header.nav_settings")}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="2.8"/>
+          <path d="M19.4 14.4a1.6 1.6 0 0 0 .32 1.76l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.76-.32 1.6 1.6 0 0 0-.97 1.46V20a2 2 0 1 1-4 0v-.06a1.6 1.6 0 0 0-1.05-1.46 1.6 1.6 0 0 0-1.76.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.6 1.6 0 0 0 .32-1.76 1.6 1.6 0 0 0-1.46-.97H4a2 2 0 1 1 0-4h.06a1.6 1.6 0 0 0 1.46-1.05 1.6 1.6 0 0 0-.32-1.76l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.6 1.6 0 0 0 1.76.32H10a1.6 1.6 0 0 0 .97-1.46V4a2 2 0 1 1 4 0v.06a1.6 1.6 0 0 0 .97 1.46 1.6 1.6 0 0 0 1.76-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.76V10a1.6 1.6 0 0 0 1.46.97H20a2 2 0 1 1 0 4h-.06a1.6 1.6 0 0 0-1.46.97z"/>
+        </svg>
+      </a>
+      <button class="nav-icon theme-toggle" type="button"
+              data-tooltip={$_("header.theme_toggle")}
+              aria-label={$_("header.theme_toggle")}
+              onclick={toggleTheme}>
+        {#if $theme === "dark"}
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <line x1="12" y1="2.5" x2="12" y2="5"/>
+            <line x1="12" y1="19" x2="12" y2="21.5"/>
+            <line x1="2.5" y1="12" x2="5" y2="12"/>
+            <line x1="19" y1="12" x2="21.5" y2="12"/>
+            <line x1="5.2" y1="5.2" x2="7" y2="7"/>
+            <line x1="17" y1="17" x2="18.8" y2="18.8"/>
+            <line x1="5.2" y1="18.8" x2="7" y2="17"/>
+            <line x1="17" y1="7" x2="18.8" y2="5.2"/>
+          </svg>
+        {:else}
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>
+          </svg>
+        {/if}
+      </button>
+    </div>
   </header>
 
   <div class="body">
@@ -416,12 +495,16 @@
         </div>
         <form onsubmit={(e) => { e.preventDefault(); start(); }}>
           <button type="button" class="attach" title={$_("footer.attach_title")}
-                  onclick={pickFiles}>
-            📎
+                  onclick={pickFiles} aria-label={$_("footer.attach_title")}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 11.5l-8.5 8.5a5 5 0 0 1-7-7L14 4.5a3.5 3.5 0 0 1 5 5L10.5 18a2 2 0 0 1-3-3l7.5-7.5"/>
+            </svg>
           </button>
           <button type="button" class="attach" title={$_("footer.attach_folder_title")}
-                  onclick={pickFolders}>
-            📁
+                  onclick={pickFolders} aria-label={$_("footer.attach_folder_title")}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+            </svg>
           </button>
           <textarea
             placeholder={$_("footer.input_placeholder")}
@@ -464,12 +547,46 @@
   }
   .toggle { background: transparent; color: #fff; border: 1px solid #4b5563; width: 1.6rem;
             height: 1.6rem; border-radius: 4px; cursor: pointer; font-size: 1rem; line-height: 1; }
-  .title { font-weight: 600; }
+  .theme-toggle { margin-left: 0; }
+  .title {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-family: "JetBrains Mono", "Cascadia Code", "Consolas", "SF Mono", ui-monospace, monospace;
+    font-weight: 500; letter-spacing: 0.04em;
+  }
+  .title .logo { color: #fff; flex: none; }
+  .title-text { color: #fff; }
   .status { font-size: 0.85rem; opacity: 0.8; }
   .status.on { color: #6ee7b7; opacity: 1; }
   .status.running { color: #fbbf24; opacity: 1; }
-  .link { color: #93c5fd; text-decoration: none; font-size: 0.9rem; margin-left: 0.8rem; }
-  .link:first-of-type { margin-left: auto; }
+  .nav-group {
+    margin-left: auto;
+    display: inline-flex; align-items: center; gap: 0.35rem;
+  }
+  .nav-icon {
+    position: relative;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.9rem; height: 1.9rem; border-radius: 6px;
+    background: transparent; color: #fff; border: 1px solid #4b5563;
+    text-decoration: none; cursor: pointer; padding: 0;
+    font-size: 1.05rem; line-height: 1;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .nav-icon:hover { background: rgba(255,255,255,0.10); border-color: #6b7280; }
+  .nav-icon::after {
+    content: attr(data-tooltip);
+    position: absolute; top: calc(100% + 6px); left: 50%;
+    transform: translateX(-50%) translateY(-2px);
+    background: #111827; color: #fff;
+    padding: 3px 8px; border-radius: 4px;
+    font-size: 0.75rem; line-height: 1.2; white-space: nowrap;
+    pointer-events: none; opacity: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    transition: opacity 0.1s ease 0.05s, transform 0.1s ease 0.05s;
+    z-index: 100;
+  }
+  .nav-icon:hover::after, .nav-icon:focus-visible::after {
+    opacity: 1; transform: translateX(-50%) translateY(0);
+  }
 
   .body { flex: 1; display: flex; min-height: 0; position: relative; }
   .edge-reveal { position: absolute; left: 0; top: 0; bottom: 0; width: 14px; z-index: 5; }
@@ -574,7 +691,8 @@
   form button { padding: 0 1.2rem; background: #2563eb; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
   form button:disabled { opacity: 0.5; cursor: not-allowed; }
   form button.attach { padding: 0 0.7rem; background: #fff; color: #475569;
-                       border: 1px solid #cbd5e1; font-size: 1.1rem; line-height: 1; }
+                       border: 1px solid #cbd5e1; font-size: 1.1rem; line-height: 1;
+                       display: inline-flex; align-items: center; justify-content: center; }
   form button.attach:hover:not(:disabled) { background: #f1f5f9; color: #1e293b; }
   .chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.4rem; }
   .chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.4rem 0.25rem 0.3rem;

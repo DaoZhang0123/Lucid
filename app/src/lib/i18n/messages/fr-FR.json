@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "OtterScope · Agent de bureau"
+    "title": "Lunette de Loutre · Agent de bureau"
   },
   "lang": {
     "picker_label": "Langue"
@@ -18,7 +18,8 @@
     "nav_memory": "Mémoire",
     "nav_tools": "Astuces",
     "nav_doze": "Veille",
-    "nav_settings": "Paramètres"
+    "nav_settings": "Paramètres",
+    "theme_toggle": "Basculer entre thème clair / sombre"
   },
   "sidebar": {
     "heading": "Conversations",

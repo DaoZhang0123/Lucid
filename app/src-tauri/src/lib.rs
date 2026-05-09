@@ -9,6 +9,38 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+/// Paint the Windows native title bar a specific RGB color
+/// (DWMWA_CAPTION_COLOR, requires Win11 22H2+). Falls back gracefully on
+/// older Windows / non-Windows builds.
+#[tauri::command]
+fn set_caption_color(window: tauri::Window, r: u8, g: u8, b: u8) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::{COLORREF, HWND};
+        use windows::Win32::Graphics::Dwm::{
+            DwmSetWindowAttribute, DWMWA_CAPTION_COLOR,
+        };
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let hwnd = HWND(hwnd.0 as *mut _);
+        // COLORREF is 0x00BBGGRR
+        let color = COLORREF((b as u32) << 16 | (g as u32) << 8 | (r as u32));
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_CAPTION_COLOR,
+                &color as *const _ as *const _,
+                std::mem::size_of::<COLORREF>() as u32,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, r, g, b);
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = env_logger::try_init();
@@ -98,6 +130,7 @@ pub fn run() {
             sidecar::doze_outputs,
             sidecar::doze_delete_output,
             sidecar::installed_apps_list,
+            set_caption_color,
         ])
         .setup(move |app| {
             // ---------- system tray ----------

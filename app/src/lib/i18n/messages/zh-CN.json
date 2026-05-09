@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "OtterScope · 桌面 Agent"
+    "title": "水獭瞭望 · 桌面智能体"
   },
   "lang": {
     "picker_label": "语言"
@@ -18,7 +18,8 @@
     "nav_memory": "记忆",
     "nav_tools": "技巧",
     "nav_doze": "打盹",
-    "nav_settings": "设置"
+    "nav_settings": "设置",
+    "theme_toggle": "切换浅色 / 深色主题"
   },
   "sidebar": {
     "heading": "对话",
