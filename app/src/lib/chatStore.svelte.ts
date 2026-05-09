@@ -20,7 +20,7 @@ export type ChatItem =
   | { kind: "user"; text: string }
   | { kind: "assistant"; step?: number; text: string }
   | { kind: "tool"; step: number; action: string; args: any; result?: { ok: boolean; output?: string; error?: string } }
-  | { kind: "image"; step: number; level: string; threadId?: string; file?: string; path?: string; dataUrl?: string }
+  | { kind: "image"; step: number; level: string; threadId?: string; file?: string; path?: string; dataUrl?: string; fromUser?: boolean }
   | { kind: "system"; text: string }
   | { kind: "final"; status: string; text: string };
 
@@ -102,6 +102,7 @@ function handleEvent(v: any) {
             for (const ev of events) {
               const ek = ev.event;
               if (ek === "user_input") chat.items.push({ kind: "user", text: ev.text ?? "" });
+              else if (ek === "user_attachments") pushUserAttachments(Array.isArray(ev.refs) ? ev.refs : []);
               else if (ek === "run_start") chat.items.push({ kind: "system", text: t("chat.run_started") });
               else if (ek === "assistant_text") chat.items.push({ kind: "assistant", step: ev.step, text: ev.text ?? "" });
               else if (ek === "tool_call") chat.items.push({ kind: "tool", step: ev.step, action: ev.action, args: ev.args });
@@ -169,6 +170,9 @@ function handleEvent(v: any) {
     push({ kind: "system", text: `错误：${v.message}` });
   } else if (k === "user_input") {
     // 这个事件只在重放老 thread 时使用；实时 user 消息已经在 startTask 里 push
+  } else if (k === "user_attachments") {
+    // live：用户在当前 thread 提交了附件；渲染 chip 卡片。
+    pushUserAttachments(Array.isArray(v.refs) ? v.refs : []);
   } else if (k === "task_queued") {
     if (v.thread_id && !chat.queuedThreadIds.includes(v.thread_id)) {
       chat.queuedThreadIds = [...chat.queuedThreadIds, v.thread_id];
@@ -231,15 +235,69 @@ export async function refreshThreadList(): Promise<void> {
   }
 }
 
-export async function startTask(text: string, autonomy: string, maxSteps: number): Promise<void> {
+export type FileRef = {
+  name: string;
+  path: string;
+  kind: "image" | "file" | "folder";
+};
+
+/** 把一组用户附件渲染成聊天项：图片走右对齐 image-card（异步填 dataUrl），
+ * 非图片走系统文本行。被三处共用：(1) startTask 立即 push 之前的 echo
+ * （现已下线，由后端事件统一产生）；(2) live 事件 user_attachments；
+ * (3) openThread 重放历史 thread。 */
+function pushUserAttachments(refs: FileRef[]): void {
+  if (!refs.length) return;
+  const images = refs.filter((r) => r.kind === "image");
+  const others = refs.filter((r) => r.kind !== "image");
+  for (const im of images) {
+    const card: any = { kind: "image", step: 0, level: "📎 附件", path: im.path, fromUser: true };
+    chat.items.push(card);
+    const idx = chat.items.length - 1;
+    void invoke<string>("read_attachment_b64", { path: im.path })
+      .then((url) => {
+        chat.items = chat.items.map((x, i) =>
+          i === idx && (x as any).path === im.path && x.kind === "image"
+            ? ({ ...x, dataUrl: url } as any)
+            : x);
+      })
+      .catch((e) => {
+        chat.items = chat.items.map((x, i) =>
+          i === idx ? ({ kind: "system", text: `📎 ${im.name}（无法预览：${e}）` } as any) : x);
+      });
+  }
+  if (others.length) {
+    const lines = others.map((r) => {
+      const icon = r.kind === "folder" ? "📁" : "📎";
+      return `  ${icon} ${r.name}  →  ${r.path}`;
+    }).join("\n");
+    chat.items.push({ kind: "system", text: `附带 ${others.length} 个项：\n${lines}` });
+  }
+  chat.items = [...chat.items];
+}
+
+export async function startTask(
+  text: string,
+  autonomy: string,
+  maxSteps: number,
+  fileRefs: FileRef[] = [],
+): Promise<void> {
   if (!text) return;
+  // 用户气泡先落地；附件 chip 由后端持久化的 user_attachments 事件统一驱动
+  // （live 实时事件 + 重新打开 thread 重放）。
   push({ kind: "user", text });
   // 后端会为本次 task 创建 / 切换 thread，会发出一条 thread_changed；
   // 其默认处理是清空 chat.items。这里提前设一下标志跳过那一次，
   // 避免用户刚输入的一条 user 消息被冲掉。
   _skipNextThreadChangedClear = true;
   try {
-    const res: any = await invoke("sidecar_start_task", { args: { instruction: text, autonomy, maxSteps } });
+    const res: any = await invoke("sidecar_start_task", {
+      args: {
+        instruction: text,
+        autonomy,
+        maxSteps,
+        fileRefs: fileRefs.length ? fileRefs : undefined,
+      },
+    });
     if (res && res.queued) {
       const pos = res.position ?? "?";
       push({ kind: "system", text: `⏳ 已加入队列（第 ${pos} 位），当前任务完成后自动执行` });
@@ -305,6 +363,8 @@ export async function openThread(id: string): Promise<void> {
     const k = v.event;
     if (k === "user_input") {
       chat.items.push({ kind: "user", text: v.text ?? "" });
+    } else if (k === "user_attachments") {
+      pushUserAttachments(Array.isArray(v.refs) ? v.refs : []);
     } else if (k === "run_start") {
       chat.items.push({ kind: "system", text: t("chat.run_started") });
     } else if (k === "assistant_text") {

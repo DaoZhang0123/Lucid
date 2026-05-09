@@ -52,6 +52,10 @@
     "new_thread_title": "New conversation (clears current chat; cancels active run first)",
     "input_placeholder": "Tell the Agent what to do… Enter to send, Shift+Enter for newline",
     "send_button": "Send",
+    "attach_title": "Attach images or files (also: paste screenshots, drag-drop)",
+    "attach_folder_title": "Attach a folder (path is sent to the model; folder content is not read)",
+    "attach_coming_soon": "Attachments coming soon: paste a screenshot, drop files, etc. To start a new conversation use the + at the top of the left sidebar.",
+    "drop_hint": "Drop to attach",
     "stderr_summary": "sidecar log ({n})"
   },
   "settings": {

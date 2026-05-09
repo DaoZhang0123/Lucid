@@ -1,7 +1,10 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { _ } from "svelte-i18n";
+  import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import type { UnlistenFn } from "@tauri-apps/api/event";
   import { appConfirm } from "$lib/appConfirm.svelte";
   import {
     chat,
@@ -12,6 +15,7 @@
     openThread,
     deleteThread,
     refreshThreadList,
+    type FileRef,
   } from "$lib/chatStore.svelte";
 
   let instruction = $state("");
@@ -20,6 +24,10 @@
   let scrollEl: HTMLDivElement | undefined = $state();
   let sidebarOpen = $state(true);
   let lightbox = $state<string | null>(null);
+  // 附件 chip 状态。发送后清空。图片 chip 异步填充 previewUrl（走 read_attachment_b64 命令）。
+  type ChipRef = FileRef & { previewUrl?: string };
+  let attachments = $state<ChipRef[]>([]);
+  let dragActive = $state(false);
   // 一次性同步：sidecar ready 事件里带了 config 的 max_steps（chat.totalSteps），
   // 之后用户在输入框改的值不再被覆盖。
   let _maxStepsSyncedFromSidecar = false;
@@ -41,11 +49,133 @@
     void ensureChatListeners();
   });
 
+  // ---------------- Attachments: paste / drag-drop / 📎 button ----------------
+
+  const IMG_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp"]);
+
+  function extOf(p: string): string {
+    const i = p.lastIndexOf(".");
+    return i >= 0 ? p.slice(i + 1).toLowerCase() : "";
+  }
+  function baseOf(p: string): string {
+    const i = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
+    return i >= 0 ? p.slice(i + 1) : p;
+  }
+  function kindOf(path: string): "image" | "file" {
+    return IMG_EXTS.has(extOf(path)) ? "image" : "file";
+  }
+  function pushRef(path: string, name?: string, kindOverride?: "image" | "file" | "folder"): void {
+    const trimmed = path.trim();
+    if (!trimmed) return;
+    if (attachments.some((a) => a.path === trimmed)) return;
+    const k = kindOverride ?? kindOf(trimmed);
+    const ref: ChipRef = { name: name?.trim() || baseOf(trimmed), path: trimmed, kind: k };
+    attachments = [...attachments, ref];
+    if (k === "image") {
+      // 异步取 base64 缩略图（asset:// 默认未启用，走 b64 命令）
+      const idx = attachments.length - 1;
+      void invoke<string>("read_attachment_b64", { path: trimmed })
+        .then((url) => {
+          attachments = attachments.map((a, i) =>
+            i === idx && a.path === trimmed ? { ...a, previewUrl: url } : a);
+        })
+        .catch(() => { /* 预览失败不致命，chip 退化成 🖼️ 图标 */ });
+    }
+  }
+  function removeAttachment(idx: number): void {
+    attachments = attachments.filter((_, i) => i !== idx);
+  }
+
+  async function pickFiles() {
+    try {
+      const sel = await openDialog({ multiple: true, directory: false });
+      if (!sel) return;
+      const arr = Array.isArray(sel) ? sel : [sel];
+      for (const p of arr) if (typeof p === "string") pushRef(p);
+    } catch (e) {
+      chat.items = [...chat.items, { kind: "system", text: `选择文件失败：${e}` }];
+    }
+  }
+
+  async function pickFolders() {
+    try {
+      // Tauri / Windows: a single dialog can pick files OR directories, not both,
+      // hence the separate 📁 button. Folders are sent to the model with kind="folder"
+      // so the [Attached files] block shows [folder] and the model knows to use
+      // run_shell / dir instead of load_screenshot.
+      const sel = await openDialog({ multiple: true, directory: true });
+      if (!sel) return;
+      const arr = Array.isArray(sel) ? sel : [sel];
+      for (const p of arr) if (typeof p === "string") pushRef(p, undefined, "folder");
+    } catch (e) {
+      chat.items = [...chat.items, { kind: "system", text: `选择文件夹失败：${e}` }];
+    }
+  }
+
+  async function onPaste(e: ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items || !items.length) return;
+    let saved = 0;
+    for (const it of Array.from(items)) {
+      if (it.kind !== "file") continue;
+      if (!it.type.startsWith("image/")) continue;
+      const f = it.getAsFile();
+      if (!f) continue;
+      e.preventDefault();
+      try {
+        const buf = await f.arrayBuffer();
+        const ext = (f.type.split("/")[1] || "png").split(";")[0];
+        const name = f.name && f.name !== "image.png" ? f.name : `paste.${ext}`;
+        const res: any = await invoke("save_inbox_image", { name, bytes: Array.from(new Uint8Array(buf)) });
+        if (res?.path) {
+          pushRef(res.path, baseOf(res.path));
+          saved++;
+        }
+      } catch (err) {
+        chat.items = [...chat.items, { kind: "system", text: `保存粘贴图片失败：${err}` }];
+      }
+    }
+    if (saved) {
+      // Tiny visual ping so the user knows something happened.
+      // (No system-message spam — the chip itself is the confirmation.)
+    }
+  }
+
+  // Tauri 2 drag-drop: paths arrive on the webview event, not via DOM `drop`.
+  let unlistenDragDrop: UnlistenFn | null = null;
+  onMount(() => {
+    void (async () => {
+      try {
+        const wv = getCurrentWebview();
+        unlistenDragDrop = await wv.onDragDropEvent((ev: any) => {
+          const t = ev.payload?.type;
+          if (t === "over" || t === "enter") {
+            dragActive = true;
+          } else if (t === "drop") {
+            dragActive = false;
+            const paths: string[] = ev.payload?.paths ?? [];
+            for (const p of paths) pushRef(p);
+          } else if (t === "leave" || t === "cancel") {
+            dragActive = false;
+          }
+        });
+      } catch {
+        // browser dev mode without webview drag-drop — fall back to DOM drop on the chat container.
+      }
+    })();
+  });
+  onDestroy(() => {
+    unlistenDragDrop?.();
+    unlistenDragDrop = null;
+  });
+
   async function start() {
     const text = instruction.trim();
     if (!text) return;
     instruction = "";
-    await startTask(text, autonomy, maxSteps);
+    const refs = attachments.map(({ name, path, kind }) => ({ name, path, kind }));
+    attachments = [];
+    await startTask(text, autonomy, maxSteps, refs);
   }
 
   async function newThread() {
@@ -231,7 +361,7 @@
               {/if}
             </div>
           {:else if it.kind === "image"}
-            <div class="img-card">
+            <div class="img-card" class:from-user={it.fromUser}>
               <div class="img-meta">{$_("chat.image_meta", { values: { step: it.step, level: it.level } })}</div>
               {#if it.dataUrl}
                 <img src={it.dataUrl} alt={$_("chat.image_alt", { values: { step: it.step } })}
@@ -252,6 +382,23 @@
       </div>
 
       <footer>
+        {#if attachments.length}
+          <div class="chip-row">
+            {#each attachments as a, i (a.path)}
+              <div class="chip chip-{a.kind}" title={a.path}>
+                {#if a.kind === 'image' && a.previewUrl}
+                  <img src={a.previewUrl} alt={a.name}
+                       onclick={() => (lightbox = a.previewUrl ?? null)} />
+                {:else}
+                  <span class="chip-icon">{a.kind === 'image' ? '🖼️' : a.kind === 'folder' ? '📁' : '📄'}</span>
+                {/if}
+                <span class="chip-name">{a.name}</span>
+                <button type="button" class="chip-x" title="移除"
+                        onclick={() => removeAttachment(i)}>✕</button>
+              </div>
+            {/each}
+          </div>
+        {/if}
         <div class="controls">
           <label>
             {$_("footer.autonomy_label")}
@@ -268,15 +415,22 @@
           <button class="cancel" onclick={cancel} disabled={!chat.running}>{$_("footer.cancel_button")}</button>
         </div>
         <form onsubmit={(e) => { e.preventDefault(); start(); }}>
-          <button type="button" class="new-thread" title={$_("footer.new_thread_title")}
-                  onclick={newThread}>+</button>
+          <button type="button" class="attach" title={$_("footer.attach_title")}
+                  onclick={pickFiles}>
+            📎
+          </button>
+          <button type="button" class="attach" title={$_("footer.attach_folder_title")}
+                  onclick={pickFolders}>
+            📁
+          </button>
           <textarea
             placeholder={$_("footer.input_placeholder")}
             rows="2"
             bind:value={instruction}
+            onpaste={onPaste}
             onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); start(); } }}
           ></textarea>
-          <button type="submit" disabled={!instruction.trim()}>{$_("footer.send_button")}</button>
+          <button type="submit" disabled={!instruction.trim() && attachments.length === 0}>{$_("footer.send_button")}</button>
         </form>
         {#if chat.sidecarStderr.length}
           <details class="stderr">
@@ -288,6 +442,12 @@
     </main>
   </div>
 </div>
+
+{#if dragActive}
+  <div class="drop-overlay">
+    <div class="drop-overlay-inner">{$_("footer.drop_hint")}</div>
+  </div>
+{/if}
 
 {#if lightbox}
   <div class="lightbox" onclick={() => (lightbox = null)} role="presentation">
@@ -335,7 +495,7 @@
                  height: 1.6rem; border-radius: 4px; cursor: pointer; font-size: 1rem; line-height: 1;
                  padding: 0; flex: 0 0 auto; }
   .side-toggle:hover { background: #1f2937; }
-  .side-heading { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .side-heading { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
   .side-new { background: #2563eb; color: #fff; border: 0; border-radius: 4px;
               width: 1.6rem; height: 1.6rem; font-size: 1.1rem; line-height: 1; cursor: pointer;
               flex: 0 0 auto; }
@@ -388,6 +548,8 @@
   .pending { color: #92400e; opacity: 0.7; }
 
   .img-card { align-self: flex-start; max-width: 90%; }
+  .img-card.from-user { align-self: flex-end; max-width: 90%; }
+  .img-card.from-user .img-meta { text-align: right; color: #1d4ed8; }
   .img-meta { font-size: 0.72rem; color: #6b7280; margin-bottom: 0.2rem; }
   .img-card img { max-width: 100%; max-height: 14rem; border: 1px solid #e5e7eb;
                   border-radius: 6px; cursor: zoom-in; display: block; }
@@ -411,10 +573,26 @@
   textarea { flex: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; resize: vertical; }
   form button { padding: 0 1.2rem; background: #2563eb; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
   form button:disabled { opacity: 0.5; cursor: not-allowed; }
-  form button.new-thread { padding: 0 0.9rem; background: #fff; color: #2563eb;
-                           border: 1px solid #93c5fd; font-size: 1.3rem; line-height: 1;
-                           font-weight: 600; }
-  form button.new-thread:hover:not(:disabled) { background: #eff6ff; }
+  form button.attach { padding: 0 0.7rem; background: #fff; color: #475569;
+                       border: 1px solid #cbd5e1; font-size: 1.1rem; line-height: 1; }
+  form button.attach:hover:not(:disabled) { background: #f1f5f9; color: #1e293b; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.4rem; }
+  .chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.4rem 0.25rem 0.3rem;
+          border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; font-size: 0.8rem;
+          max-width: 18rem; }
+  .chip.chip-image { padding-left: 0.2rem; }
+  .chip img { width: 2.4rem; height: 2.4rem; object-fit: cover; border-radius: 4px; cursor: zoom-in;
+              border: 1px solid #e2e8f0; flex: 0 0 auto; }
+  .chip-icon { width: 1.6rem; text-align: center; font-size: 1.1rem; }
+  .chip-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 12rem; }
+  .chip-x { background: transparent; border: 0; color: #64748b; cursor: pointer; padding: 0 0.2rem;
+            font-size: 0.85rem; line-height: 1; }
+  .chip-x:hover { color: #b91c1c; }
+  .drop-overlay { position: fixed; inset: 0; background: rgba(37, 99, 235, 0.12);
+                  border: 4px dashed #2563eb; pointer-events: none; z-index: 998;
+                  display: flex; align-items: center; justify-content: center; }
+  .drop-overlay-inner { background: rgba(255,255,255,0.95); padding: 1rem 1.6rem; border-radius: 8px;
+                        font-size: 1.1rem; color: #1e293b; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
   .stderr { margin-top: 0.4rem; font-size: 0.75rem; color: #6b7280; }
   .stderr pre { background: #f3f4f6; padding: 0.4rem; max-height: 8rem; overflow: auto; }
 

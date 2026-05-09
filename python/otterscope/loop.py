@@ -57,6 +57,7 @@ class Agent:
         cancel_event: threading.Event | None = None,
         thread_log: ThreadLog | None = None,
         extra_system: str = "",
+        file_refs: list[dict[str, str]] | None = None,
     ) -> None:
         self.cfg = cfg
         self.client = _build_llm_client(cfg, api_key)
@@ -72,6 +73,23 @@ class Agent:
         # 回复任务的 AUTO-REPLY SAFETY POLICY。这样长策略不会污染 user 侧的
         # instruction、不会进 thread 标题，也不会被 prune 掉。
         self.extra_system = (extra_system or "").strip()
+        # 多模态附件：前端随 start_task 传过来的本地文件 / 图片路径。
+        # 仅在本轮起手 user message 里以 [Attached files] 文本块出现；
+        # 不被 inline 为 image_url，避免 多图 拥塞上下文，交由模型调用
+        # `load_screenshot` / `read_file` / `run_shell` 按需读取。
+        self.file_refs: list[dict[str, str]] = []
+        if file_refs:
+            for ref in file_refs:
+                if not isinstance(ref, dict):
+                    continue
+                pt = (ref.get("path") or "").strip()
+                if not pt:
+                    continue
+                self.file_refs.append({
+                    "name": (ref.get("name") or "").strip() or pt,
+                    "path": pt,
+                    "kind": (ref.get("kind") or "").strip() or "file",
+                })
         self.context_mgr = ContextManager(cfg.context)
         # md5(png) -> 代表该截图的文件名，用于 context.log 里用文件名替换 base64 图。
         self._image_names: dict[str, str] = {}
@@ -579,23 +597,51 @@ class Agent:
             messages.append({"role": "assistant", "content": "Got it, I'll consult these app tips before I start clicking."})
             log.info(f"plan_app_tips: injected {planned_tips.count('## App tips for')} app tip section(s)")
         # 真正的 instruction + (可选)起手 L1 截图（feed_initial 已在 _run 顶部解析）
+        instruction_text = (
+            f"任务：{instruction}\n\n"
+            + (
+                f"[level=L1] 以下是当前桌面截图：发送尺寸 {screen_w}x{screen_h}，"
+                f"原始 {first.raw_size[0]}x{first.raw_size[1]}；"
+                f"在屏幕坐标系中位于 (left={first.offset[0]}, top={first.offset[1]}, "
+                f"right={first.offset[0] + first.raw_size[0]}, bottom={first.offset[1] + first.raw_size[1]})。"
+                f" `computer` 工具的 coordinate 用 {screen_w}x{screen_h} 这个发送坐标系。"
+                if feed_initial else
+                f"（未附起手截图。系统已就位，coordinate 默认坐标系为 {screen_w}x{screen_h}；"
+                "若需要看桌面再决策，请显式调用 `screenshot` 或先 `launch_app` 让目标 App 置前。）"
+            )
+        )
+        # 挨在"任务…"之后、L1 说明之前，插入 [Attached files] 块
+        if self.file_refs:
+            attached_lines = [
+                "",
+                "[Attached files] 用户随本次任务附带了以下本地文件/图片（绝对路径，已落盘）。",
+                "**默认情况下不要打开它们看内容**——绝大多数随附文件的角色只是\"载荷\"："
+                "要发给某人、转发到某群、作为附件上传、打印、复制到某处、重命名、移动…等。"
+                "这种情况下你只需要把路径**作为参数**传给目标 App / 工具即可，例如：",
+                "  - 微信发送：复制路径到剪贴板（`run_shell` `Set-Clipboard -Path '<path>'`）→ 切到对应聊天 → Ctrl+V → Enter；"
+                "或用聊天框上方的回形针按钮在文件对话框里直接 `type` 路径回车。",
+                "  - 邮件附件：在 Outlook 写邮件时点\"附加文件\"→ 在对话框 `type` 路径回车。",
+                "  - 上传到网页：网页里点上传按钮唤起系统对话框 → `type` 路径回车。",
+                "  - 仅当任务**明确**需要 \"看 / 总结 / 提取内容 / OCR / 改写\" 时，才打开它："
+                "图片 → `load_screenshot(path=…, level=\"L2\")`，文本 → `read_file(path=…)`，"
+                "PDF/Office 等二进制 → `run_shell` 提取或 `launch_app` 打开对应软件。",
+                "  - 路径是**目录** → `run_shell` 调 `dir` / `Get-ChildItem` 列出后再决定怎么处理。",
+                "判断方法：从用户原话里找动词。\"发/转/上传/附加/打印/重命名/移动…\" → 当载荷，**别读**；"
+                "\"看看/总结/提取/读出/识别/翻译/改…里面的…\" → 当内容源，可以读。",
+                "",
+            ]
+            for ref in self.file_refs:
+                nm = (ref.get("name") or "").replace("\n", " ").replace("\r", " ").replace("`", "'")[:200]
+                pt = (ref.get("path") or "").replace("\n", " ").replace("\r", " ").replace("`", "'")
+                kind = ref.get("kind") or "file"
+                tag = "image" if kind == "image" else ("folder" if kind == "folder" else "file")
+                attached_lines.append(f"  - [{tag}] {nm}  →  {pt}")
+            attached_lines.append("")
+            # 插在 "\n\n" 分隔后、L1 说明之前：拆两段拼接。
+            head, sep, tail = instruction_text.partition("\n\n")
+            instruction_text = head + sep + "\n".join(attached_lines) + "\n" + tail
         instruction_content: list[dict[str, Any]] = [
-            {
-                "type": "text",
-                "text": (
-                    f"任务：{instruction}\n\n"
-                    + (
-                        f"[level=L1] 以下是当前桌面截图：发送尺寸 {screen_w}x{screen_h}，"
-                        f"原始 {first.raw_size[0]}x{first.raw_size[1]}；"
-                        f"在屏幕坐标系中位于 (left={first.offset[0]}, top={first.offset[1]}, "
-                        f"right={first.offset[0] + first.raw_size[0]}, bottom={first.offset[1] + first.raw_size[1]})。"
-                        f" `computer` 工具的 coordinate 用 {screen_w}x{screen_h} 这个发送坐标系。"
-                        if feed_initial else
-                        f"（未附起手截图。系统已就位，coordinate 默认坐标系为 {screen_w}x{screen_h}；"
-                        "若需要看桌面再决策，请显式调用 `screenshot` 或先 `launch_app` 让目标 App 置前。）"
-                    )
-                ),
-            },
+            {"type": "text", "text": instruction_text},
         ]
         if feed_initial:
             first_block, first_sent = self._capture_image_part(first)
@@ -973,11 +1019,56 @@ class Agent:
                                 tag = "动作后截图 (L1)"
                         else:
                             try:
-                                # L3 is around the current cursor. Don't overwrite
-                                # last_capture — the L2-of-rect remains the active
-                                # coordinate frame for the next click.
-                                post = self.sensor.capture(ScreenLevel.L3)
-                                tag = "动作后截图 (L3 cursor-local; coordinate frame still = L2 active app)"
+                                # L3 around the click target (if this step contained a click
+                                # whose `coordinate` we can read), else around the current
+                                # cursor. The cursor-based fallback is only reliable when
+                                # the action actually moved the cursor; for clicks we already
+                                # know the intended target, so prefer it — that way, if focus
+                                # got stolen mid-step or the cursor drifted, the L3 still
+                                # frames the spot the model wanted to see.
+                                click_target_screen: tuple[int, int] | None = None
+                                for rec in reversed(step_tool_records):
+                                    if rec.get("action") not in click_actions:
+                                        continue
+                                    coord = (rec.get("args") or {}).get("coordinate")
+                                    if not (isinstance(coord, (list, tuple)) and len(coord) == 2):
+                                        continue
+                                    try:
+                                        ix, iy = int(coord[0]), int(coord[1])
+                                    except Exception:
+                                        continue
+                                    # Reverse-map image-pixel coordinate to screen coordinate
+                                    # using the active coord-frame capture (set when the
+                                    # active app rect was pinned).
+                                    base = self.tool.last_capture
+                                    if base is None:
+                                        click_target_screen = (ix, iy)
+                                    else:
+                                        sx_r = base.raw_size[0] / max(1, base.sent_size[0])
+                                        sy_r = base.raw_size[1] / max(1, base.sent_size[1])
+                                        click_target_screen = (
+                                            int(base.offset[0] + ix * sx_r),
+                                            int(base.offset[1] + iy * sy_r),
+                                        )
+                                    break
+
+                                if click_target_screen is not None:
+                                    # Fixed radius works better than UIA-smart for click verify:
+                                    # we want a predictable frame around the requested pixel,
+                                    # not whatever UI element happens to span it.
+                                    radius = int(getattr(self.sensor.cfg, "l3_radius_px", 200))
+                                    post = self.sensor.capture_around(
+                                        click_target_screen[0], click_target_screen[1], radius
+                                    )
+                                    tag = ("动作后截图 (L3 around click target "
+                                           f"{click_target_screen}; coordinate frame still = L2 active app)")
+                                else:
+                                    # Non-click step (or coord missing): fall back to
+                                    # cursor-local. Don't overwrite last_capture — the
+                                    # L2-of-rect remains the active coordinate frame
+                                    # for the next click.
+                                    post = self.sensor.capture(ScreenLevel.L3)
+                                    tag = "动作后截图 (L3 cursor-local; coordinate frame still = L2 active app)"
                             except Exception as e:
                                 log.warning(f"L3 post capture failed, falling back to active-app L2: {e}")
                                 w, h = max(1, right - left), max(1, bottom - top)

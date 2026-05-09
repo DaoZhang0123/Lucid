@@ -52,6 +52,10 @@
     "new_thread_title": "Nouvelle conversation (efface le chat actuel ; annule l'exécution active)",
     "input_placeholder": "Dites à l'Agent quoi faire… Entrée pour envoyer, Maj+Entrée pour saut de ligne",
     "send_button": "Envoyer",
+    "attach_title": "Joindre images ou fichiers (aussi : coller capture, glisser-déposer)",
+    "attach_folder_title": "Joindre un dossier (le chemin est envoyé au modèle ; le contenu n'est pas lu)",
+    "attach_coming_soon": "Pièces jointes à venir : coller une capture d'écran, déposer des fichiers, etc. Pour démarrer une nouvelle conversation, utilisez le + en haut de la barre latérale gauche.",
+    "drop_hint": "Déposez pour joindre",
     "stderr_summary": "journal sidecar ({n})"
   },
   "settings": {

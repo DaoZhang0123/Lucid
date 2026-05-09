@@ -285,10 +285,25 @@ async fn spawn_once(app: &AppHandle) -> Result<Option<i32>, String> {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FileRef {
+    pub name: String,
+    pub path: String,
+    /// "image" | "file" (advisory; backend infers by extension if missing)
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StartArgs {
     pub instruction: String,
     pub autonomy: Option<String>,
     pub max_steps: Option<u32>,
+    /// Multi-modal attachments. Images pasted from the clipboard are persisted to
+    /// `<app_local_data_dir>/inbox/` first via `save_inbox_image` so every entry
+    /// here is an absolute disk path.
+    #[serde(default)]
+    pub file_refs: Option<Vec<FileRef>>,
 }
 
 #[tauri::command]
@@ -299,6 +314,11 @@ pub async fn sidecar_start_task(args: StartArgs) -> Result<Value, String> {
     }
     if let Some(m) = args.max_steps {
         params["max_steps"] = json!(m);
+    }
+    if let Some(refs) = args.file_refs {
+        if !refs.is_empty() {
+            params["file_refs"] = serde_json::to_value(refs).unwrap_or_else(|_| json!([]));
+        }
     }
     instance().request("start_task", params).await
 }
@@ -1000,6 +1020,132 @@ pub async fn read_image_b64(app: AppHandle, run_name: String, file_name: String)
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let mime = if file_name.ends_with(".jpg") { "image/jpeg" } else { "image/png" };
     Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+/// Read an arbitrary local image (e.g. an inbox paste, or any user-attached
+/// file) as a base64 data URL so the webview can render it inline. The path
+/// MUST live under either the inbox directory or the per-user app data
+/// directory — otherwise we refuse, to avoid turning this into a file-read
+/// oracle for the renderer.
+#[tauri::command]
+pub async fn read_attachment_b64(app: AppHandle, path: String) -> Result<String, String> {
+    let pb = std::path::PathBuf::from(&path);
+    let canon = std::fs::canonicalize(&pb).map_err(|e| format!("canonicalize: {e}"))?;
+    let canon = strip_verbatim(canon);
+    // Allow only paths under the inbox dir (or, in dev, the app's local data dir).
+    let inbox = inbox_root(&app);
+    let inbox_canon = std::fs::canonicalize(&inbox).unwrap_or(inbox.clone());
+    let inbox_canon = strip_verbatim(inbox_canon);
+    let app_data = app
+        .path()
+        .app_local_data_dir()
+        .map(strip_verbatim)
+        .ok();
+    let allowed = canon.starts_with(&inbox_canon)
+        || app_data.as_ref().map(|d| canon.starts_with(d)).unwrap_or(false);
+    if !allowed {
+        return Err(format!(
+            "refused: path not under inbox/app data ({})",
+            canon.display()
+        ));
+    }
+    let bytes = std::fs::read(&canon).map_err(|e| format!("read: {e}"))?;
+    if bytes.len() > 32 * 1024 * 1024 {
+        return Err(format!("attachment too large: {} bytes", bytes.len()));
+    }
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let lower = canon
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mime = match lower.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        _ => "image/png",
+    };
+    Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+/// Persist a clipboard-pasted image (or any in-memory blob) to the per-user
+/// inbox directory and return its absolute path. Frontend calls this whenever
+/// the user pastes a screenshot — the resulting path is then attached to the
+/// next `start_task` as a `FileRef`, so the model can `load_screenshot(path=…)`
+/// on demand instead of having every paste burn an `image_url` block in
+/// every request.
+#[tauri::command]
+pub async fn save_inbox_image(app: AppHandle, name: String, bytes: Vec<u8>) -> Result<Value, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let inbox = inbox_root(&app);
+    std::fs::create_dir_all(&inbox).map_err(|e| format!("create inbox dir: {e}"))?;
+    // Sanitise extension from the suggested name; default to .png.
+    let raw_ext = std::path::Path::new(&name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase();
+    let ext = match raw_ext.as_str() {
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => raw_ext,
+        _ => "png".to_string(),
+    };
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    // 8-hex from the low bits of ts ^ ptr — collision-resistant enough for inbox.
+    let suffix = format!("{:08x}", (ts as u32) ^ (bytes.as_ptr() as usize as u32));
+    let stem = std::path::Path::new(&name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("paste")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .take(40)
+        .collect::<String>();
+    let stem = if stem.is_empty() { "paste".to_string() } else { stem };
+    let fname = format!("{}-{}-{}.{}", chrono_like_ts(ts), stem, suffix, ext);
+    let target = inbox.join(&fname);
+    std::fs::write(&target, &bytes).map_err(|e| format!("write inbox file: {e}"))?;
+    Ok(json!({
+        "path": target.to_string_lossy().to_string(),
+        "name": name,
+        "size": bytes.len(),
+    }))
+}
+
+fn chrono_like_ts(ms: u128) -> String {
+    // Minimal yyyymmdd-HHMMSS without bringing in chrono — uses UTC seconds.
+    let secs = (ms / 1000) as i64;
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400) as u32;
+    // 1970-01-01 baseline → year/month/day (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y0 = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y0 + 1 } else { y0 };
+    let hh = tod / 3600;
+    let mm = (tod % 3600) / 60;
+    let ss = tod % 60;
+    format!("{:04}{:02}{:02}-{:02}{:02}{:02}", y, m, d, hh, mm, ss)
+}
+
+/// Inbox directory for ephemeral pasted images. Same parent as `config.toml`,
+/// e.g. `%LOCALAPPDATA%\dev.otterscope\inbox\`.
+fn inbox_root(app: &AppHandle) -> std::path::PathBuf {
+    if let Ok(cwd) = std::env::var("OTTERSCOPE_CWD") {
+        let p = std::path::PathBuf::from(cwd).join("inbox");
+        return p;
+    }
+    if let Ok(dir) = app.path().app_local_data_dir() {
+        return strip_verbatim(dir).join("inbox");
+    }
+    std::path::PathBuf::from("inbox")
 }
 
 /// Resolve the logs directory the sidecar writes to.

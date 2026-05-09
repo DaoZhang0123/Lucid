@@ -1384,6 +1384,22 @@ instruction in this run.
         # 额外追加在 system prompt 末尾的约束文本，只供调度者（如
         # _on_taskbar_notify_confirmed 的 AUTO-REPLY SAFETY POLICY）使用。
         extra_system = (params.get("extra_system") or "").strip()
+        # 多模态附件：前端传过来的 [{name, path, kind}]。全部走 file ref
+        # 路线（包括粘贴的截图，同样已被前端存盘为 inbox 路径）。
+        file_refs_in = params.get("file_refs") or []
+        file_refs: list[dict[str, str]] = []
+        if isinstance(file_refs_in, list):
+            for ref in file_refs_in:
+                if not isinstance(ref, dict):
+                    continue
+                pt = (ref.get("path") or "").strip()
+                if not pt:
+                    continue
+                file_refs.append({
+                    "name": (ref.get("name") or "").strip() or pt,
+                    "path": pt,
+                    "kind": (ref.get("kind") or "").strip() or "file",
+                })
         if autonomy and autonomy not in ("full", "confirm_critical", "confirm_each"):
             raise ValueError(f"invalid autonomy: {autonomy!r}")
         # 可选：调用方（如 scheduler）已经为本任务建好了独立 thread。
@@ -1396,6 +1412,8 @@ instruction in this run.
                 # 入队：为这个排队任务创建独立 thread，在侧边栏马上可见。
                 qthread = preset_thread or ThreadLog.create(self.cfg.logging, instruction)
                 qthread.append_user_input(instruction)
+                if file_refs:
+                    qthread.append_event({"event": "user_attachments", "refs": file_refs})
                 queue_item = {
                     "instruction": instruction,
                     "thread": qthread,
@@ -1403,6 +1421,7 @@ instruction in this run.
                     "max_steps": max_steps,
                     "priority": priority,
                     "extra_system": extra_system,
+                    "file_refs": file_refs,
                     "queued_ms": int(time.time() * 1000),
                 }
                 # Preserve metadata fields (starting with _) for tracking & deduplication
@@ -1433,12 +1452,16 @@ instruction in this run.
             else:
                 thread = self._ensure_active_thread(instruction)
             thread.append_user_input(instruction)
+            if file_refs:
+                thread.append_event({"event": "user_attachments", "refs": file_refs})
+                # 同时走 stdout，让前端实时渲染 chip。
+                _writeln({"event": "user_attachments", "refs": file_refs, "thread_id": thread.id})
             self._cancel.clear()
             self._current_instruction = instruction
             self._current_thread_id = thread.id
             t = threading.Thread(
                 target=self._run_task, args=(instruction, thread),
-                kwargs={"extra_system": extra_system}, daemon=True
+                kwargs={"extra_system": extra_system, "file_refs": file_refs}, daemon=True
             )
             self._worker = t
             t.start()
@@ -1488,7 +1511,8 @@ instruction in this run.
     # ------------------------------------------------------------------
     # 任务工作线程
     # ------------------------------------------------------------------
-    def _run_task(self, instruction: str, thread: ThreadLog, *, extra_system: str = "") -> None:
+    def _run_task(self, instruction: str, thread: ThreadLog, *, extra_system: str = "",
+                  file_refs: list[dict[str, str]] | None = None) -> None:
         def sink(evt: dict[str, Any]) -> None:
             # 1) 走 stdout 让前端实时看到
             _writeln(evt)
@@ -1499,7 +1523,8 @@ instruction in this run.
                 pass
         try:
             agent = Agent(self.cfg, event_sink=sink, cancel_event=self._cancel,
-                          thread_log=thread, extra_system=extra_system)
+                          thread_log=thread, extra_system=extra_system,
+                          file_refs=file_refs or [])
             agent.run(instruction)
         except Exception as e:
             _err_console.print_exception()
@@ -1524,6 +1549,7 @@ instruction in this run.
             max_steps = nxt.get("max_steps")
             priority = self._normalize_priority(nxt.get("priority", 1))
             extra_system = nxt.get("extra_system") or ""
+            file_refs = nxt.get("file_refs") or []
             if autonomy:
                 self.cfg.safety.autonomy = autonomy
             if max_steps:
@@ -1533,7 +1559,7 @@ instruction in this run.
             self._current_thread_id = thread.id
             t = threading.Thread(
                 target=self._run_task, args=(instruction, thread),
-                kwargs={"extra_system": extra_system}, daemon=True
+                kwargs={"extra_system": extra_system, "file_refs": file_refs}, daemon=True
             )
             self._worker = t
             t.start()

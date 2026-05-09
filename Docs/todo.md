@@ -57,6 +57,7 @@
 - [x] 左侧可折叠 thread 列表（点击切换、悬停 ✕ 删除、顶部 + 新建）替换独立 `/history` 页
 - [x] 主聊天窗嵌入截图缩略图（点击 lightbox 放大），包含起手 init 图
 - [x] 切换路由不丢失聊天状态（模块级 `$state` 单例 store）
+- [x] **多模态输入：粘贴截图 / 拖拽文件 / 📎 对话框**（2026-05-09）：图片粘贴/拖拽自动入 `%LOCALAPPDATA%\dev.otterscope\inbox\`；JS `fileRefs` ↔ Rust `file_refs` 通过 sidecar `start_task` 透传给 `Agent`，作为 `[Attached files]` 块拼到首条 user message（默认是"载荷不读内容"，verb 启发式判定何时改读 —— [loop.py](python/otterscope/loop.py) L613）。`load_screenshot` 白名单扩到 `logs / inbox / OTTERSCOPE_CWD\inbox`。前端 chip 缩略图走 `read_attachment_b64` Rust 命令（asset:// 默认未启用）；用户图片右对齐 (`fromUser`)。新事件 `user_attachments` 持久化到 `events.jsonl`，切换/重开 thread 也能复现 chip。
 
 ### 1.5 适配与体验细节
 - [x] 多屏布局变化时重新探测 `[screenshot].l1_max_long_edge`（`otterscope.selfcheck monitors` + 设置页一键自检）
@@ -152,8 +153,9 @@
   - **v0（已落地）**：[python/otterscope/doze.py](python/otterscope/doze.py) `DozeWorker` 后台 tick 线程，由 sidecar 在 `serve()` 启动时拉起；空闲条件 = 没有运行中 worker + 队列为空 + 距上次 user-driven RPC > `idle_threshold_sec`（默认 300s）。一次 pass 选一条**未处理**的最近 thread，把 `events.jsonl` 压缩成纯文本时间线 + 现有 tips/memory 摘要喂给 LLM，工具白名单仅 `learn_tip` / `remember` / `load_app_tips`（**不动鼠键，不发图**）。协作式取消：任意 user-driven RPC（`start_task` / `thread_new` / `cancel` / `set_autonomy`...）都会 `bump_activity()` 并打断当前 pass。新 RPC：`doze_status` / `doze_run_now` / `doze_clear_processed`；新事件：`doze_idle_start` / `doze_pass_done`。配置在 `[doze]`（默认 `enabled = false`，需 `/settings` 显式开启）。详见 [Docs/doze.md](doze.md)。
   - **v1 / icon 通道（已落地）**：[python/otterscope/icon_proposals.py](python/otterscope/icon_proposals.py) 新模块（`<user data>/icon_proposals/{index.json, <id>.png}`）；[doze.py](python/otterscope/doze.py) 系统提示新增 `propose_icon(image_filename, x, y, w, h, label, description?)` 工具白名单条目，并把 `step_image` 事件的文件名 / 宽高列入 user prompt 供模型挑选；`_dispatch_propose_icon` 负责安全校验文件名、用 PIL 裁剪图块并入队。Sidecar 增加 5 个 RPC：`doze_proposals_list` / `doze_proposal_read_png` / `doze_proposal_accept`(可改名/改描述，→ `icon_memory.add_icon`) / `doze_proposal_reject` / `doze_proposals_clear`，全部进入 `_NON_ACTIVITY_METHODS` 白名单不打断打盹。前端新增 [/doze 页](app/src/routes/doze/+page.svelte)（与 /memory /schedules 并排，header 加 `nav_doze` i18n），包含状态面板 / Run Now / Clear Processed / 提案卡片预览 + 接受/拒绝/全部清空。
   - **v1（计划）**：心跳——与打盹共享 `python/otterscope/reflector.py`，差别仅在触发器（运行中每 N 步 vs 任务完成后 5 分钟）与上下文窗口。
-- [] **初始化**: 有一些电脑上的配置，比如查看任务栏之类的，会影响到taskbar notify的功能，最好用一个任务来代替用户完成配置。任务等级可以弄成最低
-- [] **scheduler**: 定时任务可以加一个按钮，启动测试
+- [x] **初始化**: 有一些电脑上的配置，比如查看任务栏之类的，会影响到taskbar notify的功能，最好用一个任务来代替用户完成配置。任务等级可以弄成最低
+- [x] **scheduler**: 定时任务可以加一个按钮，启动测试
+- [] **theme**: light/dark theme
 
 ---
 
@@ -167,6 +169,8 @@
 
 ## 横向 / 工程债
 
+- [x] **Tips seed pristine-refresh + 精确坐标硬约束（2026-05-09）**：[tooltips.py](python/otterscope/tooltips.py) `_ensure_global_seeded` 仿照 `_ensure_app_seeded`，当 `tools.md` 里所有条目仍是 `[seed ...]`（用户没自己加过）就用最新 `_SEED_BODY` 覆盖，已装机也能拿到新 seed 而不必手删文件。新增全局条目 `[seed · click-precise-coords]`：禁止"around y=142"这类凭印象坐标，必须从最新截图读出元素中心像素，否则改走键盘路径（Ctrl+F / Tab / 地址栏）；另在 [apps/wechat.py](python/otterscope/apps/wechat.py) 加 `[seed · send-file-via-shell-copy]`：已知绝对路径时直接 `Set-Clipboard -Path '<abs>'` → 焦点微信 → Ctrl+V → Enter，零图标点击 / 零对话框导航，配合 multimodal 附件流自然链路。
+- [x] **Sidebar 「Conversations」标题居中**（2026-05-09）：`.side-heading` 加 `text-align: center`。
 - [x] **后期步骤变慢的诊断 + image budget 收紧（2026-05-06）**：长 thread（如 ⏰ 天气，43 步、context.log 2.1 MB）从 step 14 起每轮稳定带 6-8 张 `image_ref`，且全程 `omitted=0` —— 即 `compress_old_images` 在 `keep_recent_l2=3` 下根本没 demote 任何一张图。两处修复：(a) `config.toml` 默认 `keep_recent_l2 = 3 → 1`（基线每步 ≈ L1=1 + L2=1 + L3=2 = 4 张）；(b) 重写 `loop.py` `SYSTEM_PROMPT_HEAD` rule 8，从"建议 transcribe"升级为强制：明确告知"old screenshots WILL be replaced by `[旧截图已省略...]` 占位符"，要求模型在**同一轮**就把图中与任务相关的信息（按钮坐标、列表项、错误文案、OCR 小字、聊天/搜索结果、数值字段……）转写到 assistant 文本里作为持久工作记忆，并提示 "summarise / forward / report what you see" 类任务务必 early-extract。详见 [design.md §4.5.3](design.md#453-分级截屏策略带宽成本与精度的平衡) 附加规则与 [screenshot.md §10](screenshot.md#10-相关配置一览configtoml)。
 - [x] **Built-in zero-GUI utilities (`read_file` / `write_file` / `run_shell`)**：避免 「launch_app('cmd') → type 'type X' → screenshot → OCR」 这种 4 步 + ~100KB 图象 token 去读个 50 字节文件的倒贴路径。三个 meta tool 在 `meta_tools.py`、受 `[fileio]` / `[shell]` 控制；路径支持 `%ENV%` / `$env:NAME` / `~`；shell 调用隐藏控制台窗口 (`CREATE_NO_WINDOW`)，默认 timeout 20s（硬顶 120s，超过请开真终端），输出被 `_truncate_text` 限到 16k 字符。系统 prompt 里只留了 4 行指路牌，具体决策调用时看 tool description。
 - [x] **光标周边 L3 智能紧贴（UIA-driven smart L3）**：H3 尺寸不再用固定 200x200，而是调 IUIAutomation `ElementFromPoint` 拿到鼠标处 UI 元素的 BoundingRectangle，外拓 `l3_smart_padding_px=16`、限下限 160x80；占屏 >40% 返回 None 回落固定方。处理了计算器这种 280x60 小显屏被 L3 正方形覃茂丢了边缘的问题。`python/otterscope/uia.py` 是纯 ctypes COM 包装（0 三方依赖），首调 ~60ms、后续 <5ms。详见 [Docs/screenshot.md §2.1](screenshot.md#21)。
@@ -176,8 +180,7 @@
   - **仓库层**：❌ 未做。`README.md` / `design.md` / `todo.md` / 代码注释主版本仍是中文，未拆 `docs/zh-CN/` `docs/fr-FR/` 目录，README 顶部也没加语言切换链接。
   - **后续**：仓库层文档英化 + 多语切换，sidecar 文案按 `[ui].locale` 切换（需要 `tooltips.py` 准备 zh-CN/fr-FR 三套 seed），可选追加 `ar-SA` / `ru-RU`。
   - **验收**：英文环境装一遍 NSIS 默认 UI 全英；切到中文 / 法语后整窗刷新无残留中文 / 英文。
-- [ ] **README star 数对标 OpenAdapt**：在 README 顶部加一个 "Stargazers" 小节，挂自己仓库的 shields.io star badge（`https://img.shields.io/github/stars/<owner>/<repo>?style=social`），并在脚注里记一组对标基线 —— 参考 [OpenAdaptAI/OpenAdapt](https://github.com/OpenAdaptAI/OpenAdapt)（2026-05-01 抓取：约 1566 stars、233 forks，定位 "Generative RPA / computer-use agent"，与本项目同赛道）。每月人工或脚本（`gh api repos/OpenAdaptAI/OpenAdapt --jq .stargazers_count`）刷一次写进 README 末尾的"对标"表，方便看自己的增长曲线相对位置。
-- [ ] **首次运行引导：把 Windows 任务栏按钮"从不合并"**：在欢迎页 / 设置自检里加一项检测和一键引导——打开「设置 → 个性化 → 任务栏 → 任务栏行为 → 合并任务栏按钮并隐藏标签」改为「从不」。这样任务栏每个窗口都带文字标签，模型靠 OCR 就能知道哪些 App / 窗口已开，不必再依赖图标识别。可在引导里直接 `start ms-settings:taskbar` 跳到对应页面，并给出截图示意。
+- [x] **README star 数**：在 README 顶部加一个 "Stargazers" 小节，挂自己仓库的 shields.io star badge（`https://img.shields.io/github/stars/<owner>/<repo>?style=social`）
 - [ ] **首次运行引导：禁用锁屏 + 睡眠 + 屏保（防 BitBlt 拒绝访问）**：锁屏后 Windows 切到 Winlogon 安全桌面，BitBlt 直接返回 “拒绝访    问”（前端会看到 `ScreenShotError: Windows graphics function failed: BitBlt: 拒绝访问`），睡眠 / 休眠则会冻住 sidecar 的定时任务和长跑任务。在欢迎页 / 设置自检里加一组检测 + 一键修复（含“恢复默认”按钮记住原值再回写）：
   - 屏保关闭：`reg add "HKCU\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d 0 /f`
   - 屏幕熄灭 / 睡眠永不（AC 与电池都设 0）：`powercfg /change monitor-timeout-ac 0; powercfg /change monitor-timeout-dc 0; powercfg /change standby-timeout-ac 0; powercfg /change standby-timeout-dc 0`

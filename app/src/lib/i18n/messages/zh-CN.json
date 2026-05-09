@@ -52,6 +52,10 @@
     "new_thread_title": "新建对话（清空当前聊天，运行中会先取消）",
     "input_placeholder": "告诉 Agent 你要做什么……回车发送，Shift+回车换行",
     "send_button": "发送",
+    "attach_title": "附加图片或文件（也可粘贴截图、拖拽文件）",
+    "attach_folder_title": "附加一个文件夹（只传路径给模型，不读内容）",
+    "attach_coming_soon": "附件功能开发中：很快支持粘贴截图、拖入文件等。新建对话请用左侧栏顶部的 +。",
+    "drop_hint": "松开以附加文件",
     "stderr_summary": "sidecar 日志（{n}）"
   },
   "settings": {

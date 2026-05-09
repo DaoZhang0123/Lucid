@@ -44,6 +44,7 @@ _SEED_BODY = """\
 - [seed · launch-app] Prefer the new `launch_app(name)` meta tool over manually clicking taskbar/tray icons or double-clicking desktop shortcuts. Call `list_apps()` to see what's pre-registered. If `launch_app` returns "not found" then fall back to `win+r` + exe alias, the start menu, or visual icon-clicking — and remember to `learn_tip(app="<name>", text="works on this machine")` so next time `launch_app` succeeds.
 - [seed · paths] Desktop path: %USERPROFILE%\\Desktop or C:\\Users\\<user>\\Desktop, can be typed directly as an absolute path.
 - [seed · screenshot] Before clicking small buttons / icons, take an L2 active_window or L3 cursor_local screenshot to see clearly and avoid misclicks.
+- [seed · click-precise-coords] **Never give an "approximate" coordinate from memory or eyeballing — the y/x you pass to `computer` must be read off the most recent screenshot of the very thing you're targeting.** Hand-wavy phrases in your reasoning ("around y=142", "roughly the middle of the list", "should be near the top") are red flags: lists scroll, rows have variable heights, and a 30-pixel error puts the click in the wrong row, the sidebar, or the chat panel. Required workflow before any non-trivial click: (1) make sure the target element is **visible in the current screenshot** (the post-step L2/L3 auto-attached after the previous tool, or a fresh `screenshot(level="active_window")` if anything has scrolled / repainted since); (2) **visually locate** the element in that image and read its **center pixel** in that image's own coordinate frame; (3) issue the click at exactly that (x, y) — the framework reverse-maps to screen pixels for you. If the target is not visible in the current screenshot, do **not** guess at a number — either scroll / take a fresh screenshot first, or use a **keyboard shortcut alternative** (Ctrl+F search, Tab navigation, accelerator keys, address-bar typing) which sidesteps coordinate-picking entirely. When the keyboard path exists, prefer it.
 """
 
 # Per-app seed bodies are no longer hardcoded here — each App lives in its own
@@ -125,10 +126,22 @@ def is_app_disabled(cfg: ToolsConfig, app: str) -> bool:
 
 def _ensure_global_seeded(cfg: ToolsConfig) -> Path:
     p = tools_path(cfg)
-    if p.is_file():
+    if not p.is_file():
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_HEADER + "\n" + _SEED_BODY, encoding="utf-8")
         return p
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(_HEADER + "\n" + _SEED_BODY, encoding="utf-8")
+    # Pristine-refresh: if every entry line is still a seed entry (user hasn't
+    # learned anything new globally), refresh from the in-code _SEED_BODY so
+    # updates to the seed propagate to existing installs without manual reset.
+    try:
+        existing = p.read_text(encoding="utf-8")
+    except OSError:
+        return p
+    entry_lines = [ln for ln in existing.splitlines() if ln.lstrip().startswith("- [")]
+    if entry_lines and all(("[seed " in ln or "· seed " in ln) for ln in entry_lines):
+        fresh = _HEADER + "\n" + _SEED_BODY
+        if existing.strip() != fresh.strip():
+            p.write_text(fresh, encoding="utf-8")
     return p
 
 

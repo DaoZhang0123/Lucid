@@ -21,6 +21,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
@@ -49,6 +50,8 @@ pub fn run() {
             sidecar::list_runs,
             sidecar::read_run,
             sidecar::read_image_b64,
+            sidecar::save_inbox_image,
+            sidecar::read_attachment_b64,
             sidecar::read_settings,
             sidecar::write_settings,
             sidecar::run_selfcheck,

@@ -996,11 +996,19 @@ def _dispatch_schedule(fn_name: str, args: dict[str, Any], cfg: Config) -> ToolR
 def _dispatch_load_screenshot(args: dict[str, Any]) -> ToolResult:
     """Read a previously-saved screenshot from disk and re-attach it to the
     next request. Validates that the path looks like one of our log files
-    (under ``%LOCALAPPDATA%\\dev.otterscope\\logs``) so a model can't use this to
-    exfiltrate arbitrary local files.
+    (under ``%LOCALAPPDATA%\\dev.otterscope\\logs``) or an inbox attachment
+    (under ``%LOCALAPPDATA%\\dev.otterscope\\inbox``) so a model can't use this
+    to exfiltrate arbitrary local files.
     """
     import os
     from pathlib import Path
+
+    def _is_under(child: Path, root: Path) -> bool:
+        try:
+            child.relative_to(root)
+            return True
+        except ValueError:
+            return False
 
     raw_path = (args.get("path") or "").strip()
     if not raw_path:
@@ -1019,17 +1027,33 @@ def _dispatch_load_screenshot(args: dict[str, Any]) -> ToolResult:
     if p.suffix.lower() not in (".png", ".jpg", ".jpeg"):
         return ToolResult(error=f"unsupported file type {p.suffix!r}; expected .png/.jpg")
 
-    # Allowlist: must live under %LOCALAPPDATA%\dev.otterscope\logs (or any platform's equivalent).
-    allowed_root: Path | None = None
+    # Allowlist: must live under either
+    #   - %LOCALAPPDATA%\dev.otterscope\logs   (screenshots taken by the agent)
+    #   - %LOCALAPPDATA%\dev.otterscope\inbox  (clipboard pastes / drag-drop attachments
+    #     forwarded from the desktop UI's `save_inbox_image` Tauri command)
+    # so a model can't use this to exfiltrate arbitrary local files.
+    allowed_roots: list[Path] = []
     local_app = os.environ.get("LOCALAPPDATA")
     if local_app:
-        allowed_root = (Path(local_app) / "dev.otterscope" / "logs").resolve()
-    if allowed_root is not None:
+        base = Path(local_app) / "dev.otterscope"
+        for sub in ("logs", "inbox"):
+            try:
+                allowed_roots.append((base / sub).resolve())
+            except Exception:
+                pass
+    # OTTERSCOPE_CWD dev override (matches Tauri sidecar.rs::inbox_root)
+    cwd_override = os.environ.get("OTTERSCOPE_CWD")
+    if cwd_override:
         try:
-            p.relative_to(allowed_root)
-        except ValueError:
+            allowed_roots.append((Path(cwd_override) / "inbox").resolve())
+        except Exception:
+            pass
+    if allowed_roots:
+        if not any(_is_under(p, root) for root in allowed_roots):
+            roots_str = " | ".join(str(r) for r in allowed_roots)
             return ToolResult(
-                error=f"path must be under {allowed_root} (only screenshots saved by this app can be re-loaded)"
+                error=f"path must be under one of: {roots_str} "
+                "(only screenshots saved by this app or files attached via the chat input can be re-loaded)"
             )
 
     try:
