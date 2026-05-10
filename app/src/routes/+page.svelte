@@ -627,7 +627,8 @@
   .pg-info { font-variant-numeric: tabular-nums; opacity: 0.85; }
   .thread { display: block; width: 100%; text-align: left; background: transparent; color: inherit;
             border: 0; padding: 0.5rem 0.6rem; border-radius: 6px; cursor: pointer; position: relative;
-            margin-bottom: 0.15rem; }
+            margin-bottom: 0.15rem; box-sizing: border-box; }
+  .thread:focus, .thread:focus-visible { outline: none; }
   .thread:hover { background: #1f2937; }
   .thread.active { background: #2563eb; }
   .t-title { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

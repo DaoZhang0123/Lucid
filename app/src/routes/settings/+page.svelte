@@ -225,8 +225,7 @@
 
 <main>
   <header>
-    <a href="/">{$_("settings.back_to_chat")}</a>
-    <a href="/history">{$_("settings.history_link")}</a>
+    <a class="back" href="/">{$_("common.back")}</a>
     <h1>{$_("settings.heading")}</h1>
   </header>
 
@@ -379,6 +378,7 @@
     color: #2563eb;
     text-decoration: none;
   }
+  .back { font-size: 0.9rem; }
   h1 { margin-left: auto; font-size: 18px; }
   h2 { font-size: 15px; margin: 0 0 8px; color: #111; }
   h3 { font-size: 13px; margin: 16px 0 4px; color: #334155; text-transform: uppercase; letter-spacing: 0.04em; }

@@ -29,12 +29,10 @@
    * inheriting body / textarea / input / button defaults pick this up for free.
    */
   :global(html[data-theme="dark"]) { color-scheme: dark; }
-  :global(html), :global(body) {
-    overflow: hidden;
-    /* The .app container already manages a 100vh column with internal scroll
-       regions; lock the document so a stray pixel of overflow won't surface
-       Windows's right/bottom scrollbars. */
-  }
+  /* Lock document scroll only on the chat page (it manages its own height:
+     100vh layout with internal scrollers via .app). Subroutes (settings,
+     schedules, etc.) need normal document scrolling. */
+  :global(.app) { overflow: hidden; }
   :global(html[data-theme="dark"] body) { background: #0b1220 !important; color: #e5e7eb !important; }
 
   /* Cards / panels that defaulted to white. */
@@ -96,6 +94,59 @@
   :global(html[data-theme="dark"] .cf-cancel) { background: #334155 !important; color: #e5e7eb !important; border-color: #475569 !important; }
   :global(html[data-theme="dark"] .cf-cancel:hover) { background: #475569 !important; }
 
+  /* ---------- Dark theme: subroute pages ----------
+   * settings / schedules / doze / templates / memory / tools authored with
+   * hard-coded light colors. Override the high-impact white card surfaces
+   * and accent pills to dark equivalents.
+   */
+  /* page-level text on subroutes (settings <main> hard-codes #222) */
+  :global(html[data-theme="dark"] main) { color: #e5e7eb !important; }
+  :global(html[data-theme="dark"] main h1),
+  :global(html[data-theme="dark"] main h2) { color: #f1f5f9 !important; }
+  :global(html[data-theme="dark"] main h3) { color: #cbd5e1 !important; }
+
+  /* settings cards */
+  :global(html[data-theme="dark"] .card) { background: #1f2937 !important; border-color: #334155 !important; color: #e5e7eb !important; }
+  :global(html[data-theme="dark"] .copilot-status) { background: #111827 !important; color: #e5e7eb !important; }
+  :global(html[data-theme="dark"] .usercode) { background: #0b1220 !important; color: #e5e7eb !important; border-color: #475569 !important; }
+  :global(html[data-theme="dark"] .path) { color: #94a3b8 !important; }
+
+  /* schedules list rows + ghost buttons + tags */
+  :global(html[data-theme="dark"] .row) { background: #1f2937 !important; border-color: #334155 !important; color: #e5e7eb !important; }
+  :global(html[data-theme="dark"] .actions button.ghost),
+  :global(html[data-theme="dark"] .ops button.ghost),
+  :global(html[data-theme="dark"] fieldset.trigger button.ghost) {
+    background: #1f2937 !important; color: #93c5fd !important; border-color: #334155 !important;
+  }
+  :global(html[data-theme="dark"] .ops button.danger) {
+    background: #4c1010 !important; color: #fca5a5 !important; border-color: #7f1d1d !important;
+  }
+  :global(html[data-theme="dark"] .trigger-tag) { background: #1e3a8a !important; color: #bfdbfe !important; }
+  :global(html[data-theme="dark"] .type-tag) { background: #134e4a !important; color: #99f6e4 !important; }
+  :global(html[data-theme="dark"] .instr) { color: #cbd5e1 !important; }
+  :global(html[data-theme="dark"] .empty) { color: #6b7280 !important; }
+
+  /* schedules apps-picker */
+  :global(html[data-theme="dark"] .apps-picker-trigger),
+  :global(html[data-theme="dark"] .apps-picker-panel) { background: #1f2937 !important; border-color: #334155 !important; color: #e5e7eb !important; }
+  :global(html[data-theme="dark"] .apps-picker-trigger:hover) { border-color: #93c5fd !important; }
+  :global(html[data-theme="dark"] .apps-picker-row:hover) { background: #334155 !important; }
+  :global(html[data-theme="dark"] .apps-picker-row.checked) { background: #1e3a8a !important; }
+  :global(html[data-theme="dark"] .apps-picker-chip) { background: #1e3a8a !important; border-color: #3b82f6 !important; color: #bfdbfe !important; }
+  :global(html[data-theme="dark"] .apps-picker-chip .chip-x) { color: #bfdbfe !important; }
+  :global(html[data-theme="dark"] .apps-picker-chip .chip-x:hover) { color: #fca5a5 !important; }
+
+  /* doze pills + table head */
+  :global(html[data-theme="dark"] .pill) { background: #1e293b !important; color: #c7d2fe !important; }
+  :global(html[data-theme="dark"] .pill.kind-tip) { background: #064e3b !important; color: #6ee7b7 !important; }
+  :global(html[data-theme="dark"] .pill.kind-memory) { background: #4a2f06 !important; color: #fbbf24 !important; }
+  :global(html[data-theme="dark"] table th) { color: #94a3b8 !important; }
+  :global(html[data-theme="dark"] .outputs-table th) { background: #111827 !important; border-bottom-color: #334155 !important; color: #94a3b8 !important; }
+  :global(html[data-theme="dark"] .outputs-table th),
+  :global(html[data-theme="dark"] .outputs-table td) { border-top-color: #1f2937 !important; }
+  :global(html[data-theme="dark"] button.link) { color: #93c5fd !important; }
+  :global(html[data-theme="dark"] button.link.danger) { color: #fca5a5 !important; }
+
   /* ---------- Light theme: re-skin header & sidebar ----------
    * The main page authored header / .sidebar / .pager etc. with hard-coded
    * dark colors. In light mode lighten them so the chrome matches the body.
@@ -125,7 +176,10 @@
   :global(html[data-theme="light"] .thread.active .t-title),
   :global(html[data-theme="light"] .thread.active .t-meta),
   :global(html[data-theme="light"] .thread.active .t-id),
-  :global(html[data-theme="light"] .thread.active .t-tag) { color: #fff !important; background: rgba(255,255,255,0.22) !important; }
+  :global(html[data-theme="light"] .thread.active .t-tag) { color: #fff !important; }
+  :global(html[data-theme="light"] .thread.active .t-title),
+  :global(html[data-theme="light"] .thread.active .t-meta) { background: transparent !important; }
+  :global(html[data-theme="light"] .thread.active .t-tag) { background: rgba(255,255,255,0.22) !important; }
   :global(html[data-theme="light"] .thread.active) { background: #2563eb !important; }
   :global(html[data-theme="light"] .thread.active .t-meta) { opacity: 0.9 !important; }
   :global(html[data-theme="light"] .thread.active .t-id) { background: rgba(255,255,255,0.22) !important; }
@@ -153,6 +207,9 @@
   :global(html[data-theme="dark"] .thread.active .t-title),
   :global(html[data-theme="dark"] .thread.active .t-meta),
   :global(html[data-theme="dark"] .thread.active .t-id),
-  :global(html[data-theme="dark"] .thread.active .t-tag) { color: #fff !important; background: rgba(255,255,255,0.22) !important; }
+  :global(html[data-theme="dark"] .thread.active .t-tag) { color: #fff !important; }
+  :global(html[data-theme="dark"] .thread.active .t-title),
+  :global(html[data-theme="dark"] .thread.active .t-meta) { background: transparent !important; }
+  :global(html[data-theme="dark"] .thread.active .t-tag),
   :global(html[data-theme="dark"] .thread.active .t-id) { background: rgba(255,255,255,0.22) !important; }
 </style>
