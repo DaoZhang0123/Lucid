@@ -1,4 +1,4 @@
-"""Generate OtterScope app icon source (1024x1024 PNG).
+"""Generate Lucid app icon source (1024x1024 PNG).
 
 A white paw print on a teal rounded-square background. Pipe the result through
 `pnpm tauri icon icon-source.png` to regenerate all platform sizes + .ico/.icns.

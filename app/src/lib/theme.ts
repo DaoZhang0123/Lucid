@@ -1,7 +1,7 @@
 /**
  * Light/dark theme bootstrap.
  *
- * Persists choice in localStorage["otterscope.theme"] (cold-start with no flash:
+ * Persists choice in localStorage["lucid.theme"] (cold-start with no flash:
  * applied synchronously in setupTheme() before first paint of children).
  * Default = follow OS via `prefers-color-scheme`.
  *
@@ -15,7 +15,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 
 export type Theme = "light" | "dark";
-const STORAGE_KEY = "otterscope.theme";
+const STORAGE_KEY = "lucid.theme";
 
 // Match the header/sidebar palette in +page.svelte (header bg #1f2937,
 // light header bg #f3f4f6) so the OS title bar visually fuses with the menu.

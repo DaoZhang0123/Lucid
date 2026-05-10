@@ -12,7 +12,7 @@
 * 模型用 ``learn_tip(text=..., kind=..., app=?)`` 写入；不传 ``app`` 默认入全局，
   传了就路由到 ``tips/<app>.md`` 并按需创建。
 
-文件首次缺失会用 seed 写入；与 ``memory.md`` 同放在 ``%LOCALAPPDATA%\\dev.otterscope\\`` 下。
+文件首次缺失会用 seed 写入；与 ``memory.md`` 同放在 ``%LOCALAPPDATA%\\dev.lucid\\`` 下。
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from pathlib import Path
 from .config import ToolsConfig
 from . import apps as apps_pkg
 
-_HEADER = "# OtterScope Operation Tips Library\n"
+_HEADER = "# Lucid Operation Tips Library\n"
 
 # Global seed —— 跨 App 都用得上的原则。
 # 与原来的 _SEED_BODY 相比：移走了 wechat / save-dialog / launch-app 几条到独立文件。
@@ -48,7 +48,7 @@ _SEED_BODY = """\
 """
 
 # Per-app seed bodies are no longer hardcoded here — each App lives in its own
-# ``otterscope.apps.<slug>`` module exporting ``SLUG`` / ``TITLE`` / ``TIPS`` /
+# ``lucid.apps.<slug>`` module exporting ``SLUG`` / ``TITLE`` / ``TIPS`` /
 # ``LAUNCHER``. Drop a new file in that package to add a new App.
 def _app_seeds() -> dict[str, tuple[str, str]]:
     """``{slug: (title, body)}`` — built fresh from the apps registry every call
@@ -66,10 +66,10 @@ def _user_data_dir() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.otterscope"
+            return Path(local_app) / "dev.lucid"
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".otterscope"
+        return Path(home) / ".lucid"
     return Path.cwd()
 
 

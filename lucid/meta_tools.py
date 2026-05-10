@@ -333,7 +333,7 @@ LOAD_SCREENSHOT_SCHEMA: dict = {
             "instead of re-visiting the App and taking a fresh shot. "
             "**When to use:** an old user message has been replaced by a placeholder like "
             "`[old screenshot omitted ...; level=L2; file=step-005-post-active_window.png; "
-            "path=C:\\Users\\you\\AppData\\Local\\dev.otterscope\\logs\\thread-...\\step-005-post-active_window.png]` "
+            "path=C:\\Users\\you\\AppData\\Local\\dev.lucid\\logs\\thread-...\\step-005-post-active_window.png]` "
             "and you still need the visual content (e.g. you saw a webpage, switched to another App, and now need to "
             "transcribe the page text). Pass the **exact `path`** from that placeholder. "
             "**Do NOT** invent paths or try to read arbitrary files — only paths emitted by the placeholder lines are valid. "
@@ -996,8 +996,8 @@ def _dispatch_schedule(fn_name: str, args: dict[str, Any], cfg: Config) -> ToolR
 def _dispatch_load_screenshot(args: dict[str, Any]) -> ToolResult:
     """Read a previously-saved screenshot from disk and re-attach it to the
     next request. Validates that the path looks like one of our log files
-    (under ``%LOCALAPPDATA%\\dev.otterscope\\logs``) or an inbox attachment
-    (under ``%LOCALAPPDATA%\\dev.otterscope\\inbox``) so a model can't use this
+    (under ``%LOCALAPPDATA%\\dev.lucid\\logs``) or an inbox attachment
+    (under ``%LOCALAPPDATA%\\dev.lucid\\inbox``) so a model can't use this
     to exfiltrate arbitrary local files.
     """
     import os
@@ -1028,21 +1028,21 @@ def _dispatch_load_screenshot(args: dict[str, Any]) -> ToolResult:
         return ToolResult(error=f"unsupported file type {p.suffix!r}; expected .png/.jpg")
 
     # Allowlist: must live under either
-    #   - %LOCALAPPDATA%\dev.otterscope\logs   (screenshots taken by the agent)
-    #   - %LOCALAPPDATA%\dev.otterscope\inbox  (clipboard pastes / drag-drop attachments
+    #   - %LOCALAPPDATA%\dev.lucid\logs   (screenshots taken by the agent)
+    #   - %LOCALAPPDATA%\dev.lucid\inbox  (clipboard pastes / drag-drop attachments
     #     forwarded from the desktop UI's `save_inbox_image` Tauri command)
     # so a model can't use this to exfiltrate arbitrary local files.
     allowed_roots: list[Path] = []
     local_app = os.environ.get("LOCALAPPDATA")
     if local_app:
-        base = Path(local_app) / "dev.otterscope"
+        base = Path(local_app) / "dev.lucid"
         for sub in ("logs", "inbox"):
             try:
                 allowed_roots.append((base / sub).resolve())
             except Exception:
                 pass
-    # OTTERSCOPE_CWD dev override (matches Tauri sidecar.rs::inbox_root)
-    cwd_override = os.environ.get("OTTERSCOPE_CWD")
+    # LUCID_CWD dev override (matches Tauri sidecar.rs::inbox_root)
+    cwd_override = os.environ.get("LUCID_CWD")
     if cwd_override:
         try:
             allowed_roots.append((Path(cwd_override) / "inbox").resolve())

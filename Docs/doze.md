@@ -2,7 +2,7 @@
 
 > 状态：**v0 设计 + 文本通道落地**（icon 通道与心跳计划在 v1）。
 > 配置入口：`[doze]`（默认 `enabled = false`，需要用户在 settings 中开启）。
-> 代码：`python/otterscope/doze.py` + `python/otterscope/sidecar.py` 集成点。
+> 代码：`lucid/doze.py` + `lucid/sidecar.py` 集成点。
 
 ---
 
@@ -117,7 +117,7 @@ tool_call / tool_result）、`context.log`（每次发往 LLM 的完整 messages
 ## 4. 反思官 system prompt 草稿（v0）
 
 ```
-You are otterscope's "doze reflector": a low-priority background reviewer that runs while
+You are lucid's "doze reflector": a low-priority background reviewer that runs while
 the user is idle. Your job is to read ONE past task transcript and decide what
 reusable knowledge (if any) should be promoted to long-term storage.
 
@@ -174,7 +174,7 @@ v0 不动 icon。v1 要做的事：
 | 输出 | 注入回当前 thread 作为 `[reflection]` user msg | 直接写 `tools.md` / `memory.md` |
 | 工具 | 仅文本反思（无 tool） | learn_tip / remember |
 
-v1 会让打盹与心跳共享 `python/otterscope/reflector.py`，差别只在触发器与上下文窗口。
+v1 会让打盹与心跳共享 `lucid/reflector.py`，差别只在触发器与上下文窗口。
 
 ---
 

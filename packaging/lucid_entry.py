@@ -1,6 +1,6 @@
 """PyInstaller entry shim.
 
-`python/otterscope/__main__.py` uses package-relative imports (`from .config import ...`),
+`lucid/__main__.py` uses package-relative imports (`from .config import ...`),
 which PyInstaller can't satisfy if it's invoked directly as the entry script.
 This wrapper imports the package first so the relative imports resolve.
 """
@@ -14,7 +14,7 @@ for stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-from otterscope.__main__ import main
+from lucid.__main__ import main
 
 
 if __name__ == "__main__":

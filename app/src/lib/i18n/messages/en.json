@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "OtterScope · Desktop Agent"
+    "title": "Lucid · Vision Agent for Windows"
   },
   "lang": {
     "picker_label": "Language"
@@ -60,7 +60,7 @@
     "stderr_summary": "sidecar log ({n})"
   },
   "settings": {
-    "page_title": "OtterScope · Settings",
+    "page_title": "Lucid · Settings",
     "back_to_chat": "← Back to chat",
     "history_link": "History",
     "heading": "Settings",
@@ -103,7 +103,7 @@
     "save_button": "Save",
     "saving_button": "Saving…",
     "saved_at": "Saved @ {at}",
-    "hot_reload_hint": "Saving will hot-reload the sidecar; if a task is running, retry later or restart OtterScope.",
+    "hot_reload_hint": "Saving will hot-reload the sidecar; if a task is running, retry later or restart Lucid.",
     "ping_section_title": "Connectivity",
     "ping_button": "ping sidecar",
     "selfcheck_section_title": "Adaptation self-check (Phase 1.5)",
@@ -117,7 +117,7 @@
     "back": "‹ Back"
   },
   "doze": {
-    "page_title": "OtterScope · Doze",
+    "page_title": "Lucid · Doze",
     "hint": "Idle-time reflection: when the sidecar has been quiet for a while, a low-priority background pass scans your past threads and asks the LLM what's worth saving as long-term tips / memory.",
     "info_scheduled": "scheduled — next tick will pick a thread (status will update shortly)",
     "info_cleared": "processed index cleared",
@@ -168,7 +168,7 @@
     "cancel": "Cancel"
   },
   "memory": {
-    "page_title": "OtterScope · Memory",
+    "page_title": "Lucid · Memory",
     "heading": "Long-term memory · memory.md",
     "hint": "At the start of every task this content is appended to the system prompt. The Agent can also write here via the <code>remember</code> tool. <strong>Do not</strong> store passwords / tokens here.",
     "status_label": "Status:",
@@ -183,7 +183,7 @@
     "saved_at": "Saved {at}"
   },
   "templates": {
-    "page_title": "OtterScope · Templates",
+    "page_title": "Lucid · Templates",
     "heading": "Task templates",
     "hint": "Save commonly used instructions as templates and run them with one click (still uses the active thread; a running task is cancelled first).",
     "edit_heading": "Edit template",
@@ -207,7 +207,7 @@
     "empty": "No templates yet — create one above."
   },
   "tools_page": {
-    "page_title": "OtterScope · Tips",
+    "page_title": "Lucid · Tips",
     "heading": "Operation tips · tools.md",
     "hint": "At the start of every task this content is appended to the system prompt as the \"operation tips library\". During a task the Agent can call <code>learn_tip</code> to append success/failure lessons. Put only <strong>operation techniques</strong> here (the safest way to drive an App / dialog) — not user preferences (those go in memory.md) or one-off facts.",
     "status_label": "Status:",
@@ -227,7 +227,7 @@
     "saved_at": "Saved {at}"
   },
   "schedules": {
-    "page_title": "OtterScope · Schedules",
+    "page_title": "Lucid · Schedules",
     "heading": "Scheduled tasks",
     "hint": "The scheduler is resident in the main process and ticks dynamically (down to second-level when needed). If another task is running when one is due, the run is queued. <strong>Only fires while the app is in the foreground or tray.</strong>",
     "edit_heading": "Edit schedule",
@@ -249,7 +249,7 @@
     "tray_promote_instruction": "Walks HKCU\\Control Panel\\NotifyIconSettings\\* and sets IsPromoted = 1 on every entry, equivalent to flipping every switch in Personalization → Taskbar → Other system tray icons. Prevents taskbar detection from missing icons hidden in the “^” overflow flyout.",
     "tray_promote_meta": "Internal registry tweak (does not run the Agent)",
     "auto_chat_apps_legend": "Auto-reply whitelist (only fire when these apps light up)",
-    "auto_chat_apps_hint": "When checked: detection + LLM-confirmed app must be in this list before any auto-chat task fires. WeChat / Teams are pre-checked. The list comes from the most recent installed-app icon scan.",
+    "auto_chat_apps_hint": "When checked: detection + LLM-confirmed app must be in this list before any auto-chat task fires. Microsoft Teams is pre-checked. The list comes from the most recent installed-app icon scan.",
     "auto_chat_apps_empty": "No installed-app icons have been scanned yet. Run \"Scan installed-app icons\" from the home page first.",
     "auto_chat_apps_defaults_button": "Restore defaults",
     "auto_chat_apps_pick_placeholder": "Click to pick apps…",

@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "Lunette de Loutre · Agent de bureau"
+    "title": "Lucid · Agent visuel pour Windows"
   },
   "lang": {
     "picker_label": "Langue"
@@ -60,7 +60,7 @@
     "stderr_summary": "journal sidecar ({n})"
   },
   "settings": {
-    "page_title": "OtterScope · Paramètres",
+    "page_title": "Lucid · Paramètres",
     "back_to_chat": "← Retour au chat",
     "history_link": "Historique",
     "heading": "Paramètres",
@@ -103,7 +103,7 @@
     "save_button": "Enregistrer",
     "saving_button": "Enregistrement…",
     "saved_at": "Enregistré @ {at}",
-    "hot_reload_hint": "L'enregistrement tente un rechargement à chaud du sidecar ; si une tâche tourne, réessayez plus tard ou redémarrez OtterScope.",
+    "hot_reload_hint": "L'enregistrement tente un rechargement à chaud du sidecar ; si une tâche tourne, réessayez plus tard ou redémarrez Lucid.",
     "ping_section_title": "Connectivité",
     "ping_button": "ping sidecar",
     "selfcheck_section_title": "Auto-vérification d'adaptation (Phase 1.5)",
@@ -117,7 +117,7 @@
     "back": "‹ Retour"
   },
   "doze": {
-    "page_title": "OtterScope · Sommeil",
+    "page_title": "Lucid · Sommeil",
     "hint": "Réflexion en temps libre : quand le sidecar est au repos, une passe en arrière-plan analyse vos threads passés et demande au LLM ce qui mérite d'être conservé comme astuce ou mémoire long terme.",
     "info_scheduled": "planiﬁé — le prochain tick choisira un thread (statut bientôt mis à jour)",
     "info_cleared": "index traité vidé",
@@ -168,7 +168,7 @@
     "cancel": "Annuler"
   },
   "memory": {
-    "page_title": "OtterScope · Mémoire",
+    "page_title": "Lucid · Mémoire",
     "heading": "Mémoire à long terme · memory.md",
     "hint": "Au début de chaque tâche, ce contenu est ajouté à la fin du system prompt. L'Agent peut aussi y écrire via l'outil <code>remember</code>. <strong>N'y stockez pas</strong> de mots de passe ni de jetons.",
     "status_label": "Statut :",
@@ -183,7 +183,7 @@
     "saved_at": "Enregistré {at}"
   },
   "templates": {
-    "page_title": "OtterScope · Modèles",
+    "page_title": "Lucid · Modèles",
     "heading": "Modèles de tâche",
     "hint": "Enregistrez les instructions courantes comme modèles et lancez-les en un clic (utilise toujours le thread actif ; une tâche en cours est annulée d'abord).",
     "edit_heading": "Modifier le modèle",
@@ -207,7 +207,7 @@
     "empty": "Aucun modèle — créez-en un ci-dessus."
   },
   "tools_page": {
-    "page_title": "OtterScope · Astuces",
+    "page_title": "Lucid · Astuces",
     "heading": "Astuces d'opération · tools.md",
     "hint": "Au début de chaque tâche, ce contenu est ajouté à la fin du system prompt comme « bibliothèque d'astuces d'opération ». Pendant une tâche, l'Agent peut appeler <code>learn_tip</code> pour ajouter des leçons de succès/échec. Mettez ici uniquement des <strong>techniques d'opération</strong> (la façon la plus sûre de piloter une App / boîte de dialogue), pas les préférences utilisateur (qui vont dans memory.md) ni les faits ponctuels.",
     "status_label": "Statut :",
@@ -227,7 +227,7 @@
     "saved_at": "Enregistré {at}"
   },
   "schedules": {
-    "page_title": "OtterScope · Planifications",
+    "page_title": "Lucid · Planifications",
     "heading": "Tâches planifiées",
     "hint": "Le planificateur est résident dans le processus principal et tique dynamiquement (jusqu'au niveau de la seconde si nécessaire). Si une autre tâche s'exécute au moment prévu, l'exécution est mise en queue. <strong>Ne se déclenche que lorsque l'app est au premier plan ou en barre d'état.</strong>",
     "edit_heading": "Modifier la planification",
@@ -249,7 +249,7 @@
     "tray_promote_instruction": "Parcourt HKCU\\Control Panel\\NotifyIconSettings\\* et définit IsPromoted = 1 sur chaque entrée, équivalent à activer tous les commutateurs dans Personnalisation → Barre des tâches → Autres icônes du système. Évite que la détection rate les icônes masquées dans le menu « ^ ».",
     "tray_promote_meta": "Modification interne du registre (n'exécute pas l'Agent)",
     "auto_chat_apps_legend": "Liste blanche d'auto-réponse (déclenche uniquement pour ces apps)",
-    "auto_chat_apps_hint": "Si coché : l'app confirmée par la détection + le LLM doit figurer dans cette liste pour qu'une tâche d'auto-chat soit lancée. WeChat / Teams sont cochés par défaut. La liste provient du dernier scan d'icônes d'apps installées.",
+    "auto_chat_apps_hint": "Si coché : l'app confirmée par la détection + le LLM doit figurer dans cette liste pour qu'une tâche d'auto-chat soit lancée. Microsoft Teams est coché par défaut. La liste provient du dernier scan d'icônes d'apps installées.",
     "auto_chat_apps_empty": "Aucune icône d'app installée n'a encore été scannée. Lancez d'abord « Scanner les icônes d'apps installées » depuis la page d'accueil.",
     "auto_chat_apps_defaults_button": "Restaurer les valeurs par défaut",
     "auto_chat_apps_pick_placeholder": "Cliquer pour choisir des apps…",

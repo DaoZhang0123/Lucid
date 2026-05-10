@@ -47,10 +47,10 @@ def _user_data_dir() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.otterscope"
+            return Path(local_app) / "dev.lucid"
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".otterscope"
+        return Path(home) / ".lucid"
     return Path.cwd()
 
 
@@ -226,7 +226,7 @@ def _delete_entry_from_file(target: Path, entry_line: str) -> bool:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are OtterScope's "doze reflector": a low-priority background reviewer that runs while
+You are Lucid's "doze reflector": a low-priority background reviewer that runs while
 the user is idle. Your job is to read ONE past task transcript and decide what
 reusable knowledge (if any) should be promoted to long-term storage.
 
@@ -400,7 +400,7 @@ def _png_to_data_url(path: str | None) -> str | None:
 
 
 _TASKBAR_LEARN_SYSTEM = """\
-You are OtterScope's "doze taskbar learner". The taskbar monitor takes periodic
+You are Lucid's "doze taskbar learner". The taskbar monitor takes periodic
 diffs of the Windows taskbar; whenever something changed, a Step-2 LLM judge
 decides whether the change means a new message arrived for some App. You are
 now reviewing those past judgements (BOTH confirmed-true-positive AND

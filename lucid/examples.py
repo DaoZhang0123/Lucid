@@ -2,9 +2,9 @@
 
 运行方式：
 
-    python -m otterscope.examples list                # 列出全部示例
-    python -m otterscope.examples run notepad         # 单跑一个
-    python -m otterscope.examples run all             # 顺序跑全部（耗时；每例之间 30s 间隔）
+    python -m lucid.examples list                # 列出全部示例
+    python -m lucid.examples run notepad         # 单跑一个
+    python -m lucid.examples run all             # 顺序跑全部（耗时；每例之间 30s 间隔）
 
 每个示例只是一段 *自然语言指令*，交给 ReAct 主循环执行。
 设计目标见 design.md §3.2 / todo.md Phase 1.6。
@@ -43,9 +43,9 @@ EXAMPLES: Dict[str, Example] = {
         name="notepad",
         title="记事本：写文本并保存",
         instruction=(
-            "用 Win+R 打开记事本（notepad），输入一行『hello from otterscope』，"
+            "用 Win+R 打开记事本（notepad），输入一行『hello from lucid』，"
             "然后按 Ctrl+S，在文件名框 type 完整路径 "
-            "C:\\Users\\Public\\otterscope_demo.txt 然后回车保存。"
+            "C:\\Users\\Public\\lucid_demo.txt 然后回车保存。"
             "完成后报告：『任务完成: 已保存到该路径』。"
         ),
         autonomy="confirm_critical",
@@ -69,7 +69,7 @@ EXAMPLES: Dict[str, Example] = {
             "用 Win+R 打开 Excel（excel），新建空白工作簿，"
             "在 A1 单元格 type『周报』，按回车确认，"
             "然后 Ctrl+S 另存为，在文件名框 type "
-            "%USERPROFILE%\\Desktop\\otterscope_weekly.xlsx，回车保存。"
+            "%USERPROFILE%\\Desktop\\lucid_weekly.xlsx，回车保存。"
             "完成后报告：『任务完成: 已保存』。"
         ),
         autonomy="confirm_critical",
@@ -81,7 +81,7 @@ EXAMPLES: Dict[str, Example] = {
         instruction=(
             "打开 PC 微信主窗口（如已最小化先恢复），"
             "在搜索框输入联系人『文件传输助手』并选中，"
-            "在输入框 type『otterscope 自动化测试一下』，按回车发送。"
+            "在输入框 type『lucid 自动化测试一下』，按回车发送。"
             "发送前必须等待用户确认（这是 confirm_each 档位的强 HITL）。"
             "完成后报告：『任务完成: 已发送』。"
         ),
@@ -95,7 +95,7 @@ EXAMPLES: Dict[str, Example] = {
             "用 Win+E 打开文件资源管理器，"
             "在地址栏 type C:\\Users\\Public 然后回车，"
             "右键空白处选择『新建』→『文件夹』，"
-            "在出现的可编辑名称里 type『otterscope_demo_folder』并回车确认。"
+            "在出现的可编辑名称里 type『lucid_demo_folder』并回车确认。"
             "完成后报告：『任务完成: 已创建』。"
         ),
         autonomy="confirm_critical",
@@ -157,7 +157,7 @@ def run_all(override_autonomy: Optional[str] = None) -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="otterscope.examples")
+    parser = argparse.ArgumentParser(prog="lucid.examples")
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("list", help="列出所有示例")
     p_run = sub.add_parser("run", help="运行某示例 (或 'all')")

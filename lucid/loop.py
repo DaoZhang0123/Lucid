@@ -525,7 +525,7 @@ class Agent:
             screen_w, screen_h = self.sensor.virtual_size()
         tool_schema = ComputerTool.openai_tool_schema(screen_w, screen_h)
         # 本次 run 要发给 LLM 的 tools 列表（computer + 按 cfg 启用的 meta tools）。
-        # meta tool 的 schema / 派发逻辑都在 otterscope.meta_tools 模块里。
+        # meta tool 的 schema / 派发逻辑都在 lucid.meta_tools 模块里。
         tools_for_llm = [tool_schema] + meta_tools.build_meta_tool_schemas(self.cfg)
         log.info(f"initial screen {screen_w}x{screen_h} (feed_initial_l1={feed_initial})")
         if feed_initial and first is not None:

@@ -97,10 +97,10 @@ def _store_path() -> Path:
     if os.name == "nt":
         local_app = os.environ.get("LOCALAPPDATA")
         if local_app:
-            return Path(local_app) / "dev.otterscope" / _BASENAME
+            return Path(local_app) / "dev.lucid" / _BASENAME
     home = os.environ.get("HOME")
     if home:
-        return Path(home) / ".otterscope" / _BASENAME
+        return Path(home) / ".lucid" / _BASENAME
     return Path.cwd() / _BASENAME
 
 
@@ -484,7 +484,7 @@ class Scheduler:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="otterscope-scheduler", daemon=True)
+        self._thread = threading.Thread(target=self._loop, name="lucid-scheduler", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:

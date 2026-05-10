@@ -10,7 +10,7 @@ Each subkey has an ``IsPromoted`` DWORD: ``1`` = always show on the taskbar,
 of these values.
 
 This module flips every existing entry to ``IsPromoted = 1`` so e.g. the
-``otterscope`` taskbar monitor never has to chase icons that were sent to the
+``lucid`` taskbar monitor never has to chase icons that were sent to the
 overflow. We **do not** clear or restart explorer — the registry mutation
 is enough; new icons created later will still default to whatever Windows
 chose, so the daily schedule re-runs this sweep.

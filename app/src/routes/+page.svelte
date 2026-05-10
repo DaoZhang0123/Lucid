@@ -224,7 +224,7 @@
   // Thread ids look like `thread-20260508-110047-d381f6-⏰_每日新闻简介` or
   // `20260508-110047-d381f6` (no prefix). Surface the 6-hex random suffix
   // so the user can quickly correlate a sidebar row with files on disk
-  // (`%LOCALAPPDATA%\dev.otterscope\logs\threads\thread-*-<hex>-*\`).
+  // (`%LOCALAPPDATA%\dev.lucid\logs\threads\thread-*-<hex>-*\`).
   function extractHex(id?: string): string {
     if (!id) return "";
     const m = id.match(/-([0-9a-f]{6})(?:-|$)/);
@@ -263,14 +263,7 @@
 <div class="app">
   <header>
     <div class="title">
-      <svg class="logo" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
-        <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/>
-        <circle cx="12" cy="12" r="2.6" fill="currentColor"/>
-        <line x1="12" y1="1.5" x2="12" y2="5.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-        <line x1="12" y1="18.5" x2="12" y2="22.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-        <line x1="1.5" y1="12" x2="5.5" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-        <line x1="18.5" y1="12" x2="22.5" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-      </svg>
+      <img class="logo" src="/logo.png" width="32" height="32" alt="Lucid" />
       <span class="title-text">{$_("app.title")}</span>
     </div>
     <div class="status" class:on={chat.sidecarReady} class:running={chat.running}>
@@ -553,7 +546,7 @@
     font-family: "JetBrains Mono", "Cascadia Code", "Consolas", "SF Mono", ui-monospace, monospace;
     font-weight: 500; letter-spacing: 0.04em;
   }
-  .title .logo { color: #fff; flex: none; }
+  .title .logo { flex: none; display: block; width: 32px; height: 32px; }
   .title-text { color: #fff; }
   .status { font-size: 0.85rem; opacity: 0.8; }
   .status.on { color: #6ee7b7; opacity: 1; }

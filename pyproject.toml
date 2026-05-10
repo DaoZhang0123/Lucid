@@ -1,5 +1,5 @@
 [project]
-name = "otterscope"
+name = "lucid"
 version = "0.4.0"
 description = "Windows desktop agent driven by Claude vision — no MCP, no app APIs."
 requires-python = ">=3.11"
@@ -16,11 +16,11 @@ dependencies = [
 ]
 
 [project.scripts]
-otterscope = "otterscope.__main__:main"
+lucid = "lucid.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["python/otterscope"]
+packages = ["lucid"]

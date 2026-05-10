@@ -3,6 +3,7 @@
   import { setupI18n } from "$lib/i18n";
   import { setupTheme } from "$lib/theme";
   import ConfirmModal from "$lib/ConfirmModal.svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   // Bootstrap i18n once at the root layout. Locale lookup currently falls back
   // to navigator -> "en". A user-selectable locale (saved to config.toml [ui])
@@ -12,16 +13,82 @@
   setupTheme();
 
   let { children } = $props();
+
+  const appWindow = getCurrentWindow();
+  function winMin() { appWindow.minimize(); }
+  function winMax() { appWindow.toggleMaximize(); }
+  function winClose() { appWindow.close(); }
 </script>
 
 {#if $isLoading}
-  <div style="padding: 2rem; font-family: sans-serif; color: #6b7280;">Loading…</div>
+  <div class="splash" role="status" aria-label="Loading Lucid">
+    <div class="splash-stage">
+      <svg class="reticle" viewBox="0 0 64 64" aria-hidden="true">
+        <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="2.2" />
+        <circle cx="32" cy="32" r="2.6" fill="currentColor" />
+        <line x1="32" y1="2"  x2="32" y2="14" stroke="currentColor" stroke-width="2.2" />
+        <line x1="32" y1="50" x2="32" y2="62" stroke="currentColor" stroke-width="2.2" />
+        <line x1="2"  y1="32" x2="14" y2="32" stroke="currentColor" stroke-width="2.2" />
+        <line x1="50" y1="32" x2="62" y2="32" stroke="currentColor" stroke-width="2.2" />
+      </svg>
+      <span class="crab" aria-hidden="true">🦀</span>
+    </div>
+    <div class="splash-title">Lucid</div>
+    <div class="splash-sub">Vision Agent for Windows</div>
+  </div>
 {:else}
-  {@render children()}
+  <div class="root">
+    <div class="titlebar" data-tauri-drag-region>
+      <div class="tb-spacer" data-tauri-drag-region></div>
+      <div class="tb-controls">
+        <button class="tb-btn" type="button" title="Minimize" aria-label="Minimize" onclick={winMin}>
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 5h10" stroke="currentColor" stroke-width="1" /></svg>
+        </button>
+        <button class="tb-btn" type="button" title="Maximize" aria-label="Maximize" onclick={winMax}>
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1" /></svg>
+        </button>
+        <button class="tb-btn tb-close" type="button" title="Close" aria-label="Close" onclick={winClose}>
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1" /></svg>
+        </button>
+      </div>
+    </div>
+    <div class="root-body">
+      {@render children()}
+    </div>
+  </div>
   <ConfirmModal />
 {/if}
 
 <style>
+  /* ---------- Custom titlebar (native decorations are off) ---------- */
+  .root { display: flex; flex-direction: column; height: 100vh; min-height: 100vh; }
+  .titlebar {
+    flex: none;
+    height: 30px;
+    display: flex;
+    align-items: stretch;
+    background: #111827;
+    color: #e5e7eb;
+    user-select: none;
+  }
+  .tb-spacer { flex: 1; }
+  .tb-controls { display: flex; align-items: stretch; }
+  .tb-btn {
+    width: 46px; height: 100%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; color: inherit; border: 0; cursor: pointer; padding: 0;
+    transition: background 0.12s;
+  }
+  .tb-btn:hover { background: rgba(255,255,255,0.10); }
+  .tb-close:hover { background: #e81123; color: #fff; }
+  .root-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+  /* The chat page uses height:100vh on .app — make it fill the body slot
+     instead of the whole viewport so it doesn't get clipped under titlebar. */
+  :global(.root-body > .app) { height: 100% !important; flex: 1; }
+  /* Light theme titlebar */
+  :global(html[data-theme="light"]) .titlebar { background: #f3f4f6; color: #111827; }
+  :global(html[data-theme="light"]) .tb-btn:hover { background: rgba(0,0,0,0.06); }
+
   /* ---------- Dark theme overrides ----------
    * Component-level styles use hex colors directly (light theme as authored).
    * Rather than touch every <style> block we re-skin the most visible surfaces
@@ -212,4 +279,48 @@
   :global(html[data-theme="dark"] .thread.active .t-meta) { background: transparent !important; }
   :global(html[data-theme="dark"] .thread.active .t-tag),
   :global(html[data-theme="dark"] .thread.active .t-id) { background: rgba(255,255,255,0.22) !important; }
+
+  /* ---------- Launch splash ---------- */
+  .splash {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0.6rem;
+    background: #f3f4f6; color: #1f2937;
+    font-family: "JetBrains Mono", "Cascadia Code", Consolas, "SF Mono", ui-monospace, monospace;
+    z-index: 9999;
+  }
+  :global(html[data-theme="dark"]) .splash { background: #0b1220; color: #e5e7eb; }
+  .splash-stage {
+    position: relative;
+    width: 96px; height: 96px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .reticle { width: 80px; height: 80px; opacity: 0.92; }
+  .crab {
+    position: absolute;
+    left: 50%; top: 50%;
+    font-size: 22px; line-height: 1;
+    transform: translate(-150px, -50%);
+    animation: lucid-crab-walk 1.6s cubic-bezier(0.22, 0.61, 0.36, 1) 0.15s forwards;
+    will-change: transform, opacity;
+  }
+  @keyframes lucid-crab-walk {
+    0%   { transform: translate(-150px, -50%) rotate(0deg);   opacity: 0; }
+    10%  { opacity: 1; }
+    35%  { transform: translate(-60px, -50%)  rotate(-6deg);  }
+    50%  { transform: translate(-30px, -50%)  rotate(6deg);   }
+    78%  { transform: translate(-10px, -50%)  rotate(-3deg);  opacity: 1; }
+    100% { transform: translate(-12px, -50%)  rotate(0deg);   opacity: 0; }
+  }
+  .splash-title {
+    font-size: 1.4rem; font-weight: 500; letter-spacing: 0.06em;
+    margin-top: 0.4rem;
+  }
+  .splash-sub {
+    font-size: 0.78rem; opacity: 0.6; letter-spacing: 0.04em;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .crab { animation: none; opacity: 0; }
+  }
 </style>

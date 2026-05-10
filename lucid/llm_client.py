@@ -386,7 +386,7 @@ class CopilotClient:
     }
 
     def __init__(self, *, token_manager: Any, model: str) -> None:
-        # token_manager: otterscope.auth.copilot.CopilotTokenManager
+        # token_manager: lucid.auth.copilot.CopilotTokenManager
         self._tm = token_manager
         self.model = model
 

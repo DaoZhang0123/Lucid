@@ -37,7 +37,7 @@ class AnthropicConfig:
 class CopilotConfig:
     r"""GitHub Copilot 接入。OAuth device code 拿 GitHub token 后换
     Copilot 临时 token（~30 min），直接打 Copilot 的 chat completions 端点。
-    api_key / cached token 保存在 state_file（默认 %LOCALAPPDATA%\dev.otterscope\copilot.json），
+    api_key / cached token 保存在 state_file（默认 %LOCALAPPDATA%\dev.lucid\copilot.json），
     不应写入 config.toml。这里只放公开选项。
     """
     model: str = "claude-opus-4-6"
@@ -192,7 +192,7 @@ class LoggingConfig:
 class MemoryConfig:
     """长期记忆 memory.md 的配置。"""
     enabled: bool = True
-    path: str = "memory.md"            # 相对路径会落到 LOCALAPPDATA/dev.otterscope/
+    path: str = "memory.md"            # 相对路径会落到 LOCALAPPDATA/dev.lucid/
     max_entries: int = 200             # 超过则丢最早
     max_entry_chars: int = 500         # 单条最大字符数
     max_chars: int = 8000              # 注入 prompt 时的总裁剪上限
@@ -416,7 +416,7 @@ def load_config(path: str | Path | None = None) -> Config:
     """读取 toml；缺失时返回全默认。"""
     cfg = Config()
     if path is None:
-        env_path = os.environ.get("OTTERSCOPE_CONFIG")
+        env_path = os.environ.get("LUCID_CONFIG")
         if env_path:
             path = env_path
     if path is None:

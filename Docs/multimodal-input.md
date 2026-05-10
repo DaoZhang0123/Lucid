@@ -12,12 +12,12 @@
 
 | 类型 | 例子 | 落盘 | 模型看到什么 |
 | --- | --- | --- | --- |
-| **图片** | Win+Shift+S 剪贴板截图、`*.png/jpg/webp/gif/bmp` | `%LOCALAPPDATA%\dev.otterscope\inbox\<uuid>.<ext>` | `[Attached image] 原名.png  (1.2 MB, 1920x1080)  →  C:\…\inbox\….png   使用 load_screenshot(path=…) 查看` |
+| **图片** | Win+Shift+S 剪贴板截图、`*.png/jpg/webp/gif/bmp` | `%LOCALAPPDATA%\dev.lucid\inbox\<uuid>.<ext>` | `[Attached image] 原名.png  (1.2 MB, 1920x1080)  →  C:\…\inbox\….png   使用 load_screenshot(path=…) 查看` |
 | **文件 / 目录** | `report.pdf`、`data.csv`、任意文件夹 | 保持原路径（不复制） | `[Attached file] report.pdf  →  C:\…\report.pdf   需要时用 read_file / run_shell / launch_app 打开` |
 
 重要原因为什么**截图不再 inline 为 `image_url` 块**：
 - 多个 model provider 对单轮图数量有隐性上限（Anthropic 官方建议≤5 张，Copilot/OpenAI 也不鼓励超过几张同时出现）；一次丢 N 张是费 token + 可能被拒。
-- 后端已有 [`load_screenshot`](../python/otterscope/meta_tools.py#L327) 工具专门读本地 PNG/JPG 重新附加为下一次请求的 image，与现有轨迹重加机制复用，零后端工具改动。
+- 后端已有 [`load_screenshot`](../lucid/meta_tools.py#L327) 工具专门读本地 PNG/JPG 重新附加为下一次请求的 image，与现有轨迹重加机制复用，零后端工具改动。
 - “全部路径化”让附件只占一行文本 token，不设上限也不会炸上下文；同时 thread 持久化也天然干净（本来就只是路径，不会被 prune）。
 - 一致的代码路径：“什么路进来都是 file ref” —— sidecar / loop 代码只要处理一种形式。
 
@@ -113,7 +113,7 @@ await invoke("sidecar_start_task", {
 
 ### 4.3 后端 sidecar schema
 
-[`_rpc_start_task`](../python/otterscope/sidecar.py#L1377) 新增一个可选字段：
+[`_rpc_start_task`](../lucid/sidecar.py#L1377) 新增一个可选字段：
 
 ```python
 file_refs = params.get("file_refs") or []   # list[{name, path, kind?}]
@@ -126,7 +126,7 @@ file_refs = params.get("file_refs") or []   # list[{name, path, kind?}]
 
 ### 4.4 loop.py 渲染规则（唯一改动点）
 
-在 [`loop.py` instruction_content 构造点](../python/otterscope/loop.py#L582)，在“任务：…”之后、L1 说明之前插入 `[Attached files]` 块：
+在 [`loop.py` instruction_content 构造点](../lucid/loop.py#L582)，在“任务：…”之后、L1 说明之前插入 `[Attached files]` 块：
 
 ```python
 IMG_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
@@ -166,7 +166,7 @@ if file_refs:
 | --- | --- | --- |
 | **拖拽** | Tauri 2 的 `getCurrentWebview().onDragDropEvent` 事件里的 `paths: string[]`（绝对路径） | 直接用，按后缀判 kind |
 | **📎 按钮** | `@tauri-apps/plugin-dialog` `open()` 返回绝对路径 / null | 同上 |
-| **粘贴截图** | `paste` 事件里 `clipboardData.items[i].getAsFile()` 拿到 PNG `Blob`，**无磁盘路径** | 调 Tauri 命令 `save_inbox_image(name, bytes)` 写入 `%LOCALAPPDATA%\dev.otterscope\inbox\<uuid>.png`，返回绝对路径 |
+| **粘贴截图** | `paste` 事件里 `clipboardData.items[i].getAsFile()` 拿到 PNG `Blob`，**无磁盘路径** | 调 Tauri 命令 `save_inbox_image(name, bytes)` 写入 `%LOCALAPPDATA%\dev.lucid\inbox\<uuid>.png`，返回绝对路径 |
 | 粘贴一个文件（Explorer 复制后 Ctrl+V） | `clipboardData.files[0]` 在 Tauri 下也有 path 属性 | 同拖拽 |
 
 > inbox 目录不自动清理（不是运行时进程，没有可靠的生命周期）。错过了就是错过了，用户可随时二选全删。
@@ -178,7 +178,7 @@ if file_refs:
 
 - **存盘路径**按 `_sanitize_inline` 处理后拼接，防止文件名伪造 system prompt 边界。
 - **不限附件数量、不限大小**。路径本身 token 只几十字节，爆不了上下文；是否读、读多大完全交给模型。
-- **路径白名单**：不做。OtterScope `safety` 模块已管控写操作；读取是模型的主动工具调用，沉用现有 HITL。
+- **路径白名单**：不做。Lucid `safety` 模块已管控写操作；读取是模型的主动工具调用，沉用现有 HITL。
 - **不带路径的粘贴**（Win+Shift+S 剪贴板）：Tauri 后端命令 `save_inbox_image` 接收 `Vec<u8>` 写入 inbox，文件名 `<yyyymmdd-HHMMSS>-<uuid8>.png`。
 - **F3 续接**：file_refs 只在本次任务的起手 user message 里出现，不入 prelude。用户下个任务不会被上个任务的附件干扰。`load_screenshot` 调后产生的图片照现有 prune 逻辑逐渐变占位符。
 
@@ -193,8 +193,8 @@ app/src/lib/i18n/messages/{zh-CN,en,fr-FR}.json   ID 文案
 app/src-tauri/src/lib.rs                   ID 新 Tauri 命令 save_inbox_image 、start_task 透传 file_refs
 app/src-tauri/Cargo.toml                   ID +tauri-plugin-dialog
 app/src-tauri/capabilities/default.json    ID 允许 dialog:default + drag-drop 事件
-python/otterscope/sidecar.py               ID _rpc_start_task / _run_task / queue_item 加 file_refs
-python/otterscope/loop.py                  ID Agent.run 接 file_refs，instruction_content 加 [Attached files] 块
+lucid/sidecar.py               ID _rpc_start_task / _run_task / queue_item 加 file_refs
+lucid/loop.py                  ID Agent.run 接 file_refs，instruction_content 加 [Attached files] 块
 ```
 
 ---

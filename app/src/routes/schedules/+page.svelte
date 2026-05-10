@@ -70,11 +70,9 @@
   // Match against the **exact** installed-app name (case-insensitive). We
   // used to do a substring match but that pulled in things like
   // "微信开发者工具" / "卸载微信开发者工具" because they happen to contain "微信".
-  // Keep this list narrow — only the actual messaging clients.
+  // Keep this list narrow — only Microsoft Teams is checked by default. Users
+  // can opt in to WeChat or other clients via the picker.
   const DEFAULT_AUTO_CHAT_EXACT = new Set([
-    "微信",
-    "wechat",
-    "weixin",
     "microsoft teams",
     "teams",
     "teams (work or school)",
@@ -284,7 +282,7 @@
     autoChatApps = Array.isArray(s.auto_chat_apps)
       ? [...s.auto_chat_apps]
       // Legacy schedule (created before the whitelist feature) — no field
-      // saved yet. Fall back to the WeChat / Teams default so users don't
+      // saved yet. Fall back to the Teams default so users don't
       // see a fully unchecked list.
       : defaultAutoChatApps();
   }

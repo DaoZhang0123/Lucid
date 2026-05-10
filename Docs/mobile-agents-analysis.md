@@ -6,8 +6,8 @@
 > [mobile-use](https://github.com/minitap-ai/mobile-use)、
 > [mobilerun](https://github.com/droidrun/mobilerun)。
 >
-> 本仓库 [OtterScope](../README.md) 是 Windows 桌面端 GUI Agent。本文目的不是
-> "评 5 个移动 Agent 谁最好"，而是**抽出能搬到 OtterScope 的设计模式与可复用模块**，
+> 本仓库 [Lucid](../README.md) 是 Windows 桌面端 GUI Agent。本文目的不是
+> "评 5 个移动 Agent 谁最好"，而是**抽出能搬到 Lucid 的设计模式与可复用模块**，
 > 同时把它们也作为竞品视野记录（与 [competitor-analysis.md](competitor-analysis.md) 互为补充）。
 
 ---
@@ -56,13 +56,13 @@
 （"我喜欢晚上十点后看 B 站""我的招行卡用账号 X 登录"），下次同一用户的同类任务能秒拿
 context。
 
-**给 OtterScope 的可借鉴**：
-1. **AgentRR 思路 → OtterScope templates / skills 升级**：现在的 templates 是手写一句 instruction，
+**给 Lucid 的可借鉴**：
+1. **AgentRR 思路 → Lucid templates / skills 升级**：现在的 templates 是手写一句 instruction，
    理想是录一次任务自动转成"参数化轨迹模板"，下次匹配到就回放（详见
    [todo.md](todo.md) Phase 2 "Skills 系统"和"App 区域化坐标库"）。
-2. **MobiFlow milestone DAG → OtterScope 任务可观测性**：当前 events.jsonl 是平铺事件，
+2. **MobiFlow milestone DAG → Lucid 任务可观测性**：当前 events.jsonl 是平铺事件，
    可加一层"用户/模型预声明的 milestones"，UI 上显示"5/7 关卡已过"。
-3. **Decider+Grounder 双模型 → OtterScope 未来本地 grounding fallback**：当云端 Claude
+3. **Decider+Grounder 双模型 → Lucid 未来本地 grounding fallback**：当云端 Claude
    点不准小图标时，本地跑 UI-TARS-7B / OS-Atlas / GUI-Owl-7B 做 grounding。
 
 ### 3.2 MobileAgent（X-PLUG / 通义实验室）—— 商业化最深、版本最丰富
@@ -80,15 +80,15 @@ X-PLUG 在 2024–2026 三年里出了 7 代相关项目，每代主题不同：
 | GUI-Critic-R1 (NeurIPS 2025) | **预操作错误诊断** | 在执行前用 critic 模型预判"这一步会不会出错"，省掉错-改的 round-trip |
 | UI-S1 (ACL 2026) | **半在线 RL** | semi-online RL 训练 GUI agent |
 
-**给 OtterScope 最对症的两个**：
+**给 Lucid 最对症的两个**：
 
 - **PC-Agent 的"主动感知模块"**：PC 桌面元素密集（密密麻麻的菜单、工具栏），
   靠模型一次截图扫不全。PC-Agent 的做法是**Agent 主动指定"我要看这个区域"**，
-  对应 OtterScope 的 [Docs/screenshot.md §10 方案 A](screenshot.md#方案-a自定义-region任意矩形-l4) "region 任意框"——这是 PC 端必须做的，移动端可以不做。
+  对应 Lucid 的 [Docs/screenshot.md §10 方案 A](screenshot.md#方案-a自定义-region任意矩形-l4) "region 任意框"——这是 PC 端必须做的，移动端可以不做。
 - **GUI-Critic-R1 的"预操作 critic"**：在 click 之前**单独跑一个轻量 critic**
-  判断"这一步合不合理"，比 OtterScope 当前的"两阶段 click preview"省一次截图、省一次模型推理。
+  判断"这一步合不合理"，比 Lucid 当前的"两阶段 click preview"省一次截图、省一次模型推理。
   虽然 critic 也是模型调用，但可以用更小的 critic 模型（7B 而不是 Opus），延迟更低。
-  对应 OtterScope [todo.md](todo.md) Phase 2 "**多 Agent 设计：planner / checker / executor 三角**" 中的 checker 角色。
+  对应 Lucid [todo.md](todo.md) Phase 2 "**多 Agent 设计：planner / checker / executor 三角**" 中的 checker 角色。
 
 ### 3.3 AppAgent（腾讯 QQGYLab，CHI 2025）—— "探索-部署"两阶段范式
 
@@ -105,17 +105,17 @@ X-PLUG 在 2024–2026 三年里出了 7 代相关项目，每代主题不同：
 **Grounding 方案**：用 SoM (Set-of-Mark) 把 UI 元素打上数字标签 (`1`/`2`/`3`...) 给模型选；
 点不准时还有"网格覆盖"兜底（屏幕铺 10×10 网格，模型说"点 row=4 col=7"）。
 
-**给 OtterScope 的可借鉴**：
-1. **两阶段范式 = OtterScope 的 "App 区域库 + 学习反馈"**：
-   - Phase A 类比 OtterScope [todo.md "App 区域化坐标库"](todo.md) 的"首次校准"
-   - Phase B 类比 OtterScope [todo.md "launch_app meta tool"](todo.md) + region 查表
+**给 Lucid 的可借鉴**：
+1. **两阶段范式 = Lucid 的 "App 区域库 + 学习反馈"**：
+   - Phase A 类比 Lucid [todo.md "App 区域化坐标库"](todo.md) 的"首次校准"
+   - Phase B 类比 Lucid [todo.md "launch_app meta tool"](todo.md) + region 查表
    - 已经能把"打开 X、点 X 的 Y 按钮"从 4-6 步压到 1-2 步
-2. **元素文档 = OtterScope 的 tooltips / icon_memory 升级版**：
-   - 当前 OtterScope 只学"图标外观→功能"（icon_memory.py）
+2. **元素文档 = Lucid 的 tooltips / icon_memory 升级版**：
+   - 当前 Lucid 只学"图标外观→功能"（icon_memory.py）
    - AppAgent 学"元素 ID + 上下文 + 操作后果"，更结构化
-   - 可以让 OtterScope 的 `learn_tip` 进化成 `learn_element(app, region, description, action_outcome)`
+   - 可以让 Lucid 的 `learn_tip` 进化成 `learn_element(app, region, description, action_outcome)`
 3. **Set-of-Mark / 网格 = grounding 兜底**：当 Claude 给的坐标偏 ±20px 时，
-   OtterScope 可以画一张"红色十字 + 数字 1-9"覆盖在目标周围，让模型选数字（替代 region 截图）。
+   Lucid 可以画一张"红色十字 + 数字 1-9"覆盖在目标周围，让模型选数字（替代 region 截图）。
    实现成本极低（PIL 画框），值得加进 [Docs/screenshot.md §10 方案 K "缩略图陪伴"](screenshot.md#方案-f返回时附带屏幕全局缩略图--你点的那块高清图) 之后。
 
 ### 3.4 mobile-use（minitap.ai）—— LangGraph 工程化最优雅
@@ -142,28 +142,28 @@ hopper ◄──────────── outputter ──► summarizer
 落在 `llm-config.override.jsonc`。**这就是节省 token / 钱的核心招数**。
 
 **Skills 目录**：`skills/` 下放可复用动作模板（用 yaml/markdown 定义参数化步骤），
-对应 OtterScope [todo.md "Skills 系统"](todo.md) 设想——mobile-use 已经做了。
+对应 Lucid [todo.md "Skills 系统"](todo.md) 设想——mobile-use 已经做了。
 
 **100% AndroidWorld**：是首个跑通 AndroidWorld 全部任务的开源 agent，工程上确实很扎实。
 
-**给 OtterScope 的可借鉴**：
-1. **LangGraph 节点拆分 → OtterScope 多 Agent 三角的实现底座**：
-   - 当前 OtterScope 是单 ReAct 循环
+**给 Lucid 的可借鉴**：
+1. **LangGraph 节点拆分 → Lucid 多 Agent 三角的实现底座**：
+   - 当前 Lucid 是单 ReAct 循环
    - [todo.md "多 Agent 设计：planner / checker / executor 三角"](todo.md) 完全可以用 LangGraph
      落地，省掉自己造状态机
 2. **每节点独立 LLM 配置**：summarizer / checker 用 Haiku 或本地 7B 模型，
    主推理用 Opus，**单任务成本可降一个量级**
 3. **Skills 目录 → templates 升级**：
-   - 当前 OtterScope templates 是单条 instruction
-   - 可以改成 skills 目录 (`%LOCALAPPDATA%\dev.otterscope\skills\<slug>.yaml`)，
+   - 当前 Lucid templates 是单条 instruction
+   - 可以改成 skills 目录 (`%LOCALAPPDATA%\dev.lucid\skills\<slug>.yaml`)，
      每个 skill 含 params + steps 数组，模型用 `run_skill(name, params)` 调用
 4. **Docker 一键启动**：mobile-use 提供 Docker 镜像，用户不需要装 Python；
-   OtterScope 已经走 Tauri 安装包路线，但 Python sidecar 仍需 PyInstaller 打包——可以借鉴
+   Lucid 已经走 Tauri 安装包路线，但 Python sidecar 仍需 PyInstaller 打包——可以借鉴
    mobile-use 把"启动 sidecar 之前的环境检查"做得更友好
 
 ### 3.5 mobilerun（droidrun）—— SDK + CLI + MCP 三件套
 
-**形态最像 OtterScope 的开发哲学**：`pip install mobilerun` → `mobilerun setup` → `mobilerun configure` → `mobilerun run "..."`
+**形态最像 Lucid 的开发哲学**：`pip install mobilerun` → `mobilerun setup` → `mobilerun configure` → `mobilerun run "..."`
 三步上路，CLI/SDK/MCP-server 三种用法。
 
 **模块切分**（`mobilerun/agent/`）：
@@ -177,42 +177,42 @@ hopper ◄──────────── outputter ──► summarizer
 - `fast_agent/` —— 快速路径（疑似缓存命中走这条）
 - `tool_registry.py` —— tool 注册中心
 
-`app_cards/` 单独建模 "对每个 App 我知道什么"——和 OtterScope 的 launchers.json + 区域库
+`app_cards/` 单独建模 "对每个 App 我知道什么"——和 Lucid 的 launchers.json + 区域库
 **几乎一对一映射**。
 
 **Telemetry**：用 [Arize Phoenix](https://github.com/Arize-ai/phoenix) 做分布式 tracing，
-把每次 LLM 调用 + tool_call + 时间线可视化。比 OtterScope 当前的 `events.jsonl` + 手翻 log 更舒服。
+把每次 LLM 调用 + tool_call + 时间线可视化。比 Lucid 当前的 `events.jsonl` + 手翻 log 更舒服。
 
-**给 OtterScope 的可借鉴**：
+**给 Lucid 的可借鉴**：
 1. **app_cards 几乎是 launchers.json 的同义词**——证明这条路是行业共识
-2. **Arize Phoenix 集成 → OtterScope 调试可视化升级**：
-   - 当前 OtterScope 的 events.jsonl 只能在前端聊天流里看
+2. **Arize Phoenix 集成 → Lucid 调试可视化升级**：
+   - 当前 Lucid 的 events.jsonl 只能在前端聊天流里看
    - 加一层 Phoenix 适配（OpenInference 协议，~50 行）就能在 Phoenix UI 里看到
      每步的 token 消耗、延迟、tool 调用树、prompt diff
    - 对调试 "为什么这次比上次慢/贵" 这种问题非常有用
 3. **fast_agent 路径**：明确把"快路径"（缓存/规则/模板命中）和"慢路径"（LLM ReAct）
-   写成两个模块，避免在一个函数里 if/else 横飞——值得在 OtterScope loop.py 早期 split
+   写成两个模块，避免在一个函数里 if/else 横飞——值得在 Lucid loop.py 早期 split
 
-## 4. 移动端 vs OtterScope（桌面端）的关键差异
+## 4. 移动端 vs Lucid（桌面端）的关键差异
 
-| 维度 | 移动端常见做法 | OtterScope（桌面端）做法 / 取舍 |
+| 维度 | 移动端常见做法 | Lucid（桌面端）做法 / 取舍 |
 |------|----------------|---------------------------|
-| **窗口切换** | App 全屏独占；切应用 = 回 home + 点 icon | 多窗口并存；可拖动重叠 → OtterScope 需要 `launch_app` + 窗口枚举 (§12.3) |
-| **元素定位** | accessibility tree 信息丰富，UIA 几乎可用 | 微信/QQ 自绘，UIA 树空 → OtterScope 退回纯视觉 (§12.4) |
-| **截图** | 屏幕小、单 DPI、单显示器 | 多显示器 + DPI 缩放 + 大屏密集 → OtterScope 三级金字塔 + region |
+| **窗口切换** | App 全屏独占；切应用 = 回 home + 点 icon | 多窗口并存；可拖动重叠 → Lucid 需要 `launch_app` + 窗口枚举 (§12.3) |
+| **元素定位** | accessibility tree 信息丰富，UIA 几乎可用 | 微信/QQ 自绘，UIA 树空 → Lucid 退回纯视觉 (§12.4) |
+| **截图** | 屏幕小、单 DPI、单显示器 | 多显示器 + DPI 缩放 + 大屏密集 → Lucid 三级金字塔 + region |
 | **输入** | ADB Keyboard 标准 IME 通路 | Win32 SendInput / 剪贴板粘贴 / IME 处理 |
-| **延迟容忍** | 用户预期低（点-反应感） | 用户预期更高（鼠标-反应感）→ OtterScope 必须更激进减 round-trip |
-| **任务复杂度** | 短任务多（"打开微信发条消息"） | 长任务多（"读 PDF 写邮件" / 多窗口协作）→ OtterScope 必须做 context 压缩 (§4-5) |
-| **HITL** | 移动端罕见（移动操作快） | OtterScope 必备（误操作代价大）→ 两阶段 click preview |
-| **变现** | 多走云手机/SaaS | OtterScope 走桌面安装包 + 自带模型 → 离线、隐私、可控 |
+| **延迟容忍** | 用户预期低（点-反应感） | 用户预期更高（鼠标-反应感）→ Lucid 必须更激进减 round-trip |
+| **任务复杂度** | 短任务多（"打开微信发条消息"） | 长任务多（"读 PDF 写邮件" / 多窗口协作）→ Lucid 必须做 context 压缩 (§4-5) |
+| **HITL** | 移动端罕见（移动操作快） | Lucid 必备（误操作代价大）→ 两阶段 click preview |
+| **变现** | 多走云手机/SaaS | Lucid 走桌面安装包 + 自带模型 → 离线、隐私、可控 |
 
-## 5. 优先级清单：OtterScope 应该立即吸收哪些
+## 5. 优先级清单：Lucid 应该立即吸收哪些
 
 按 ROI 排序：
 
-| # | 借鉴对象 | 来自 | 工程成本 | 预期收益 | OtterScope 对应位置 |
+| # | 借鉴对象 | 来自 | 工程成本 | 预期收益 | Lucid 对应位置 |
 |---|----------|------|---------|---------|----------------|
-| **1** | **每节点独立 LLM 配置** | mobile-use | ~30 行 | 单任务成本降 50%+ | [llm.py](../python/otterscope/llm.py) 加 model_for_role 参数 |
+| **1** | **每节点独立 LLM 配置** | mobile-use | ~30 行 | 单任务成本降 50%+ | [llm.py](../lucid/llm.py) 加 model_for_role 参数 |
 | **2** | **app_cards / launchers.json** | mobilerun, AppAgent | ~100 行 | "打开 X" 4 步→1 步 | [todo.md "launch_app meta tool"](todo.md) |
 | **3** | **GUI-Critic 风格 pre-action checker** | MobileAgent v3 | ~80 行 + 一个小模型调用 | 减少错-改 round-trip | [todo.md "多 Agent 三角"](todo.md) checker 角色 |
 | **4** | **AgentRR 录放** | MobiAgent | ~150 行 | 重复任务秒级回放 | 与 templates / skills 合并设计 |
@@ -226,9 +226,9 @@ hopper ◄──────────── outputter ──► summarizer
 ## 6. 一句话总结
 
 > **移动端 GUI Agent 在 2024–2026 已基本走通**：多 Agent 协作、双模型 grounding、
-> 录放加速、user memory、节点化 + 可观测——这些模式都被验证有效。**OtterScope 作为
+> 录放加速、user memory、节点化 + 可观测——这些模式都被验证有效。**Lucid 作为
 > 桌面端项目，应该有意识地"借力"，而不是从 0 重发明**。
 > 最优先吸收三件事：(1) **launch_app + app_cards**（mobilerun/AppAgent 的 app_cards），
 > (2) **每节点独立 LLM 配置**（mobile-use 的 LangGraph），(3) **AgentRR 风格录放**
-> （MobiAgent 的轨迹复用）。这三件做完，OtterScope 在"速度 + 准确率 + 成本"三个维度
+> （MobiAgent 的轨迹复用）。这三件做完，Lucid 在"速度 + 准确率 + 成本"三个维度
 > 都能立刻拉开和当前架构的差距。

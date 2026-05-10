@@ -1,24 +1,21 @@
-# <img src="app/src-tauri/icons/128x128.png" width="24" alt="OtterScope icon" /> OtterScope
+# <img src="app/src-tauri/icons/128x128.png" width="24" alt="Lucid icon" /> Lucid
 
 Un véritable assistant IA qui agit comme un humain sur ordinateur : sans MCP, contrôle direct de vos applications Windows, et auto-réponse continue quand vous êtes absent.
 
-> **Une paire de pattes habiles — et un œil vigilant — pour votre bureau Windows.**
-> Dites à OtterScope ce que vous voulez faire. Il scrute l'écran, manipule la souris ; quand vous n'êtes pas là, il lit les messages entrants et répond poliment à votre place.
+> **Un regard limpide pour votre bureau Windows — Agent visuel pour Windows.**
+> Dites à Lucid ce que vous voulez faire. Il scrute l'écran, manipule la souris ; quand vous n'êtes pas là, il lit les messages entrants et répond poliment à votre place.
 > **Sans MCP. Sans API par application. Sans plugin de navigateur.** Juste la **vision multimodale de Claude** qui pilote votre vrai clavier et votre vraie souris.
-> **Contrairement aux bots officiels (WeChat, Slack, Teams) — OtterScope contrôle votre vrai client**, donc il peut lire n'importe quel message, voir tout l'historique, répondre en votre nom, avec persistance d'état et sans enregistrement.
+> **Contrairement aux bots officiels (WeChat, Slack, Teams) — Lucid contrôle votre vrai client**, donc il peut lire n'importe quel message, voir tout l'historique, répondre en votre nom, avec persistance d'état et sans enregistrement.
 
-> **Pourquoi ce nom ?** La loutre de mer est l'un des rares animaux sauvages qui **utilise des outils avec ses deux pattes** —
-> elle garde un caillou préféré sous l'aisselle et casse des coquillages sur son ventre,
-> flottant sur le dos, parfaitement composée. **Otter** c'est la patte qui agit ;
-> **Scope** c'est l'œil qui regarde — pyramide de captures à trois niveaux + moniteur de la barre des tâches qui ne cligne jamais.
-> **OtterScope = l'œil qui voit + les pattes qui agissent.**
+> **D'où vient le nom ?** *Lucid* — clair, perspicace, l'esprit transparent. Le réticule au centre du logo, c'est l'œil ; ce que l'œil voit, l'agent le fait. Une pyramide de captures à trois niveaux et un moniteur de la barre des tâches qui ne cligne jamais gardent la perception affûtée ; une seule boucle ReAct garde l'action honnête. **Lucid = l'œil qui voit + les mains qui agissent.**
+> *Petit easter egg : gardez un œil sur le splash — un mini crabe vient se nicher au centre du réticule.*
 
 **Langues :** [English](README.md) · [简体中文](README.zh-CN.md) · **Français**
 
 ```
 Vous :   « Ouvre Microsoft Teams et envoie-moi 'Hello' à moi-même »
           ↓
-OtterScope :  *prend une capture d'écran*
+Lucid :  *prend une capture d'écran*
           *voit le bureau*
           → launch_app("Microsoft Teams")
           → click(conversation avec moi-même)
@@ -26,15 +23,15 @@ OtterScope :  *prend une capture d'écran*
           → « Fait. »
 ```
 
-OtterScope est livré comme une appli de bureau Windows (`otterscope.exe` comme moteur + GUI Tauri/WebView2). Voici ce qu'il sait déjà faire et une bonne brassée d'exemples de prompts.
+Lucid est livré comme une appli de bureau Windows (`lucid.exe` comme moteur + GUI Tauri/WebView2). Voici ce qu'il sait déjà faire et une bonne brassée d'exemples de prompts.
 
 ---
 
-## Pourquoi OtterScope ?
+## Pourquoi Lucid ?
 
-| | RPA traditionnel / bots liés à des API | **OtterScope** |
+| | RPA traditionnel / bots liés à des API | **Lucid** |
 | --- | --- | --- |
-| Intégration par appli | Chaque appli demande un SDK / plugin / serveur MCP | **Zéro.** Si un humain peut l'utiliser, OtterScope le peut aussi. |
+| Intégration par appli | Chaque appli demande un SDK / plugin / serveur MCP | **Zéro.** Si un humain peut l'utiliser, Lucid le peut aussi. |
 | Marche avec les applis fermées (banques, ERP, jeux, WeChat…) | ❌ rarement | ✅ les pixels restent des pixels |
 | Auto-réponse aux messages | Bots officiels seulement ; approbation requise ; pas d'état ; ne voit pas l'historique complet | ✅ **Contrôle votre vrai client.** Lit n'importe quel message, voit l'historique complet, répond en votre nom, avec persistance d'état. |
 | Mise en place | Des heures de glue code | Installer, choisir un LLM, taper une phrase |
@@ -43,7 +40,7 @@ OtterScope est livré comme une appli de bureau Windows (`otterscope.exe` comme 
 
 ---
 
-## Ce que OtterScope sait faire aujourd'hui
+## Ce que Lucid sait faire aujourd'hui
 
 ### Vous parle
 - Coquille de chat conversationnelle (Tauri 2 + SvelteKit + WebView2), icône de barre des tâches, raccourci global d'arrêt d'urgence (`Ctrl+Alt+Esc`).
@@ -54,7 +51,7 @@ OtterScope est livré comme une appli de bureau Windows (`otterscope.exe` comme 
 - **Per-Monitor V2 DPI** + coordonnées virtuelles multi-écrans.
 - **Pyramide de captures à trois niveaux** que le modèle choisit lui-même : L1 plein écran, L2 fenêtre active, L3 voisinage du curseur (resserré par UIA — colle au vrai cadre de l'élément UI sous le curseur, pas une bête boîte 200×200).
 - Gestion de contexte intelligente : fenêtres de rétention par niveau + recompression JPEG des anciennes captures + résumé automatique quand le contexte dépasse le budget du modèle.
-- **Mode démarrage léger :** quand fournir le L1 initial n'apporte rien, OtterScope communique seulement la taille du bureau et laisse le modèle décider s'il doit regarder.
+- **Mode démarrage léger :** quand fournir le L1 initial n'apporte rien, Lucid communique seulement la taille du bureau et laisse le modèle décider s'il doit regarder.
 
 ### Pilote votre vrai bureau
 - Outil `computer` complet : clic / glisser / molette / raccourci / `type` compatible chinois (via presse-papiers — contourne complètement l'IME).
@@ -62,8 +59,8 @@ OtterScope est livré comme une appli de bureau Windows (`otterscope.exe` comme 
 - Lancement natif : `launch_app("VS Code")` utilise les API Windows (raccourcis Menu Démarrer + scan des manifestes UWP MSIX), épingle la fenêtre active et évite l'aller-retour « cherche l'icône ».
 
 ### Surveille pour vous quand vous êtes ailleurs
-- **Notification visuelle de la barre des tâches** — diff dHash périodique sur la barre ; si un changement candidat apparaît, un appel LLM bon marché confirme s'il s'agit d'un nouveau message et *quelle* appli l'a déclenché. **Liste blanche d'applis** par planification — OtterScope ne touche que ce que vous autorisez.
-- **Auto-réponse** avec une **AUTO-REPLY SAFETY POLICY** codée en dur dans le system prompt : ne jamais divulguer d'infos perso ou de codes, ne jamais cliquer sur payer / accepter / installer, ne jamais accepter fichiers / demandes d'amis / partage d'écran, escalade-et-arrêt en cas d'ambiguïté. *Contrairement aux bots WeChat officiels (qui demandent une approbation, n'ont pas d'état persistant et ne peuvent pas contrôler les messages sortants), OtterScope pilote votre vrai client WeChat — vous obtenez donc une vraie auto-réponse autonome et intelligente.*
+- **Notification visuelle de la barre des tâches** — diff dHash périodique sur la barre ; si un changement candidat apparaît, un appel LLM bon marché confirme s'il s'agit d'un nouveau message et *quelle* appli l'a déclenché. **Liste blanche d'applis** par planification — Lucid ne touche que ce que vous autorisez.
+- **Auto-réponse** avec une **AUTO-REPLY SAFETY POLICY** codée en dur dans le system prompt : ne jamais divulguer d'infos perso ou de codes, ne jamais cliquer sur payer / accepter / installer, ne jamais accepter fichiers / demandes d'amis / partage d'écran, escalade-et-arrêt en cas d'ambiguïté. *Contrairement aux bots WeChat officiels (qui demandent une approbation, n'ont pas d'état persistant et ne peuvent pas contrôler les messages sortants), Lucid pilote votre vrai client WeChat — vous obtenez donc une vraie auto-réponse autonome et intelligente.*
 
 ### Planifications et modèles
 - **Planifications** — modes cron + ponctuel + visual_notify. Pause / reprise / « exécuter maintenant ».
@@ -71,14 +68,14 @@ OtterScope est livré comme une appli de bureau Windows (`otterscope.exe` comme 
 - **Persistance de contexte par thread** — chaque réponse dans le même thread réutilise les messages précédents (après compression d'images).
 
 ### Apprend dans le temps
-- **`memory.md`** — mémoire long terme injectée dans le system prompt ; OtterScope peut appeler `remember(text)` pour écrire, vous éditez sur la page Mémoire.
-- **`tools.md`** — bibliothèque de « trucs et astuces » qui évolue ; OtterScope appelle `learn_tip(text)` après une exécution réussie ou ratée.
-- **Fichier par appli** (`apps/<slug>.py`) — déposer un fichier = apprendre une nouvelle appli à OtterScope, avec lanceur custom + tips.
-- **Apprentissage en veille** — quand vous êtes inactif depuis 5 minutes, OtterScope réfléchit en silence sur les threads terminés, en extrait des astuces et des *icon proposals* (petites icônes recadrées qu'il a repérées ; vous les acceptez sur la page Doze, il apprend ainsi le mapping icône → appli).
+- **`memory.md`** — mémoire long terme injectée dans le system prompt ; Lucid peut appeler `remember(text)` pour écrire, vous éditez sur la page Mémoire.
+- **`tools.md`** — bibliothèque de « trucs et astuces » qui évolue ; Lucid appelle `learn_tip(text)` après une exécution réussie ou ratée.
+- **Fichier par appli** (`apps/<slug>.py`) — déposer un fichier = apprendre une nouvelle appli à Lucid, avec lanceur custom + tips.
+- **Apprentissage en veille** — quand vous êtes inactif depuis 5 minutes, Lucid réfléchit en silence sur les threads terminés, en extrait des astuces et des *icon proposals* (petites icônes recadrées qu'il a repérées ; vous les acceptez sur la page Doze, il apprend ainsi le mapping icône → appli).
 - **Auto-diagnostic** — moniteurs / DPI / alias Win+R / décalage des coordonnées de clic.
 
 ### Honnête sur lui-même
-- Logs par exécution dans `%LOCALAPPDATA%\dev.otterscope\logs\threads\<thread>\` — `events.jsonl`, `messages.json`, toutes les captures, dump complet du contexte LLM.
+- Logs par exécution dans `%LOCALAPPDATA%\dev.lucid\logs\threads\<thread>\` — `events.jsonl`, `messages.json`, toutes les captures, dump complet du contexte LLM.
 - Trois niveaux d'autonomie : `full` / `confirm_critical` / `confirm_each`. Liste de mots-clés HITL (`delete`, `format`, `transfer`, `confirm payment`, …) qui intercepte les actions dangereuses même en `full`.
 
 ---
@@ -123,7 +120,7 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 
 > *« Dans `D:\Photos\unsorted`, renomme tous les fichiers `IMG_*.JPG` en `2026-05-08-<NNNN>.jpg` en gardant l'ordre. »*
 
-> *« Quels sont les 5 plus gros fichiers sous `C:\Users\me\Downloads` ? »* (OtterScope utilisera `run_shell`, pas la souris.)
+> *« Quels sont les 5 plus gros fichiers sous `C:\Users\me\Downloads` ? »* (Lucid utilisera `run_shell`, pas la souris.)
 
 ### 🎮 Jeux légers / applis de niche
 
@@ -137,7 +134,7 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 
 > *« Prends une capture plein écran et dis-moi combien de fenêtres sont visibles. »*
 
-> *« Lis `C:\Users\me\AppData\Local\dev.otterscope\config.toml` et dis-moi quel provider LLM est actif. »* (Utilise le meta tool `read_file`, pas de clic.)
+> *« Lis `C:\Users\me\AppData\Local\dev.lucid\config.toml` et dis-moi quel provider LLM est actif. »* (Utilise le meta tool `read_file`, pas de clic.)
 
 ---
 
@@ -154,7 +151,7 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 └──────────────────────┬─────────────────────────────┘
                        │ JSON-RPC sur stdio
 ┌──────────────────────┴─────────────────────────────┐
-│  Sidecar Python (otterscope.exe)                       │
+│  Sidecar Python (lucid.exe)                       │
 │  ReAct · planifs · monitor barre · doze · mémoire   │
 │        ↓ captures mss          ↓ saisie pyautogui   │
 │        ↓ HTTP                                       │
@@ -162,13 +159,13 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 └─────────────────────────────────────────────────────┘
 ```
 
-Données utilisateur : `%LOCALAPPDATA%\dev.otterscope\` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
+Données utilisateur : `%LOCALAPPDATA%\dev.lucid\` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
 
 ---
 
 ## Installation (utilisateurs finaux)
 
-Téléchargez `otterscope_<version>_x64-setup.exe` depuis une release, lancez l'installateur, démarrez **OtterScope** depuis le menu Démarrer.
+Téléchargez `lucid_<version>_x64-setup.exe` depuis une release, lancez l'installateur, démarrez **Lucid** depuis le menu Démarrer.
 
 Au premier lancement, ouvrez **Paramètres** et choisissez un backend LLM :
 
@@ -189,14 +186,14 @@ Au premier lancement, ouvrez **Paramètres** et choisissez un backend LLM :
 ### 1) Sidecar Python
 
 ```powershell
-cd D:\Project\OtterScope
+cd D:\Project\Lucid
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e .
 
 pip install pyinstaller
-pyinstaller packaging\otterscope.spec
-# → dist\otterscope.exe
+pyinstaller packaging\lucid.spec
+# → dist\lucid.exe
 ```
 
 ### 2) Application Tauri
@@ -205,16 +202,16 @@ pyinstaller packaging\otterscope.spec
 cd app
 npm install
 npm run tauri build
-# → app\src-tauri\target\release\bundle\nsis\otterscope_<ver>_x64-setup.exe
+# → app\src-tauri\target\release\bundle\nsis\lucid_<ver>_x64-setup.exe
 ```
 
-La coquille Rust attend `otterscope.exe` à côté d'elle (ou installé sous `%LOCALAPPDATA%\otterscope\`) ; copiez la sortie PyInstaller avant de lancer la build de dev.
+La coquille Rust attend `lucid.exe` à côté d'elle (ou installé sous `%LOCALAPPDATA%\lucid\`) ; copiez la sortie PyInstaller avant de lancer la build de dev.
 
 ---
 
 ## Utilisation en CLI (sans GUI)
 
-Lancez les commandes depuis `D:\Project\OtterScope\python` (ou faites `cd python` depuis la racine du dépôt).
+Lancez les commandes depuis la racine du dépôt (`D:\Project\Lucid`).
 
 Si votre provider demande une clé, définissez-la d'abord :
 
@@ -229,23 +226,23 @@ $env:ANTHROPIC_API_KEY = "sk-ant-..."
 Puis exécutez :
 
 ```powershell
-cd D:\Project\OtterScope\python
+cd D:\Project\Lucid
 
 # Test de connectivité (un seul tour, ne touche pas la souris/clavier)
-..\.venv\Scripts\python.exe -m otterscope --smoke-test "Qui es-tu ? Une phrase."
+.venv\Scripts\python.exe -m lucid --smoke-test "Qui es-tu ? Une phrase."
 
 # Mode prudent : confirmation y/n à chaque étape
-..\.venv\Scripts\python.exe -m otterscope --max-steps 4 --autonomy confirm_each `
+.venv\Scripts\python.exe -m lucid --max-steps 4 --autonomy confirm_each `
     "Prends une capture plein écran et dis-moi combien de fenêtres sont visibles."
 
 # Changer de modèle
-..\.venv\Scripts\python.exe -m otterscope --model claude-sonnet-4.5 "Ouvre Notepad et tape hello"
+.venv\Scripts\python.exe -m lucid --model claude-sonnet-4.5 "Ouvre Notepad et tape hello"
 
 # Autonomie totale (uniquement en VM / bureau jetable)
-..\.venv\Scripts\python.exe -m otterscope --autonomy full "Ouvre Notepad, tape hello world, enregistre sur le Bureau"
+..\.venv\Scripts\python.exe -m lucid --autonomy full "Ouvre Notepad, tape hello world, enregistre sur le Bureau"
 ```
 
-Si vous voyez `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`, renseignez `[llm.proxy].api_key` dans `%LOCALAPPDATA%\dev.otterscope\config.toml` ou exportez `LITELLM_MASTER_KEY`.
+Si vous voyez `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`, renseignez `[llm.proxy].api_key` dans `%LOCALAPPDATA%\dev.lucid\config.toml` ou exportez `LITELLM_MASTER_KEY`.
 
 `Ctrl+C` pour interrompre. Lancer la souris dans le **coin haut-gauche** déclenche le fail-safe de PyAutoGUI.
 
@@ -253,7 +250,7 @@ Si vous voyez `missing api_key (config .api_key or LITELLM_MASTER_KEY environmen
 
 ## Configuration
 
-Modèle par défaut : [config.toml](config.toml). La **vraie** config utilisateur est à `%LOCALAPPDATA%\dev.otterscope\config.toml` — c'est celle-là qu'il faut éditer (le fichier livré est écrasé à la mise à jour).
+Modèle par défaut : [config.toml](config.toml). La **vraie** config utilisateur est à `%LOCALAPPDATA%\dev.lucid\config.toml` — c'est celle-là qu'il faut éditer (le fichier livré est écrasé à la mise à jour).
 
 Sections clés :
 
@@ -285,4 +282,4 @@ Sauvegarder dans Paramètres recharge le sidecar à chaud.
 
 ## Stargazers
 
-[![GitHub stars](https://img.shields.io/github/stars/codetrek/OtterScope?style=social)](https://github.com/codetrek/OtterScope/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/codetrek/Lucid?style=social)](https://github.com/codetrek/Lucid/stargazers)

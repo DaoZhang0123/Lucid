@@ -1,6 +1,6 @@
-"""otterscope · stdio JSON-RPC sidecar 模式
+"""lucid · stdio JSON-RPC sidecar 模式
 
-让 Tauri / Rust 主进程把 otterscope 拉起来后，通过 **行分隔 JSON（NDJSON）**
+让 Tauri / Rust 主进程把 lucid 拉起来后，通过 **行分隔 JSON（NDJSON）**
 互相通信。设计要点：
 
 - 协议帧：每行一个 JSON 对象，UTF-8。
@@ -39,7 +39,7 @@
 - ``run_start`` ``{instruction, run_dir, model, max_steps, autonomy}``
 - ``error`` ``{message}``
 
-启动方式：``python -m otterscope --sidecar``。
+启动方式：``python -m lucid --sidecar``。
 """
 from __future__ import annotations
 
@@ -283,7 +283,7 @@ instruction in this run.
             _writeln({"event": "launcher_scan_schedule_register_failed",
                       "message": f"{type(exc).__name__}: {exc}"})
         # 同样注册（幂等）每日把所有系统托盘图标 IsPromoted=1 的扫描，
-        # 让任务栏不再藏 otterscope / 微信 / 等图标到 "^" 溢出菜单里。
+        # 让任务栏不再藏 lucid / 微信 / 等图标到 "^" 溢出菜单里。
         try:
             scheduler_mod.ensure_schedule(
                 name=self._TRAY_PROMOTE_NAME,
