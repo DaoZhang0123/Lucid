@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 import imagehash
 import mss
@@ -21,9 +22,16 @@ from .window import active_window, cursor_pos
 
 
 class ScreenLevel(str, Enum):
+    L0 = "icon_atlas"
     L1 = "fullscreen"
     L2 = "active_window"
     L3 = "cursor_local"
+
+
+class NoForegroundWindowError(RuntimeError):
+    """Raised by L2 capture when there is no usable foreground window
+    (e.g. lock screen, secure desktop). Caller decides whether to fall back
+    to L1 or just surface a text-only error."""
 
 
 @dataclass
@@ -32,7 +40,11 @@ class Capture:
     image: Image.Image           # 已可能下采样
     raw_size: tuple[int, int]    # 原始（物理）宽高
     sent_size: tuple[int, int]   # 实际发给 LLM 的宽高
-    offset: tuple[int, int]      # 在虚拟屏幕坐标系中的左上角原点
+    # Origin of the captured rect in virtual-screen coords. ``None`` for L0
+    # (icon_atlas) which is a synthetic image, not a screen region — the loop
+    # treats ``offset is None`` as the signal "do NOT install this capture as
+    # the active coordinate frame".
+    offset: tuple[int, int] | None
     phash: str                   # 感知哈希，用于变化检测
 
     @property
@@ -44,7 +56,17 @@ class Capture:
         return self.raw_size[1] / self.sent_size[1] if self.sent_size[1] else 1.0
 
     def model_to_screen(self, x: int, y: int) -> tuple[int, int]:
-        """LLM 给出的截图内坐标 → 虚拟屏幕物理坐标。"""
+        """LLM 给出的截图内坐标 → 虚拟屏幕物理坐标。
+
+        For synthetic images without a screen origin (e.g. L0 icon_atlas,
+        ``offset is None``) this raises ``ValueError`` — those images do not
+        define a clickable coordinate frame.
+        """
+        if self.offset is None:
+            raise ValueError(
+                f"capture level={self.level.value} has no screen offset; "
+                "its coordinates are NOT mappable to the screen."
+            )
         sx = int(round(x * self.scale_x)) + self.offset[0]
         sy = int(round(y * self.scale_y)) + self.offset[1]
         return sx, sy
@@ -93,6 +115,8 @@ class ScreenSensor:
 
     # ---------- 三级捕获 ----------
     def capture(self, level: ScreenLevel) -> Capture:
+        if level is ScreenLevel.L0:
+            return self._capture_icon_atlas()
         if level is ScreenLevel.L1:
             return self._capture_full()
         if level is ScreenLevel.L2:
@@ -130,8 +154,13 @@ class ScreenSensor:
     def _capture_active_window(self) -> Capture:
         win = active_window()
         if win is None or win.width <= 0 or win.height <= 0:
-            # 退化为全屏
-            return self._capture_full()
+            # No usable foreground window (lock screen, secure desktop, …).
+            # Per Docs/screenshot.md v2 §2.1 we no longer silently downgrade
+            # to L1 here — callers (loop.py / tools.py) decide whether to
+            # fall back or surface a text-only error.
+            raise NoForegroundWindowError(
+                "no usable foreground window for L2 capture"
+            )
         region = {"left": win.left, "top": win.top, "width": win.width, "height": win.height}
         img = self._grab(region)
         raw = img.size
@@ -143,16 +172,21 @@ class ScreenSensor:
 
     def _capture_cursor_local(self) -> Capture:
         cx, cy = cursor_pos()
-        # Smart sizing: ask UIA for the smallest UI element under the cursor
-        # and crop to its bounding rect (Snipaste-style). Fixed-radius square
-        # falls back when UIA fails or the rect is degenerate.
-        rect = self._smart_l3_rect(cx, cy) if getattr(self.cfg, "l3_smart_enabled", True) else None
+        # Snipaste-style smart sizing: ask UIA for the smallest UI element
+        # under the cursor and crop to its bounding rect. If UIA can't give
+        # us a usable rect (no element / element too big / too tiny), per
+        # Docs/screenshot.md v2 §2.2 we **fall back to L2 (the whole active
+        # window)**, not a fixed-radius square — a 200×200 patch of nothing
+        # is useless to the model, while a full-window L2 is at least usable.
+        rect = self._smart_l3_rect(cx, cy)
         if rect is None:
-            r = self.cfg.l3_radius_px
-            region = {"left": cx - r, "top": cy - r, "width": r * 2, "height": r * 2}
-        else:
-            left, top, right, bottom = rect
-            region = {"left": left, "top": top, "width": right - left, "height": bottom - top}
+            try:
+                return self._capture_active_window()
+            except NoForegroundWindowError:
+                # No foreground window either → last resort: full screen.
+                return self._capture_full()
+        left, top, right, bottom = rect
+        region = {"left": left, "top": top, "width": right - left, "height": bottom - top}
         img = self._grab(region)
         raw = img.size
         sent = _shrink(img, self.cfg.l3_max_long_edge)
@@ -160,6 +194,43 @@ class ScreenSensor:
             level=ScreenLevel.L3, image=sent, raw_size=raw, sent_size=sent.size,
             offset=(region["left"], region["top"]), phash=_phash(sent),
         )
+
+    def _capture_icon_atlas(self) -> Capture:
+        """L0 — launcher icons collage. Synthetic image (not from mss); has no
+        screen offset, so the loop will NOT install it as the active
+        coordinate frame.
+        """
+        # Local import to avoid a launcher_icons ↔ screen import cycle.
+        from . import launcher_icons as _li
+        cfg_root = getattr(self.cfg, "_root", None) or getattr(self, "_cfg_root", None)
+        # We don't have the full Config here; build_atlas needs it. Caller
+        # (ComputerTool / loop.py) must inject it via ``set_root_config``.
+        if cfg_root is None:
+            raise RuntimeError(
+                "icon_atlas capture requires the root Config; "
+                "call ScreenSensor.set_root_config(cfg) once at startup."
+            )
+        atlas = _li.build_atlas(cfg_root)
+        if atlas is None:
+            raise RuntimeError(
+                "icon atlas is empty (no apps scanned yet); "
+                "the launcher_icons scheduler hasn't run."
+            )
+        try:
+            img = Image.open(io.BytesIO(atlas.png_bytes)).convert("RGB")
+        except Exception as e:
+            raise RuntimeError(f"failed to decode atlas PNG: {e}")
+        size = img.size
+        return Capture(
+            level=ScreenLevel.L0, image=img, raw_size=size, sent_size=size,
+            offset=None, phash=_phash(img),
+        )
+
+    def set_root_config(self, cfg_root: Any) -> None:
+        """Inject the root :class:`Config` so :meth:`_capture_icon_atlas` can
+        call :func:`launcher_icons.build_atlas`. Called once at agent startup.
+        """
+        self._cfg_root = cfg_root
 
     def _smart_l3_rect(self, cx: int, cy: int) -> tuple[int, int, int, int] | None:
         """Snipaste-style smart L3 crop: ask UIA for the bounding rect of the
@@ -190,7 +261,7 @@ class ScreenSensor:
         if w <= 0 or h <= 0:
             return None
 
-        # Reject overly large rects (top-level windows, full-screen views).
+        # Virtual-screen bounds for clamping below.
         try:
             with mss.mss() as sct:
                 mon = sct.monitors[0]
@@ -198,9 +269,6 @@ class ScreenSensor:
                 screen_left, screen_top = int(mon["left"]), int(mon["top"])
         except Exception:
             screen_w, screen_h, screen_left, screen_top = 1920, 1080, 0, 0
-        max_ratio = float(getattr(self.cfg, "l3_smart_max_ratio", 0.4))
-        if (w * h) > (screen_w * screen_h) * max_ratio:
-            return None
 
         # Auto-grow tiny rects so the model has visual context.
         min_w = int(getattr(self.cfg, "l3_smart_min_w", 160))
@@ -270,65 +338,4 @@ class ScreenSensor:
         hb = imagehash.hex_to_hash(b)
         bits = ha.hash.size
         return 1.0 - (ha - hb) / bits
-
-    @staticmethod
-    def diff_bbox(pre: Image.Image, post: Image.Image,
-                  min_area_ratio: float = 0.05,
-                  pixel_threshold: int = 25) -> tuple[int, int, int, int] | None:
-        """Find the bounding box of the largest contiguous change between two
-        same-size images. Used by R2 launch_app to locate the newly-appeared
-        window's bbox in screen coords. Returns (x, y, w, h) in the IMAGE
-        coordinate system (caller scales back to screen coords if needed),
-        or None if change is too small / too scattered.
-        """
-        from PIL import ImageChops, ImageFilter
-        if pre.size != post.size:
-            return None
-        a = pre.convert("L")
-        b = post.convert("L")
-        diff = ImageChops.difference(a, b)
-        # Threshold to binary (anything brighter than `pixel_threshold` counts)
-        diff = diff.point(lambda v: 255 if v > pixel_threshold else 0)
-        # Eat away tiny noise (cursor blink, fan-spinner pixels)
-        diff = diff.filter(ImageFilter.MaxFilter(5))
-        bbox = diff.getbbox()
-        if not bbox:
-            return None
-        x0, y0, x1, y1 = bbox
-        w, h = x1 - x0, y1 - y0
-        total = pre.size[0] * pre.size[1]
-        if total <= 0:
-            return None
-        if (w * h) / total < float(min_area_ratio):
-            return None
-        return (int(x0), int(y0), int(w), int(h))
-
-    @staticmethod
-    def pixel_diff_ratio(pre: Image.Image, post: Image.Image,
-                         pixel_threshold: int = 25) -> float:
-        """Fraction of pixels whose grayscale value differs by more than
-        ``pixel_threshold`` between pre and post. 0.0 = identical, 1.0 = all
-        pixels changed. More robust than dHash for small UI animations.
-        Used by R3 click verification."""
-        from PIL import ImageChops
-        if pre.size != post.size:
-            return 1.0
-        a = pre.convert("L")
-        b = post.convert("L")
-        diff = ImageChops.difference(a, b)
-        # Count pixels above threshold (sum of 1s after binarisation / 255)
-        bw = diff.point(lambda v: 1 if v > pixel_threshold else 0)
-        total = bw.size[0] * bw.size[1]
-        if total <= 0:
-            return 0.0
-        # Sum of pixel values = number of "changed" pixels
-        try:
-            import numpy as np  # type: ignore[import-not-found]
-            arr = np.asarray(bw, dtype=np.uint8)
-            changed = int(arr.sum())
-        except Exception:
-            # Fallback: histogram
-            h = bw.histogram()
-            changed = h[1] if len(h) > 1 else 0
-        return changed / total
 

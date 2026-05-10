@@ -8,16 +8,16 @@
 
 ## 1. 统一走“存盘 + reference”路线
 
-> 设计决策：**不区分图片与文件**。所有附件都先落盘到本地 inbox 目录，然后以 `[Attached files]` 路径列表的形式拼进 instruction，**模型按需调用工具读取**（图片 → `load_screenshot(path=…)`；文本 → `read_file(path=…)`；其他 → `run_shell` 或对应 App）。
+> 设计决策：**不区分图片与文件**。所有附件都先落盘到本地 inbox 目录，然后以 `[Attached files]` 路径列表的形式拼进 instruction，**模型按需调用工具读取**（图片 → `load_local_images(path=…)`；文本 → `read_file(path=…)`；其他 → `run_shell` 或对应 App）。
 
 | 类型 | 例子 | 落盘 | 模型看到什么 |
 | --- | --- | --- | --- |
-| **图片** | Win+Shift+S 剪贴板截图、`*.png/jpg/webp/gif/bmp` | `%LOCALAPPDATA%\dev.lucid\inbox\<uuid>.<ext>` | `[Attached image] 原名.png  (1.2 MB, 1920x1080)  →  C:\…\inbox\….png   使用 load_screenshot(path=…) 查看` |
+| **图片** | Win+Shift+S 剪贴板截图、`*.png/jpg/webp/gif/bmp` | `%LOCALAPPDATA%\dev.lucid\inbox\<uuid>.<ext>` | `[Attached image] 原名.png  (1.2 MB, 1920x1080)  →  C:\…\inbox\….png   使用 load_local_images(path=…) 查看` |
 | **文件 / 目录** | `report.pdf`、`data.csv`、任意文件夹 | 保持原路径（不复制） | `[Attached file] report.pdf  →  C:\…\report.pdf   需要时用 read_file / run_shell / launch_app 打开` |
 
 重要原因为什么**截图不再 inline 为 `image_url` 块**：
 - 多个 model provider 对单轮图数量有隐性上限（Anthropic 官方建议≤5 张，Copilot/OpenAI 也不鼓励超过几张同时出现）；一次丢 N 张是费 token + 可能被拒。
-- 后端已有 [`load_screenshot`](../lucid/meta_tools.py#L327) 工具专门读本地 PNG/JPG 重新附加为下一次请求的 image，与现有轨迹重加机制复用，零后端工具改动。
+- 后端已有 [`load_local_images`](../lucid/meta_tools.py#L327) 工具专门读本地 PNG/JPG 重新附加为下一次请求的 image，与现有轨迹重加机制复用，零后端工具改动。
 - “全部路径化”让附件只占一行文本 token，不设上限也不会炸上下文；同时 thread 持久化也天然干净（本来就只是路径，不会被 prune）。
 - 一致的代码路径：“什么路进来都是 file ref” —— sidecar / loop 代码只要处理一种形式。
 
@@ -138,7 +138,7 @@ if file_refs:
     text_parts.append(
         "[Attached files] 用户随本次任务附带了以下本地文件/图片。它们未被预读，"
         "请根据任务需要**按需**调用对应工具读取：\n"
-        "  • 图片 (.png/.jpg/.webp/...) → `load_screenshot(path=…, level=\"L2\")` 重新附加为可看图像\n"
+        "  • 图片 (.png/.jpg/.webp/...) → `load_local_images(path=…, level=\"L2\")` 重新附加为可看图像\n"
         "  • 文本文件 (.md/.txt/.json/.csv/.log/.py/…) → `read_file(path=…)`\n"
         "  • 其他二进制 (.pdf/.docx/…) → `run_shell` 调试/提取，或 `launch_app` 打开对应软件\n"
         "  • 路径是**目录** → `run_shell` 调 `dir` / `Get-ChildItem` 列出后再递归处理\n"
@@ -154,7 +154,7 @@ if file_refs:
 ```
 
 要点：
-- **不产生 `image_url` 块**：是否变成可看图像完全由模型调 `load_screenshot` 决定，避免爆上下文。
+- **不产生 `image_url` 块**：是否变成可看图像完全由模型调 `load_local_images` 决定，避免爆上下文。
 - `_sanitize_inline()` 剩 `\n`/`\r`、反引用、ANSI 控制字符，防 prompt injection。
 - L1 起手截图逻辑不变；附件块在 L1 说明前面，让“你带了什么”紧跟“你要我做什么”。
 
@@ -180,7 +180,7 @@ if file_refs:
 - **不限附件数量、不限大小**。路径本身 token 只几十字节，爆不了上下文；是否读、读多大完全交给模型。
 - **路径白名单**：不做。Lucid `safety` 模块已管控写操作；读取是模型的主动工具调用，沉用现有 HITL。
 - **不带路径的粘贴**（Win+Shift+S 剪贴板）：Tauri 后端命令 `save_inbox_image` 接收 `Vec<u8>` 写入 inbox，文件名 `<yyyymmdd-HHMMSS>-<uuid8>.png`。
-- **F3 续接**：file_refs 只在本次任务的起手 user message 里出现，不入 prelude。用户下个任务不会被上个任务的附件干扰。`load_screenshot` 调后产生的图片照现有 prune 逻辑逐渐变占位符。
+- **F3 续接**：file_refs 只在本次任务的起手 user message 里出现，不入 prelude。用户下个任务不会被上个任务的附件干扰。`load_local_images` 调后产生的图片照现有 prune 逻辑逐渐变占位符。
 
 ---
 

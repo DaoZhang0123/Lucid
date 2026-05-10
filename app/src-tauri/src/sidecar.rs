@@ -1073,7 +1073,7 @@ pub async fn read_attachment_b64(app: AppHandle, path: String) -> Result<String,
 /// Persist a clipboard-pasted image (or any in-memory blob) to the per-user
 /// inbox directory and return its absolute path. Frontend calls this whenever
 /// the user pastes a screenshot — the resulting path is then attached to the
-/// next `start_task` as a `FileRef`, so the model can `load_screenshot(path=…)`
+/// next `start_task` as a `FileRef`, so the model can `load_local_images(path=…)`
 /// on demand instead of having every paste burn an `image_url` block in
 /// every request.
 #[tauri::command]

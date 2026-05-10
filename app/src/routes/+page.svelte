@@ -103,7 +103,7 @@
       // Tauri / Windows: a single dialog can pick files OR directories, not both,
       // hence the separate 📁 button. Folders are sent to the model with kind="folder"
       // so the [Attached files] block shows [folder] and the model knows to use
-      // run_shell / dir instead of load_screenshot.
+      // run_shell / dir instead of load_local_images.
       const sel = await openDialog({ multiple: true, directory: true });
       if (!sel) return;
       const arr = Array.isArray(sel) ? sel : [sel];

@@ -324,36 +324,40 @@ SCHEDULE_DELETE_SCHEMA: dict = {
 }
 
 
-LOAD_SCREENSHOT_SCHEMA: dict = {
+LOAD_LOCAL_IMAGES_SCHEMA: dict = {
     "type": "function",
     "function": {
-        "name": "load_screenshot",
+        "name": "load_local_images",
         "description": (
-            "Re-load a previously taken screenshot from disk and re-attach it to the next request, "
-            "instead of re-visiting the App and taking a fresh shot. "
-            "**When to use:** an old user message has been replaced by a placeholder like "
+            "Re-load a local image (PNG/JPG) from disk and re-attach it to the next request. "
+            "**Two main use cases:**\n"
+            "1. An old screenshot was replaced by a placeholder like "
             "`[old screenshot omitted ...; level=L2; file=step-005-post-active_window.png; "
             "path=C:\\Users\\you\\AppData\\Local\\dev.lucid\\logs\\thread-...\\step-005-post-active_window.png]` "
             "and you still need the visual content (e.g. you saw a webpage, switched to another App, and now need to "
-            "transcribe the page text). Pass the **exact `path`** from that placeholder. "
-            "**Do NOT** invent paths or try to read arbitrary files — only paths emitted by the placeholder lines are valid. "
-            "**Coordinate frame:** re-loaded screenshots are for **reading content only** (text, prices, news headlines, etc.); "
+            "transcribe the page text). Pass the **exact `path`** from the placeholder.\n"
+            "2. The user attached an image via paste / drag-drop / 📎 (listed in the initial `[Attached files]` block as a path "
+            "under `\\dev.lucid\\inbox\\`). Pass that `path`.\n"
+            "**Do NOT** invent paths or try to read arbitrary files — only paths emitted by the placeholder lines or the "
+            "`[Attached files]` block are valid (allowlisted to `dev.lucid\\logs` and `dev.lucid\\inbox`).\n"
+            "**Coordinate frame:** re-loaded images are for **reading content only** (text, prices, news headlines, etc.); "
             "the active App's input focus / window rect may have moved since then, so do not derive new click coordinates "
-            "from a re-loaded shot — take a fresh `screenshot(level='active_window')` for that."
+            "from a re-loaded image — take a fresh `screenshot(level='active_window')` for that."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Absolute path to the PNG/JPG file (must come from a placeholder's `path=...` field).",
+                    "description": "Absolute path to the PNG/JPG file (must come from a placeholder's `path=...` field or the `[Attached files]` block).",
                 },
                 "level": {
                     "type": "string",
                     "enum": ["L1", "L2", "L3"],
                     "description": (
                         "Original level of the screenshot (copy it from the placeholder's `level=...` field). "
-                        "Used so the keep-recent policy treats the re-loaded image as the same level. Defaults to L2."
+                        "Used so the keep-recent policy treats the re-loaded image as the same level. "
+                        "For user-attached inbox images, use L2. Defaults to L2."
                     ),
                 },
             },
@@ -587,8 +591,9 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
     out.append(SCHEDULE_ADD_SCHEMA)
     out.append(SCHEDULE_UPDATE_SCHEMA)
     out.append(SCHEDULE_DELETE_SCHEMA)
-    # Always-on: re-load any past screenshot from disk (cheaper than re-visiting the App).
-    out.append(LOAD_SCREENSHOT_SCHEMA)
+    # Always-on: re-load any past screenshot or inbox attachment from disk
+    # (cheaper than re-visiting the App).
+    out.append(LOAD_LOCAL_IMAGES_SCHEMA)
     if getattr(cfg, "webread", None) and cfg.webread.enabled:
         out.append(READ_WEBPAGE_SCHEMA)
     if getattr(cfg, "fileio", None) and cfg.fileio.enabled:
@@ -600,27 +605,19 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
 
 
 def _resolve_launch_region(
-    sensor: Any,
     cfg: Config,
     hwnd: int,
     method: str,
-    pre_cap: Any | None,
 ) -> tuple[int, int, int, int] | None:
-    """Decide the screen rect to capture as L2 after launch_app (Docs/screenshot.md §13.3).
+    """Decide the screen rect to capture as L2 after launch_app.
 
-    Strategy:
-    - If method == 'focus_existing_window': skip diff, just use window_client_rect(hwnd).
-    - Otherwise (shortcut / uri / exe): wait briefly for the window to become
-      visible+non-iconic, then try the diff bbox between pre_cap and a fresh L1;
-      if diff misses or doesn't overlap the hwnd's client rect, fall back to
-      window_client_rect.
+    Wait briefly for the window to become visible+non-iconic (best-effort, only
+    on real launches), then return its client rect via Win32 GetClientRect.
     """
     import time as _time
-    from .screen import ScreenSensor, ScreenLevel
 
     wait_ms = int(getattr(cfg.screenshot, "launch_wait_max_ms", 1500))
     poll_ms = int(getattr(cfg.screenshot, "launch_wait_poll_ms", 80))
-    min_area = float(getattr(cfg.screenshot, "launch_diff_min_area_ratio", 0.05))
     activate_only = method == "focus_existing_window"
 
     # Wait for the window to materialise (best-effort; only on real launches).
@@ -632,52 +629,7 @@ def _resolve_launch_region(
                 break
             _time.sleep(poll_ms / 1000.0)
 
-    client_rect = launchers_mod.window_client_rect(hwnd) if hwnd else None
-
-    if activate_only:
-        return client_rect
-
-    # Real launch path → try diff first.
-    if pre_cap is not None:
-        try:
-            post_cap = sensor.capture(ScreenLevel.L1)
-            bbox = ScreenSensor.diff_bbox(
-                pre_cap.image, post_cap.image, min_area_ratio=min_area
-            )
-        except Exception:
-            bbox = None
-        if bbox is not None:
-            # bbox is in image (sent) coords; convert to screen coords.
-            bx, by, bw, bh = bbox
-            rw, rh = post_cap.raw_size
-            sw, sh = post_cap.sent_size
-            sx_scale = rw / sw if sw else 1.0
-            sy_scale = rh / sh if sh else 1.0
-            ox, oy = post_cap.offset
-            screen_rect = (
-                int(ox + bx * sx_scale),
-                int(oy + by * sy_scale),
-                int(bw * sx_scale),
-                int(bh * sy_scale),
-            )
-            # Sanity-check vs client_rect IoU; otherwise fall back to client_rect.
-            if client_rect is None or _iou(screen_rect, client_rect) >= 0.30:
-                return screen_rect
-
-    return client_rect
-
-
-def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
-    ax, ay, aw, ah = a
-    bx, by, bw, bh = b
-    ix0 = max(ax, bx); iy0 = max(ay, by)
-    ix1 = min(ax + aw, bx + bw); iy1 = min(ay + ah, by + bh)
-    iw = max(0, ix1 - ix0); ih = max(0, iy1 - iy0)
-    inter = iw * ih
-    if inter <= 0:
-        return 0.0
-    union = aw * ah + bw * bh - inter
-    return inter / union if union > 0 else 0.0
+    return launchers_mod.window_client_rect(hwnd) if hwnd else None
 
 
 def dispatch_meta_tool(
@@ -730,19 +682,6 @@ def dispatch_meta_tool(
         if not name:
             return ToolResult(error="name required")
 
-        # ---- R2: pre-launch L1 (only if diff is enabled and we have a sensor) ----
-        from .screen import ScreenSensor, ScreenLevel  # local import to avoid cycles
-        diff_enabled = bool(getattr(cfg.screenshot, "launch_diff_enabled", False)) and sensor is not None
-        pre_cap = None
-        if diff_enabled:
-            try:
-                # Only capture pre-L1 when we'll actually run a diff (i.e. not
-                # the focus_existing_window path). We can't tell yet what method
-                # launchers will pick, so capture optimistically; cheap mss grab.
-                pre_cap = sensor.capture(ScreenLevel.L1)
-            except Exception:
-                pre_cap = None
-
         result = launchers_mod.launch_app(cfg.launchers, name)
         # On success, also append the app's tips body so the model gets it for free.
         out_lines = [f"launch_app: {result.get('message', '')}"]
@@ -774,18 +713,15 @@ def dispatch_meta_tool(
         # ---- R2: visual capture (region resolution + L2 crop) ----
         image_png: bytes | None = None
         attached_l2 = None
-        attached_rect: tuple[int, int, int, int] | None = None
         if result.get("ok") and sensor is not None:
             hwnd = result.get("hwnd") or 0
             method = (result.get("method") or "").lower()
             slug = result.get("slug") or name
             try:
                 rect = _resolve_launch_region(
-                    sensor=sensor,
                     cfg=cfg,
                     hwnd=int(hwnd) if hwnd else 0,
                     method=method,
-                    pre_cap=pre_cap if diff_enabled else None,
                 )
             except Exception as e:
                 rect = None
@@ -796,10 +732,9 @@ def dispatch_meta_tool(
                     l2 = sensor.capture_region(rx, ry, rw, rh)
                     image_png = l2.png_bytes()
                     attached_l2 = l2
-                    attached_rect = (rx, ry, rx + rw, ry + rh)
                     out_lines.append("")
                     out_lines.append(
-                        f"  region: x={rx} y={ry} w={rw} h={rh} (L2 attached as user message; this is now the active coordinate frame for the next click. Subsequent post-step screenshots will stay narrowed to this rect until you explicitly call screenshot(level='fullscreen').)"
+                        f"  region: x={rx} y={ry} w={rw} h={rh} (L2 attached as user message; this is the active coordinate frame for your next click against this app. By default no further screenshots will be auto-attached — call action='screenshot' yourself when you need to see the screen again.)"
                     )
                     # Persist to region store as __main_window for next launch.
                     try:
@@ -827,7 +762,6 @@ def dispatch_meta_tool(
             error=None if result.get("ok") else result.get("message"),
             image_png=image_png,
             attached_capture=attached_l2,
-            attached_active_rect=attached_rect,
         )
 
     if fn_name == "list_apps" and getattr(cfg, "launchers", None) and cfg.launchers.enabled:
@@ -908,8 +842,8 @@ def dispatch_meta_tool(
     if fn_name in ("schedule_list", "schedule_add", "schedule_update", "schedule_delete"):
         return _dispatch_schedule(fn_name, args, cfg)
 
-    if fn_name == "load_screenshot":
-        return _dispatch_load_screenshot(args)
+    if fn_name == "load_local_images":
+        return _dispatch_load_local_images(args)
 
     if fn_name == "read_webpage" and getattr(cfg, "webread", None) and cfg.webread.enabled:
         return _dispatch_read_webpage(args, cfg)
@@ -993,12 +927,12 @@ def _dispatch_schedule(fn_name: str, args: dict[str, Any], cfg: Config) -> ToolR
     return ToolResult(error=f"unknown schedule op: {fn_name}")
 
 
-def _dispatch_load_screenshot(args: dict[str, Any]) -> ToolResult:
-    """Read a previously-saved screenshot from disk and re-attach it to the
-    next request. Validates that the path looks like one of our log files
-    (under ``%LOCALAPPDATA%\\dev.lucid\\logs``) or an inbox attachment
-    (under ``%LOCALAPPDATA%\\dev.lucid\\inbox``) so a model can't use this
-    to exfiltrate arbitrary local files.
+def _dispatch_load_local_images(args: dict[str, Any]) -> ToolResult:
+    """Read a previously-saved screenshot or user-attached inbox image from
+    disk and re-attach it to the next request. Validates that the path looks
+    like one of our log files (under ``%LOCALAPPDATA%\\dev.lucid\\logs``) or an
+    inbox attachment (under ``%LOCALAPPDATA%\\dev.lucid\\inbox``) so a model
+    can't use this to exfiltrate arbitrary local files.
     """
     import os
     from pathlib import Path
@@ -1063,10 +997,10 @@ def _dispatch_load_screenshot(args: dict[str, Any]) -> ToolResult:
     if not data:
         return ToolResult(error=f"empty file: {p}")
 
-    # Loop.py uses tr.output as the follow-up image label for load_screenshot;
+    # Loop.py uses tr.output as the follow-up image label for load_local_images;
     # embedding `[level=L?]` here makes the keep-recent policy treat the
     # re-loaded image as the same level as the original.
-    label = f"[level={level}] re-loaded screenshot from disk: {p.name} ({len(data)} bytes)"
+    label = f"[level={level}] re-loaded image from disk: {p.name} ({len(data)} bytes)"
     return ToolResult(output=label, image_png=data)
 
 

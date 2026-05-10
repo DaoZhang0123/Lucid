@@ -72,10 +72,6 @@ class LLMConfig:
 
 @dataclass
 class ScreenshotConfig:
-    l1_fullscreen_interval: float = 60.0
-    l2_activewindow_interval: float = 8.0
-    l3_cursor_interval: float = 0.0
-    l3_radius_px: int = 100
     l1_max_long_edge: int = 1568
     l2_max_long_edge: int = 1568
     l3_max_long_edge: int = 0
@@ -86,59 +82,28 @@ class ScreenshotConfig:
     # 对话历史里每个 level 保留最近 K 张截图（装入发给 LLM 的 prompt 里）。
     # 超出部分会被替换为占位文本（携带本地文件名/路径，需要时可反查）。
     keep_recent_l1: int = 1
-    keep_recent_l2: int = 3
-    keep_recent_l3: int = 2
+    keep_recent_l2: int = 1
+    # L3 (cursor_local) 默认保留最近 2 张：模型主动调 screenshot(level="cursor_local") 后，
+    # 后续步骤可能还要回看刚才那块细节；超出后替换为占位文本，可用 load_local_images 反查。
+    keep_recent_l3: int = 1
     # 每个不同的 active app（按最近 launch_app/focus_window 的 slug 区分）至少保留多少张
     # 最近的 L2，避免跨 App 任务里旧 App 的 L2 被新 App 的 L2 一次性挤掉。
     min_per_l2_app: int = 1
-    skip_if_similarity_above: float = 0.985
-    # ---- R2: launch_app diff → L2 (Docs/screenshot.md §13.3) ----
-    # When launch_app actually starts a new instance (method != activate-existing),
-    # snapshot L1 before/after and use the diff bbox to crop a tight L2 of the
-    # newly-appeared window. Falls back to window_client_rect(hwnd) on failure.
-    launch_diff_enabled: bool = True
-    # Diff bbox area must cover at least this fraction of L1 to be trusted.
-    launch_diff_min_area_ratio: float = 0.05
+    # ---- launch_app L2 capture (Docs/screenshot.md §13.3) ----
+    # After launch_app, wait briefly for the new window to materialise then
+    # crop an L2 of its client rect (via Win32 GetClientRect on the hwnd).
     # Max wait (ms) for the launched window to become visible+non-iconic.
     launch_wait_max_ms: int = 1500
     # Poll interval while waiting for the window.
     launch_wait_poll_ms: int = 80
-    # ---- post-step 主图：pin 之后是否每步降级到 L3 cursor-local ----
-    # True（默认）：第一步拍 L2 map，之后每步只补一张 L3 鼠标周边小图，省 token。
-    # False：每一步都重新拍 active_app_rect 的 L2。适用于"点击经常导致焦点跳到
-    # 远离鼠标的位置"的 App（典型：微信点联系人 → 焦点跳到右下输入框，鼠标
-    # 仍停在左侧联系人列表，L3 cursor-local 看不到右侧新打开的聊天视图，
-    # 容易被模型误读为"点击没生效"）。
-    post_step_use_l3: bool = True
     # ---- L3 smart sizing via UIA (Snipaste-style) ----
-    # When True, L3 cursor-local first asks Windows UI Automation for the
-    # bounding rect of the smallest UI element under the cursor and crops to
-    # that. Falls back to the fixed 2*l3_radius_px square when UIA fails or
-    # the element is degenerate (too large/too small). Improves L3 usefulness
-    # on tall/wide thin controls (e.g. Calculator's display: 280x60).
-    l3_smart_enabled: bool = True
+    # L3 cursor-local asks Windows UI Automation for the bounding rect of the
+    # smallest UI element under the cursor and crops to that. When UIA can't
+    # give a usable rect, L3 falls back to L2 (full active window) — see
+    # Docs/screenshot.md v2 §2.2.
     l3_smart_padding_px: int = 16          # outset around the UIA rect
     l3_smart_min_w: int = 160              # auto-grow rect to at least this size
     l3_smart_min_h: int = 80
-    l3_smart_max_ratio: float = 0.4        # if rect covers >40% of screen → fixed
-    # ---- R3: click pre/post pixel-diff verify (Docs/screenshot.md §13.4) ----
-    click_verify_enabled: bool = True
-    # Below this fraction of pixels changed near the cursor → "didn't click".
-    click_no_change_threshold: float = 0.005
-    # How long to wait after the click before sampling post (UI reaction time).
-    click_verify_post_sleep_ms: int = 150
-    # Radius (in screen px) of the L3 tile sampled before/after the click.
-    click_verify_radius_px: int = 100
-    # ---- Initial L1: feed it to the LLM as the very first user-message image? ----
-    # When False, the run still captures the L1 (used internally as
-    # ``last_capture`` for coordinate reverse-mapping and as the pre-image for
-    # R2 launch_app diff), and still saves ``step-000-init.png`` to disk, but
-    # the LLM only receives the textual task instruction without an attached
-    # screenshot. Useful when the user's task explicitly starts with
-    # `launch_app(...)` etc., where the desktop snapshot is irrelevant noise
-    # that wastes tokens. The model can always request one via
-    # `screenshot(level='fullscreen')` when it needs orientation.
-    feed_initial_l1_to_llm: bool = False
 
 
 @dataclass
@@ -146,10 +111,6 @@ class SafetyConfig:
     hitl_keywords: list[str] = field(default_factory=list)
     emergency_hotkey: str = "ctrl+alt+esc"
     autonomy: str = "confirm_critical"
-    # 安全兑底（架构层 + 行为层）
-    # 架构层：点击类动作后额外拓 L3 鼠标周边高清取证图，让模型看清落点。
-    # 代价：每次点击后 prompt 多一张小图（带宽上变慢）。
-    verify_click_with_l3: bool = True
     # 行为层：在保存/打开对话框里检测到“在左侧 25% 区域点击”时，注入一条
     # “请用文件名框/地址栏 type 路径”的纠正提示，避免模型去左侧导航树逐层点。
     save_dialog_sidebar_guard: bool = True

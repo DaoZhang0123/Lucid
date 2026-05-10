@@ -57,7 +57,7 @@
 - [x] 左侧可折叠 thread 列表（点击切换、悬停 ✕ 删除、顶部 + 新建）替换独立 `/history` 页
 - [x] 主聊天窗嵌入截图缩略图（点击 lightbox 放大），包含起手 init 图
 - [x] 切换路由不丢失聊天状态（模块级 `$state` 单例 store）
-- [x] **多模态输入：粘贴截图 / 拖拽文件 / 📎 对话框**（2026-05-09）：图片粘贴/拖拽自动入 `%LOCALAPPDATA%\dev.lucid\inbox\`；JS `fileRefs` ↔ Rust `file_refs` 通过 sidecar `start_task` 透传给 `Agent`，作为 `[Attached files]` 块拼到首条 user message（默认是"载荷不读内容"，verb 启发式判定何时改读 —— [loop.py](lucid/loop.py) L613）。`load_screenshot` 白名单扩到 `logs / inbox / LUCID_CWD\inbox`。前端 chip 缩略图走 `read_attachment_b64` Rust 命令（asset:// 默认未启用）；用户图片右对齐 (`fromUser`)。新事件 `user_attachments` 持久化到 `events.jsonl`，切换/重开 thread 也能复现 chip。
+- [x] **多模态输入：粘贴截图 / 拖拽文件 / 📎 对话框**（2026-05-09）：图片粘贴/拖拽自动入 `%LOCALAPPDATA%\dev.lucid\inbox\`；JS `fileRefs` ↔ Rust `file_refs` 通过 sidecar `start_task` 透传给 `Agent`，作为 `[Attached files]` 块拼到首条 user message（默认是"载荷不读内容"，verb 启发式判定何时改读 —— [loop.py](lucid/loop.py) L613）。`load_local_images`（当时名 `load_screenshot`）白名单扩到 `logs / inbox / LUCID_CWD\inbox`。前端 chip 缩略图走 `read_attachment_b64` Rust 命令（asset:// 默认未启用）；用户图片右对齐 (`fromUser`)。新事件 `user_attachments` 持久化到 `events.jsonl`，切换/重开 thread 也能复现 chip。
 
 ### 1.5 适配与体验细节
 - [x] 多屏布局变化时重新探测 `[screenshot].l1_max_long_edge`（`lucid.selfcheck monitors` + 设置页一键自检）

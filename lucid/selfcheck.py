@@ -102,7 +102,7 @@ def report_monitors() -> dict:
     suggestions = []
     if len(scales) > 1:
         suggestions.append(
-            f"检测到混合 DPI（{scales}%），点击坐标会按 per-monitor 标度，建议保留 verify_click_with_l3 = true。"
+            f"检测到混合 DPI（{scales}%），点击坐标会按 per-monitor 标度；如点击偏移请检查 DPI 感知设置。"
         )
     if long_edge > 3840:
         suggestions.append(

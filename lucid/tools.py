@@ -9,7 +9,6 @@ https://docs.claude.com/en/docs/build-with-claude/computer-use
 """
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,14 +26,6 @@ class ToolResult:
     # tools that hand the model a non-screenshot image (e.g. R2 launch_app L2,
     # R3 click-verify L2). Loop.py is responsible for installing it.
     attached_capture: Capture | None = None
-    # Optional active-app screen rect ``(left, top, right, bottom)`` published
-    # by tools that just brought a known app to the foreground (launch_app /
-    # focus_window / region). Loop.py installs this onto
-    # ``ComputerTool.active_app_rect``; while set, post-step captures are
-    # auto-narrowed to this rect so the model's coordinate frame stays sticky
-    # across non-screenshot actions, AND any click whose reverse-mapped screen
-    # point falls outside this rect is rejected by ``_check_coord_bounds``.
-    attached_active_rect: tuple[int, int, int, int] | None = None
 
 
 _LEVEL_ALIASES = {
@@ -52,6 +43,10 @@ _LEVEL_ALIASES = {
     "cursor_local": ScreenLevel.L3,
     "cursor": ScreenLevel.L3,
     "local": ScreenLevel.L3,
+    "l0": ScreenLevel.L0,
+    "icon_atlas": ScreenLevel.L0,
+    "atlas": ScreenLevel.L0,
+    "icons": ScreenLevel.L0,
 }
 
 
@@ -72,26 +67,10 @@ class ComputerTool:
         # ScreenshotConfig (used for R3 click-verify thresholds). May be None
         # in legacy / test contexts; in that case R3 is a no-op.
         self.screenshot_cfg = screenshot_cfg
-        # 最近一次发给 LLM 的截图（用于坐标反算）
+        # 最近一次发给 LLM 的截图（用于坐标反算）。为 None 表示本任务还
+        # 没有任何可点击的坐标系。L0 (icon_atlas) 不会被装入这里 — 它是
+        # 合成图，没有屏幕偏移。
         self.last_capture: Capture | None = None
-        # 当前活动 App 的屏幕矩形 (left, top, right, bottom)。launch_app /
-        # focus_window / region 成功后由 loop.py 装填；之后每步 post-screenshot
-        # 自动收窄到这个矩形（保证坐标系不漂移），并对落到矩形外的 click
-        # 直接拒绝。模型显式 screenshot(level='fullscreen') 时清除（意图离开当前 App）。
-        self.active_app_rect: tuple[int, int, int, int] | None = None
-        # 是否已经向模型展示过当前 active_app_rect 的 L2 全景图。第一次锁定一个
-        # App 时 loop.py 会用 L2；之后切换到 L3（cursor_local）以节省 token，
-        # 因为模型已经有了窗口的“总体地图”。每次 active_app_rect 变化时由
-        # ``set_active_app_rect`` 复位为 False。
-        self.active_app_l2_shown: bool = False
-
-    def set_active_app_rect(self, rect: tuple[int, int, int, int] | None) -> None:
-        """Pin / unpin the active-app rect. Resets the L2-shown flag whenever
-        the rect changes so the next post-step shows a fresh L2 once."""
-        if rect == self.active_app_rect:
-            return
-        self.active_app_rect = rect
-        self.active_app_l2_shown = False
 
     # ----- 暴露给 LLM 的工具 schema -----
     def tool_param(self, screen_w: int, screen_h: int) -> dict[str, Any]:
@@ -144,12 +123,13 @@ class ComputerTool:
                         },
                         "level": {
                             "type": "string",
-                            "enum": ["fullscreen", "active_window", "cursor_local"],
+                            "enum": ["fullscreen", "active_window", "cursor_local", "icon_atlas"],
                             "description": (
                                 "Only for action='screenshot'. "
-                                "fullscreen = whole virtual desktop (default, coarse, good for orientation); "
-                                "active_window = the currently focused window only (medium, good for in-app work); "
-                                "cursor_local = a small high-detail patch around the mouse cursor (best for precise targeting before a click)."
+                                "fullscreen = whole virtual desktop (~150 KB JPEG, use only to find a window or pick between apps); "
+                                "active_window = the currently focused window only (~150 KB, default for in-app work); "
+                                "cursor_local = a small high-detail patch around the mouse cursor (~10 KB, use to confirm a click landed on the right element); "
+                                "icon_atlas = labelled grid of all installed app icons (NOT a screen — you cannot click on its coordinates; use only to identify an unfamiliar small icon)."
                             ),
                         },
                         "coordinate": {
@@ -275,85 +255,57 @@ class ComputerTool:
                 f"fresh screenshot first (action='screenshot' with the appropriate "
                 f"level), then re-issue the action with coordinates inside the new image."
             ))
-        # When an active-app rect is pinned, also enforce that the resolved
-        # screen point lies inside that rect — catches the common case where
-        # the model is reading an old (different-frame) screenshot or pulled
-        # a coord from memory that refers to a window which has since moved.
-        if self.active_app_rect is not None:
+        # When a click coordinate is provided, also check it against the
+        # **real-time** foreground window rect (Docs/screenshot.md v2 §4).
+        # Catches the common bug where the model points at the previous
+        # foreground app's old coords after focus has switched.
+        if action in {
+            "left_click", "right_click", "middle_click",
+            "double_click", "triple_click", "left_click_drag",
+        }:
             try:
                 sx, sy = cap.model_to_screen(ix, iy)
             except Exception:
                 return None
-            left, top, right, bottom = self.active_app_rect
-            if not (left <= sx < right and top <= sy < bottom):
-                return ToolResult(error=(
-                    f"coordinate ({ix},{iy}) reverse-maps to screen ({sx},{sy}), which "
-                    f"is outside the active app rect (left={left}, top={top}, "
-                    f"right={right}, bottom={bottom}). Either pick a coordinate inside "
-                    f"the app's current window, or call action='screenshot' with "
-                    f"level='fullscreen' to re-orient (this also releases the active-app pin)."
-                ))
+            err = self._validate_click_in_foreground(sx, sy)
+            if err is not None:
+                return ToolResult(error=err)
         return None
 
-    # ----- R3: click pre/post pixel-diff verify (Docs/screenshot.md §13.4) -----
-    def _click_with_verify(self, action: str, x: int, y: int, do_click) -> ToolResult:
-        """Run a click action and (when enabled) compare the pixels around
-        ``(x, y)`` before vs. after; if almost nothing changed, surface a
-        warning + an L2 of the active window so the model can re-decide
-        without needing to issue a separate screenshot turn.
+    @staticmethod
+    def _validate_click_in_foreground(sx: int, sy: int) -> str | None:
+        """Real-time foreground-window guard for clicks. Returns ``None`` if
+        the click is allowed; otherwise an explanation string.
+
+        Per Docs/screenshot.md v2 §4 we no longer rely on a pinned
+        ``active_app_rect`` — every click queries ``GetForegroundWindow`` /
+        ``GetWindowRect`` afresh (< 1 ms) so it stays correct even when the
+        user dragged / resized / maximised the window mid-task.
         """
-        cfg = self.screenshot_cfg
-        enabled = bool(getattr(cfg, "click_verify_enabled", False)) if cfg else False
-        radius = int(getattr(cfg, "click_verify_radius_px", 100)) if cfg else 100
-        sleep_ms = int(getattr(cfg, "click_verify_post_sleep_ms", 150)) if cfg else 150
-        threshold = float(getattr(cfg, "click_no_change_threshold", 0.005)) if cfg else 0.005
-
-        if not enabled:
-            do_click()
-            return ToolResult(output=f"{action} {x},{y}")
-
         try:
-            pre_cap = self.sensor.capture_around(x, y, radius)
+            from .window import active_window
         except Exception:
-            pre_cap = None
-
-        do_click()
-
-        if sleep_ms > 0:
-            time.sleep(sleep_ms / 1000.0)
-
-        if pre_cap is None:
-            return ToolResult(output=f"{action} {x},{y} (verify skipped: pre-capture failed)")
-
+            return None
         try:
-            post_cap = self.sensor.capture_around(x, y, radius)
-            ratio = ScreenSensor.pixel_diff_ratio(pre_cap.image, post_cap.image)
-        except Exception as e:
-            return ToolResult(output=f"{action} {x},{y} (verify error: {type(e).__name__}: {e})")
+            win = active_window()
+        except Exception:
+            return None
+        if win is None or win.width <= 0 or win.height <= 0:
+            # Lock screen / secure desktop / no foreground — don't block.
+            return None
+        if win.left <= sx < win.right and win.top <= sy < win.bottom:
+            return None
+        return (
+            f"click ({sx},{sy}) is outside foreground window "
+            f"'{win.title}' rect ({win.left},{win.top})-({win.right},{win.bottom}); refusing. "
+            f"If this is intentional (e.g. clicking a notification or another window), "
+            f"call action='screenshot' with level='fullscreen' first to re-orient."
+        )
 
-        if ratio < threshold:
-            # Miss 兜底：附上已经拍好的 post_cap（鼠标周围 L3）作为 follow-up
-            # image，不再额外拍 L2。原因：sensor.capture(L2) 拿的是"当前前台
-            # 窗口"，跟 active_app_rect 不一定一致——尤其是当前一次点击意外切
-            # 走焦点时，那张 L2 会拍到别的 app，把模型坐标系搞乱。这里只回
-            # 一段警告 + post_l3 视觉证据，不动 last_capture；模型若需要重对齐
-            # 应显式调 screenshot(level="active_window")。
-            try:
-                image_png = post_cap.png_bytes()
-            except Exception:
-                image_png = None
-            hint = (
-                f"{action} executed at ({x},{y}) but only {ratio:.2%} of pixels "
-                f"changed near the cursor (threshold {threshold:.2%}). The click "
-                f"may have missed its target, or the target was unresponsive. "
-                f"A post-click L3 tile around the cursor is attached for "
-                f"inspection. **Coordinate frame unchanged.** If you need to "
-                f"re-align (e.g. the layout has shifted), call "
-                f"`screenshot(level=\"active_window\")` yourself before retrying."
-            )
-            return ToolResult(output=hint, image_png=image_png)
-
-        return ToolResult(output=f"{action} {x},{y} (post-click pixel-change {ratio:.2%})")
+    def _do_click(self, action: str, x: int, y: int, do_click) -> ToolResult:
+        """Execute a click action and return a simple ack ToolResult."""
+        do_click()
+        return ToolResult(output=f"{action} {x},{y}")
 
     def _coord(self, raw: list[int] | tuple[int, int]) -> tuple[int, int]:
         """LLM 给的截图内坐标 → 物理屏幕坐标。"""
@@ -377,18 +329,15 @@ class ComputerTool:
         if a == "screenshot":
             level = _parse_level(p.get("level"))
             cap = self.sensor.capture(level)
-            self.last_capture = cap
-            # Explicit fullscreen request = model wants to re-orient on the
-            # whole desktop; release the active-app pin so subsequent clicks
-            # are once again interpreted in the L1 frame.
-            if level is ScreenLevel.L1:
-                self.set_active_app_rect(None)
-            elif level is ScreenLevel.L2 and self.active_app_rect is not None:
-                # Model explicitly asked for the active-window L2 again;
-                # treat it as a re-orientation and let loop.py emit the next
-                # post-step as L2 too if needed.
-                self.active_app_l2_shown = True
+            # L0 (icon_atlas) is a synthetic image, not a screen region; do
+            # NOT install it as the active coordinate frame, otherwise the
+            # next click would reverse-map atlas-pixel coords to nonsense
+            # screen coords. Per Docs/screenshot.md v2 §3.7 the loop
+            # detects this via cap.level / cap.offset is None.
+            if level is not ScreenLevel.L0:
+                self.last_capture = cap
             tag = {
+                ScreenLevel.L0: "L0/icon_atlas",
                 ScreenLevel.L1: "L1/fullscreen",
                 ScreenLevel.L2: "L2/active_window",
                 ScreenLevel.L3: "L3/cursor_local",
@@ -396,6 +345,7 @@ class ComputerTool:
             return ToolResult(
                 image_png=cap.png_bytes(),
                 output=f"{tag} {cap.sent_size[0]}x{cap.sent_size[1]} (raw {cap.raw_size[0]}x{cap.raw_size[1]} @ offset {cap.offset})",
+                attached_capture=cap,
             )
 
         if a == "mouse_move":
@@ -405,25 +355,25 @@ class ComputerTool:
 
         if a == "left_click":
             x, y = (self._coord(coord) if coord else d.cursor_position())
-            return self._click_with_verify(a, x, y, lambda: d.left_click(x, y))
+            return self._do_click(a, x, y, lambda: d.left_click(x, y))
 
         if a == "right_click":
             x, y = (self._coord(coord) if coord else d.cursor_position())
-            return self._click_with_verify(a, x, y, lambda: d.right_click(x, y))
+            return self._do_click(a, x, y, lambda: d.right_click(x, y))
 
         if a == "middle_click":
             x, y = (self._coord(coord) if coord else d.cursor_position())
-            return self._click_with_verify(a, x, y, lambda: d.middle_click(x, y))
+            return self._do_click(a, x, y, lambda: d.middle_click(x, y))
 
         if a == "double_click":
             x, y = (self._coord(coord) if coord else d.cursor_position())
-            return self._click_with_verify(a, x, y, lambda: d.double_click(x, y))
+            return self._do_click(a, x, y, lambda: d.double_click(x, y))
 
         if a == "triple_click":
             x, y = (self._coord(coord) if coord else d.cursor_position())
             def _triple() -> None:
                 d.left_click(x, y); d.left_click(); d.left_click()
-            return self._click_with_verify(a, x, y, _triple)
+            return self._do_click(a, x, y, _triple)
 
         if a == "left_mouse_down":
             x, y = (self._coord(coord) if coord else d.cursor_position())

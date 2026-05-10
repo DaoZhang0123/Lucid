@@ -277,7 +277,7 @@ class ContextManager:
                     name = image_names.get(hashlib.md5(raw).hexdigest())
                 hint = (
                     " To re-load this exact frame into the next request, call "
-                    "`load_screenshot(path=\"<full path above>\", level=\"" + tag + "\")` "
+                    "`load_local_images(path=\"<full path above>\", level=\"" + tag + "\")` "
                     "instead of re-visiting the App and taking a fresh shot."
                 )
                 if name and run_dir is not None:

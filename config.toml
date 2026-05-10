@@ -74,31 +74,20 @@ jpg_quality = 85
 keep_runs = 0
 
 [screenshot]
-# === 三级金字塔（design.md §4.5.3） ===
-# 单位：秒；0 表示仅按事件触发，不做周期截图
-l1_fullscreen_interval = 60.0
-l2_activewindow_interval = 8.0
-l3_cursor_interval = 0.0   # Phase 0 改为按事件触发
-
-# L3 鼠标周边方块边长 = 2 * radius
-l3_radius_px = 100
-
 # 下采样长边；0 = 不缩放
 l1_max_long_edge = 1568
 l2_max_long_edge = 1568
 l3_max_long_edge = 0
 
 # 对话历史里每个 level 保留最近 K 张截图（装入发给 LLM 的 prompt 里）。
-# 超出部分被替换为带路径的占位文本；模型需要回看时可调用 load_screenshot(path=...) 重新加载。
+# 超出部分被替换为带路径的占位文本；模型需要回看时可调用 load_local_images(path=...) 重新加载。
 keep_recent_l1 = 1
 keep_recent_l2 = 1
-keep_recent_l3 = 2
+# L3 (cursor_local) 保留最近 K 张；模型主动请求的细节图，留几张方便后续步骤回看
+keep_recent_l3 = 1
 # 每个不同的 active app 至少保留多少张最近的 L2（按 launch_app/focus_window 的 slug 区分）。
 # 这样在 App-A → App-B → App-C 的串联任务里，App-A 那张关键 L2 不会被新 App 的 L2 一次性挤掉。
 min_per_l2_app = 1
-
-# 变化检测：相似度 > 阈值时跳过本次 LLM 调用（dHash 距离换算）
-skip_if_similarity_above = 0.985
 
 [safety]
 # 危险动作触发 HITL 二次确认的关键字
@@ -107,8 +96,6 @@ hitl_keywords = ["删除", "delete", "rm ", "format", "shutdown", "转账", "支
 emergency_hotkey = "ctrl+alt+esc"
 # 默认自动度档位：full | confirm_critical | confirm_each
 autonomy = "confirm_critical"
-# 点击后额外抓一张 L3 落点取证图（架构层兜底）。
-verify_click_with_l3 = true
 # 保存/打开对话框中检测到"左侧导航树点击"时注入纠正提示（行为层兜底）。
 save_dialog_sidebar_guard = true
 
