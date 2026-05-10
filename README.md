@@ -1,4 +1,4 @@
-# <img src="app/src-tauri/icons/128x128.png" width="48" alt="Lucid icon" /> Lucid
+# <img src="app/src-tauri/icons/128x128.png" width="32" alt="Lucid icon" /> Lucid
 
 A true "human-like computer-use" AI assistant: no MCP, direct control of your Windows apps, and continuous auto-reply while you are away.
 

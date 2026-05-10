@@ -1,4 +1,4 @@
-# <img src="app/src-tauri/icons/128x128.png" width="24" alt="Lucid icon" /> Lucid
+# <img src="app/src-tauri/icons/128x128.png" width="32" alt="Lucid icon" /> Lucid
 
 Un véritable assistant IA qui agit comme un humain sur ordinateur : sans MCP, contrôle direct de vos applications Windows, et auto-réponse continue quand vous êtes absent.
 

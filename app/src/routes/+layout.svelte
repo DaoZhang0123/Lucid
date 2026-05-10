@@ -67,7 +67,10 @@
     height: 30px;
     display: flex;
     align-items: stretch;
-    background: #111827;
+    /* Match the in-page header background (.app header in +page.svelte) so the
+       titlebar and the menu bar below it form a single visual surface. Light
+       theme override is below. */
+    background: #1f2937;
     color: #e5e7eb;
     user-select: none;
   }

@@ -1,4 +1,4 @@
-# <img src="app/src-tauri/icons/128x128.png" width="24" alt="Lucid icon" /> Lucid
+# <img src="app/src-tauri/icons/128x128.png" width="32" alt="Lucid icon" /> Lucid
 
 一个真正“像人操作电脑”的 AI 助手：无需 MCP，直接控制你的 Windows 应用，并在你不在时持续自动回复。
 
