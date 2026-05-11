@@ -26,12 +26,21 @@ queries.json   →  run.py  →  runs/<ts>/manifest.json + sidecar.stderr.log
 
 In order of priority:
 
-1. **Correctness** — was the query actually completed? Positive signal:
-   `task_close.status == "ok"` AND `final_text` contains `expect_signal`
-   (or, as a soft fallback when `expect_signal == ""`, contains
-   `task complete:` / `任务完成`). Negative: `max_steps` / `error` /
-   `api_error` / `cancelled`, or `final_text` containing `task failed:` /
-   `无法完成`.
+1. **Correctness** — was the query actually completed? Three layers must
+   all agree (per `SKILL.md`'s verdict rules):
+   - **Run layer** (mechanical): `task_close.status == "ok"`.
+   - **Goal layer** (AI judgement): a per-thread subagent reads the
+     `instruction` + `final_text` (and `context.log` / step screenshots
+     if needed) and reports `goal_met: pass | partial | fail`. This
+     replaces the old brittle `expect_signal` substring grep — the
+     subagent tolerates paraphrases and recognizes the advertised
+     `<app> unavailable` fallback as a graceful pass.
+   - **Deliverables layer** (mechanical): every `expect_files` entry on
+     the query passes its disk check (path exists / does not exist +
+     optional `must_contain` substring). The model can claim "task
+     complete" — if the file isn't on disk, it lied; the verdict is
+     `fail`. All deliverables for this test set live under
+     `%USERPROFILE%\Downloads\Test\`.
 2. **Speed** — total `exec_s` (current task's `ended_ms` minus the previous
    task's `ended_ms`), plus, when a subagent reads `events.jsonl`, step
    count + tool-call count + screenshot count. Any significant regression
@@ -42,44 +51,58 @@ level; subagents pull them from `events.jsonl` if relevant.
 
 ---
 
-## 1. The query set (39 queries)
+## 1. The query set (48 queries)
 
 File: [queries.json](queries.json). Each entry:
 
 ```json
-{ "id": "A1",
-  "category": "cognitive",
+{ "id": "B1",
+  "category": "fileio",
   "instruction": "...",
-  "expect_signal": "3297",   // grep this in final_text → pass
-  "max_steps": 6,            // soft budget (informational only)
-  "needs": []                // optional preconditions
+  "expect_files": [               // optional; deliverables layer
+    { "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-B1.txt",
+      "must_exist": true,
+      "must_contain": "hello from lucid e2e B1" }
+  ],
+  "max_steps": 6,                 // soft budget (informational only)
+  "needs": []                     // optional preconditions
 }
 ```
 
-**Category breakdown** (horizontal coverage; each query has a clear
-"success signal"):
+There is **no `expect_signal`** field. The goal layer is judged by the
+per-thread subagent in Step 2 of `SKILL.md`, not by a string match.
 
-| # | Category | Count | Capabilities exercised |
+**Category breakdown** (horizontal coverage; each query has a clear
+"success signal"). App names in parentheses are the exact targets each
+query touches — the agent uses `launch_app(name=...)` (or a hotkey /
+start-menu fallback) for each:
+
+| # | Category | Count | Apps / capabilities exercised |
 |---|---|---|---|
 | A | cognitive | 2 | Pure reasoning, `read_file` meta tool (no GUI) |
 | B | fileio | 3 | `write_file` / `read_file` / `run_shell` trio |
-| C | notepad | 2 | Launch + keyboard input + save dialog |
-| D | calculator | 2 | Launch + simple clicks + UIA reads display |
-| E | explorer | 2 | File-manager navigation + create / delete |
-| F | browser | 2 | Edge launch + URL + screenshot description |
-| G | vscode | 2 | VS Code launch + file tree + grep |
-| H | settings | 2 | Win+I + locate setting (hardest vision class) |
-| I | multi-step | 2 | Cross-tool / cross-app, validates thread state |
-| J | resilience | 1 | Deliberate "app not installed" branch |
-| K | app | 7 | Single-app coverage: Edge / Paint / Snipping Tool / Task Manager / VS Code / Clock / Downloads sort |
-| L | combo | 5 | **Multi-app chains**: Notepad+read_file verify / Edge→write_file persist / shell→Notepad timestamp / screenshot→Notepad count / Notepad+Explorer visual+shell double-check |
-| M | messaging | 4 | **WeChat + Microsoft Teams**, all dry-run (type but never send; Ctrl+A Delete after screenshot); includes not-installed / not-logged-in fallbacks |
-| N | combo (with messaging) | 3 | shell+WeChat timestamp dry-run / screenshot foreground-detect+Notepad / Teams title+Notepad |
+| C | notepad | 2 | **Notepad** (notepad.exe): launch + keyboard input + Save-As dialog (C1 saves, C2 dry-run) |
+| D | calculator | 2 | **Calculator** (calc.exe): standard arithmetic via clicks (D1) + Scientific-mode switch (D2) |
+| E | explorer | 2 | **File Explorer** (explorer.exe): GUI navigation + count subfolders (E1); `run_shell` create/delete cycle (E2) |
+| F | browser | 2 | **Microsoft Edge** (msedge.exe): example.com load (F1) + DuckDuckGo search (F2) |
+| G | vscode | 2 | `run_shell` line-count (G1) + `Select-String` grep (G2) — VS Code-shaped tasks done via shell |
+| H | settings | 2 | **Settings** (Win+I): Display resolution (H1) + System > About (H2) — hardest vision class |
+| I | multi-step | 2 | Cross-tool / cross-app: shell→write→read chain (I1); fullscreen + taskbar pinned-icon read (I2) |
+| J | resilience | 1 | Deliberate "app not installed" branch — must stop, not loop |
+| K | app | 11 | Single-app coverage: **Edge** (about:blank title, K1) / **Paint** (mspaint, draw a stroke, K2) / **Snipping Tool** (SnippingTool / ScreenSketch, K3) / **Task Manager** (taskmgr, top process row, K4) / **VS Code** (Code, title bar, K5) / **Clock / tray clock flyout** (K6) / Downloads sort via `run_shell` (K7) / **Sticky Notes** (StikyNot, K8) / **Windows Terminal** (wt.exe, with PowerShell fallback, K9) / **Photos** (Microsoft.Photos, K10) / **Mail** (Windows Mail, K11) |
+| L | combo | 5 | **Multi-app chains**: Notepad+`read_file` verify (L1) / Edge→`write_file` persist (L2) / shell→Notepad timestamp (L3) / fullscreen→Notepad pinned-count (L4) / Notepad+Explorer visual+shell double-check (L5) |
+| M | messaging | 4 | **WeChat (微信)** + **Microsoft Teams**, all dry-run (type but never send; Ctrl+A Delete after screenshot): WeChat top-pinned chat name (M1) / WeChat 文件传输助手 dry-type (M2) / Teams left-rail tab + unread (M3) / Teams self-chat dry-type (M4); each has a not-installed / not-signed-in fallback |
+| N | combo (with messaging) | 3 | shell→WeChat 文件传输助手 timestamp dry-run (N1) / fullscreen foreground-detect→Notepad (N2) / Teams title→Notepad (N3) |
+| O | office | 5 | **Microsoft Office desktop apps**, all dry-run (no save / no send): **Word** (winword, type into blank doc, read title, O1) / **Excel** (excel, =137*24+9 in A1, O2) / **PowerPoint** (powerpnt, blank deck + title, O3) / **Outlook** (outlook, read top inbox subject, do NOT open it, O4) / **OneNote** (onenote, type on a fresh page, O5); each has an unavailable fallback |
 
 > A single failure is not fatal — analysis handles them individually.
 > L/N standardize the "open X, do Y, verify with Z" chains from the
 > README examples (closest to real usage). M only verifies "can we reach
 > the input box and type"; it never produces an outgoing message.
+> O similarly only verifies "can we open the Office app and interact";
+> it never persists a file (Don't Save on close) and never sends mail.
+> If an Office app or a messaging client is not installed / not signed in,
+> the `<app> unavailable` fallback scores as a (degraded) pass — see §4.
 
 ---
 
@@ -98,8 +121,10 @@ File: [queries.json](queries.json). Each entry:
 4. **Do NOT pre-clean the desktop**. This is intentional — real
    environments have 50 windows, a packed taskbar, a cluttered desktop;
    the agent must work under that interference. The `lucid-e2e-*` temp
-   files can be present or absent (B1/L1/L5/N2/N3 are all idempotent
-   overwrites).
+   files all live under `%USERPROFILE%\Downloads\Test\` and can be
+   present or absent (B1/L1/L5/N2/N3 are all idempotent overwrites; the
+   first task that needs the folder will `mkdir` it). Don't pre-create
+   the folder either — the agent should learn to do that itself.
 
 ### Step B — Run the queries (25–60 min depending on model)
 
@@ -114,8 +139,8 @@ Optional flags:
 # Run only specific ids (debug / re-run failures from previous round)
 .\.venv\Scripts\python.exe Test\run.py --only A1,B2,L1,M3
 
-# Bigger global timeout (default 60 min)
-.\.venv\Scripts\python.exe Test\run.py --global-timeout 7200
+# Bigger global timeout (default 120 min — 48 queries serial typically take 65–80 min)
+.\.venv\Scripts\python.exe Test\run.py --global-timeout 10800
 
 # Cancel the current task if its events.jsonl has not advanced for N
 # seconds (default 1200). Cancelling moves on to the next task in the
@@ -132,7 +157,7 @@ What `run.py` does (one paragraph):
 1. `subprocess.Popen(["python", "-m", "lucid", "--sidecar"])`; stdin/stdout
    carry NDJSON JSON-RPC frames.
 2. Wait for sidecar's `{"event":"ready"}`.
-3. `start_task` 39 times in order (300 ms apart). The sidecar's internal
+3. `start_task` 48 times in order (300 ms apart). The sidecar's internal
    priority queue runs them one at a time — `run.py` is **only an
    enqueuer**, not a scheduler.
 4. Persist `manifest.json` to `Test/runs/<YYYYmmdd-HHMMSS>/`, one entry
@@ -150,7 +175,7 @@ What `run.py` does (one paragraph):
 You'll see something like:
 
 ```
-[run.py] sidecar ready; enqueueing 39 queries
+[run.py] sidecar ready; enqueueing 48 queries
 [run.py] enqueued  A1 → thread-... (running)
 [run.py] enqueued  A2 → thread-... (pos=1)
 ...
@@ -172,11 +197,13 @@ Copilot will, per `SKILL.md`:
 
 1. Read `manifest.json`, compute pass / fail / timeout / `exec_s` p50/p95/max,
    write `report.md` (Chinese prose).
-2. Fan out subagents (4–6 in parallel) for **every non-pass** thread plus
-   the **slow tail** (`exec_s > p95`, capped at 5). Each subagent reads
-   its own `events.jsonl` and replies with hot spot / wasted work / one
-   fix, ending with the machine-readable `severity:` / `category_of_fix:`
-   two-line contract.
+2. Fan out subagents (4–6 in parallel) for **every thread that has a
+   `thread_dir`** — failures and slow tail first, fast passes last.
+   Even green threads are mined for speed-up suggestions. Each subagent
+   reads its own `events.jsonl` + `context.log` + 2–3 `step-*.png`
+   screenshots and replies with hot spot / wasted work / one fix, ending
+   with the machine-readable `severity:` / `category_of_fix:` two-line
+   contract.
 3. Aggregate, write `iteration-plan.md` (Chinese):
    - **High-leverage fixes**: ≥ 2 subagents agreed.
    - **Single-thread blockers**: severity=high but unique.
@@ -202,7 +229,7 @@ Copilot will, per `SKILL.md`:
    .\.venv\Scripts\python.exe Test\run.py --only <ids the skill computed>
    ```
 
-   Comma-separated, no spaces. Much faster than re-running all 39 while
+   Comma-separated, no spaces. Much faster than re-running all 48 while
    you're iterating on a fix.
 
 ---
@@ -221,13 +248,14 @@ Per-iteration minimum bar:
 
 ## 4. Known limits / TODO
 
-- Sidecar is a single worker — 39 queries run **serially**. Concurrency
+- Sidecar is a single worker — 48 queries run **serially**. Concurrency
   needs a worker pool, plus a way to keep GUI-foreground tasks from
   fighting (only `run_shell` / `read_file` / `write_file` are safe to
   parallelize).
-- Category M (WeChat / Teams) depends on the client being installed and
-  logged in. Not-logged-in falls into the "unavailable" branch which
-  scores as pass — note that's a **degraded** pass.
+- Category M (WeChat / Teams) and category O (Word / Excel / PowerPoint /
+  Outlook / OneNote) both depend on the client being installed and signed
+  in. Not-installed / not-signed-in falls into the `<app> unavailable`
+  branch which scores as pass — note that's a **degraded** pass.
 - `run.py` deliberately doesn't talk to the Tauri app; running both
   simultaneously would spawn two sidecars.
 - Baseline comparison currently only diffs `duration_s` (no step count —
@@ -239,7 +267,7 @@ Per-iteration minimum bar:
 
 | File | Role |
 |---|---|
-| [queries.json](queries.json) | The 39 standard queries; append new ones, never remove old ids |
+| [queries.json](queries.json) | The 48 standard queries; append new ones, never remove old ids |
 | [run.py](run.py) | Enqueuer + manifest writer; the only executable entry point |
 | [SKILL.md](SKILL.md) | The skill VS Code Copilot uses to do analysis |
 | [README.md](README.md) | This document |

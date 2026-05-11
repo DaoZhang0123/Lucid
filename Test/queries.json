@@ -1,12 +1,11 @@
 {
-  "version": 3,
-  "notes": "Standing E2E queries — re-run every iteration. analyze.py keys on `id`. Categories: cognitive / fileio / notepad / calculator / explorer / browser / vscode / settings / multi-step / resilience / app (single-app coverage) / messaging (WeChat / Teams, dry-run only — never actually sends) / combo (multi-app integration, mirrors README example prompts). Designed to run against a REAL desktop (whatever is open). Do NOT pre-clean. Messaging queries are dry-run: type into input box, screenshot, then clear — never press Send.",
+  "version": 6,
+  "notes": "Standing E2E queries — re-run every iteration. SKILL.md keys on `id`. All file deliverables go to %USERPROFILE%\\Downloads\\Test\\ (NOT the desktop). Each query has only an `instruction` (and optional `expect_files`). Verdict is computed by the SKILL: (1) Run layer = manifest.status == 'ok'; (2) Goal layer = a per-thread subagent reads instruction + final_text (+ context.log if needed) and judges whether the task's goal was achieved (goal_met = pass / fail / partial); (3) Deliverables layer = each `expect_files` entry passes its disk check (existence + optional must_contain substring). Categories: cognitive / fileio / notepad / calculator / explorer / browser / vscode / settings / multi-step / resilience / app (single-app coverage: Edge / Paint / Snipping Tool / Task Manager / VS Code / Clock / Downloads sort / Sticky Notes / Windows Terminal / Photos / Mail) / office (Word / Excel / PowerPoint / Outlook / OneNote — all dry-run, read-only or transient) / messaging (WeChat / Teams, dry-run only — never actually sends) / combo (multi-app integration). Designed to run against a REAL desktop (whatever is open). Do NOT pre-clean. Messaging + office queries are dry-run: type/click but never save, never send; if app is not installed or not signed in, reply '<app> unavailable' and stop — that is a degraded pass.",
   "queries": [
     {
       "id": "A1",
       "category": "cognitive",
       "instruction": "What is 137 * 24 + 9? Reply only with the number, no words.",
-      "expect_signal": "3297",
       "max_steps": 3,
       "needs": []
     },
@@ -14,39 +13,58 @@
       "id": "A2",
       "category": "cognitive",
       "instruction": "Use read_file to open D:\\Project\\Lucid\\README.md and tell me the very first H1 title (the line starting with a single '#'). Reply with just that title.",
-      "expect_signal": "Lucid",
       "max_steps": 4,
-      "needs": ["file:D:\\Project\\Lucid\\README.md"]
+      "needs": [
+        "file:D:\\Project\\Lucid\\README.md"
+      ]
     },
     {
       "id": "B1",
       "category": "fileio",
-      "instruction": "Use write_file to create %USERPROFILE%\\Desktop\\lucid-e2e-B1.txt with the single line 'hello from lucid e2e B1'. Then reply 'task complete: wrote B1'.",
-      "expect_signal": "wrote B1",
+      "instruction": "Use write_file to create %USERPROFILE%\\Downloads\\Test\\lucid-e2e-B1.txt with the single line 'hello from lucid e2e B1' (run_shell first if needed to create the Downloads\\Test folder). Then reply 'task complete: wrote B1'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-B1.txt",
+          "must_exist": true,
+          "must_contain": "hello from lucid e2e B1"
+        }
+      ],
       "max_steps": 4,
       "needs": []
     },
     {
       "id": "B2",
       "category": "fileio",
-      "instruction": "Use read_file to open the file %USERPROFILE%\\Desktop\\lucid-e2e-B1.txt and reply with its exact content on a single line, then 'task complete:'.",
-      "expect_signal": "hello from lucid e2e B1",
+      "instruction": "Use read_file to open the file %USERPROFILE%\\Downloads\\Test\\lucid-e2e-B1.txt and reply with its exact content on a single line, then 'task complete:'.",
       "max_steps": 4,
-      "needs": ["after:B1"]
+      "needs": [
+        "after:B1"
+      ]
     },
     {
       "id": "B3",
       "category": "fileio",
-      "instruction": "Use run_shell to execute: powershell -Command \"Remove-Item -LiteralPath $env:USERPROFILE\\Desktop\\lucid-e2e-B1.txt -Force -ErrorAction SilentlyContinue; Test-Path $env:USERPROFILE\\Desktop\\lucid-e2e-B1.txt\". Reply 'task complete: removed' if Test-Path printed False.",
-      "expect_signal": "removed",
+      "instruction": "Use run_shell to execute: powershell -Command \"Remove-Item -LiteralPath $env:USERPROFILE\\Downloads\\Test\\lucid-e2e-B1.txt -Force -ErrorAction SilentlyContinue; Test-Path $env:USERPROFILE\\Downloads\\Test\\lucid-e2e-B1.txt\". Reply 'task complete: removed' if Test-Path printed False.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-B1.txt",
+          "must_exist": false
+        }
+      ],
       "max_steps": 4,
       "needs": []
     },
     {
       "id": "C1",
       "category": "notepad",
-      "instruction": "Open Notepad, type the exact text 'Lucid E2E test C1', then save the file as %USERPROFILE%\\Desktop\\lucid-e2e-C1.txt. After confirming the file exists via run_shell + Test-Path, reply 'task complete: notepad saved'.",
-      "expect_signal": "notepad saved",
+      "instruction": "Open Notepad, type the exact text 'Lucid E2E test C1', then save the file as %USERPROFILE%\\Downloads\\Test\\lucid-e2e-C1.txt (create the folder first via run_shell if needed). After confirming the file exists via run_shell + Test-Path, reply 'task complete: notepad saved'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-C1.txt",
+          "must_exist": true,
+          "must_contain": "Lucid E2E test C1"
+        }
+      ],
       "max_steps": 18,
       "needs": []
     },
@@ -54,7 +72,6 @@
       "id": "C2",
       "category": "notepad",
       "instruction": "Open Notepad and type today's date in YYYY-MM-DD format. Do NOT save. After typing, reply 'task complete: notepad typed'.",
-      "expect_signal": "notepad typed",
       "max_steps": 12,
       "needs": []
     },
@@ -62,15 +79,13 @@
       "id": "D1",
       "category": "calculator",
       "instruction": "Open the Windows Calculator app and compute 137 * 24 + 9 inside it (click the buttons). Tell me the result shown in the display, then reply 'task complete: calc=<number>'.",
-      "expect_signal": "3297",
       "max_steps": 22,
       "needs": []
     },
     {
       "id": "D2",
       "category": "calculator",
-      "instruction": "Open Calculator, switch to Scientific mode (View menu / hamburger), and report which buttons are visible in the top row. Reply 'task complete: scientific mode confirmed' once you see sin/cos/tan buttons.",
-      "expect_signal": "scientific mode confirmed",
+      "instruction": "Open Calculator, switch to Scientific mode (View menu / hamburger), and report which buttons are visible in the top row. Reply 'task complete: scientific mode confirmed' once you see sin/cos/tan buttons. Use that wording verbatim — do not paraphrase.",
       "max_steps": 16,
       "needs": []
     },
@@ -78,15 +93,21 @@
       "id": "E1",
       "category": "explorer",
       "instruction": "Open File Explorer and navigate to D:\\Project\\Lucid. Tell me how many top-level subfolders are visible (folders only, not files). Reply 'task complete: <N> folders'.",
-      "expect_signal": "folders",
       "max_steps": 10,
-      "needs": ["dir:D:\\Project\\Lucid"]
+      "needs": [
+        "dir:D:\\Project\\Lucid"
+      ]
     },
     {
       "id": "E2",
       "category": "explorer",
-      "instruction": "Use run_shell (NOT GUI) to: (1) create folder %USERPROFILE%\\Desktop\\lucid-e2e-E2 if not exists, (2) confirm Test-Path is True, (3) remove it, (4) confirm Test-Path is False. Reply 'task complete: e2 cycle ok'.",
-      "expect_signal": "e2 cycle ok",
+      "instruction": "Use run_shell (NOT GUI) to: (1) create folder %USERPROFILE%\\Downloads\\Test\\lucid-e2e-E2 if not exists, (2) confirm Test-Path is True, (3) remove it, (4) confirm Test-Path is False. Reply 'task complete: e2 cycle ok'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-E2",
+          "must_exist": false
+        }
+      ],
       "max_steps": 6,
       "needs": []
     },
@@ -94,39 +115,42 @@
       "id": "F1",
       "category": "browser",
       "instruction": "Open Microsoft Edge to https://example.com . Wait for it to load, then describe in ONE sentence what the page contains. Reply 'task complete: <one sentence>'.",
-      "expect_signal": "example",
       "max_steps": 12,
-      "needs": ["network"]
+      "needs": [
+        "network"
+      ]
     },
     {
       "id": "F2",
       "category": "browser",
       "instruction": "In Microsoft Edge, navigate to https://duckduckgo.com and search for 'Tauri 2 documentation'. Read the title of the first organic result and reply 'task complete: first=<title>'.",
-      "expect_signal": "Tauri",
       "max_steps": 18,
-      "needs": ["network"]
+      "needs": [
+        "network"
+      ]
     },
     {
       "id": "G1",
       "category": "vscode",
       "instruction": "Use run_shell to compute the line count of D:\\Project\\Lucid\\lucid\\sidecar.py via 'powershell -c (Get-Content -LiteralPath D:\\Project\\Lucid\\lucid\\sidecar.py).Length' and reply 'task complete: sidecar=<N> lines'.",
-      "expect_signal": "lines",
       "max_steps": 4,
-      "needs": ["file:D:\\Project\\Lucid\\lucid\\sidecar.py"]
+      "needs": [
+        "file:D:\\Project\\Lucid\\lucid\\sidecar.py"
+      ]
     },
     {
       "id": "G2",
       "category": "vscode",
       "instruction": "Use run_shell to run 'powershell -c Select-String -Path D:\\Project\\Lucid\\Docs\\todo.md -Pattern cron -SimpleMatch | Measure-Object | Select-Object -ExpandProperty Count' and reply 'task complete: matches=<N>'.",
-      "expect_signal": "matches",
       "max_steps": 4,
-      "needs": ["file:D:\\Project\\Lucid\\Docs\\todo.md"]
+      "needs": [
+        "file:D:\\Project\\Lucid\\Docs\\todo.md"
+      ]
     },
     {
       "id": "H1",
       "category": "settings",
       "instruction": "Open Windows Settings (Win+I), navigate to System > Display, and report the current display resolution shown there. Reply 'task complete: resolution=<WxH>'.",
-      "expect_signal": "resolution",
       "max_steps": 14,
       "needs": []
     },
@@ -134,23 +158,29 @@
       "id": "H2",
       "category": "settings",
       "instruction": "Open Settings (Win+I) and find 'About' (System > About). Report the Windows edition and version. Reply 'task complete: <edition> <version>'.",
-      "expect_signal": "Windows",
       "max_steps": 14,
       "needs": []
     },
     {
       "id": "I1",
       "category": "multi-step",
-      "instruction": "Step 1: Use run_shell to list all .py files directly inside D:\\Project\\Lucid\\lucid (no subdirs). Step 2: Use write_file to save the resulting filename list (one per line) to %USERPROFILE%\\Desktop\\lucid-e2e-I1.txt. Step 3: read_file it back and reply 'task complete: I1 wrote <N> entries'.",
-      "expect_signal": "entries",
+      "instruction": "Step 1: Use run_shell to list all .py files directly inside D:\\Project\\Lucid\\lucid (no subdirs). Step 2: Use write_file to save the resulting filename list (one per line) to %USERPROFILE%\\Downloads\\Test\\lucid-e2e-I1.txt (create the folder first via run_shell if needed). Step 3: read_file it back and reply 'task complete: I1 wrote <N> entries'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-I1.txt",
+          "must_exist": true,
+          "must_contain": "sidecar.py"
+        }
+      ],
       "max_steps": 8,
-      "needs": ["dir:D:\\Project\\Lucid\\lucid"]
+      "needs": [
+        "dir:D:\\Project\\Lucid\\lucid"
+      ]
     },
     {
       "id": "I2",
       "category": "multi-step",
       "instruction": "Take a fullscreen screenshot. From the taskbar at the bottom, list the pinned app icons left-to-right (skip the search box and Start button). Reply 'task complete: taskbar=<comma-separated names>'.",
-      "expect_signal": "taskbar",
       "max_steps": 6,
       "needs": []
     },
@@ -158,7 +188,6 @@
       "id": "J1",
       "category": "resilience",
       "instruction": "Try to launch an app called 'lucid_definitely_not_installed_app_xyz'. If launch_app reports it is not installed (or you cannot find it after one search), do NOT keep retrying. Reply 'task complete: app not installed' and stop.",
-      "expect_signal": "not installed",
       "max_steps": 6,
       "needs": []
     },
@@ -166,23 +195,24 @@
       "id": "K1",
       "category": "app",
       "instruction": "Open Microsoft Edge and navigate to about:blank. Wait for the address bar to be empty, then read the window title via active_window. Reply 'task complete: edge title=<title>'.",
-      "expect_signal": "edge title",
       "max_steps": 8,
-      "needs": ["app:msedge"]
+      "needs": [
+        "app:msedge"
+      ]
     },
     {
       "id": "K2",
       "category": "app",
       "instruction": "Open Paint (mspaint). Once the canvas is visible, draw a single short stroke anywhere on the canvas using a left-button drag (any 2 points). Do NOT save. Reply 'task complete: paint stroke ok'.",
-      "expect_signal": "paint stroke ok",
       "max_steps": 14,
-      "needs": ["app:mspaint"]
+      "needs": [
+        "app:mspaint"
+      ]
     },
     {
       "id": "K3",
       "category": "app",
       "instruction": "Open the Snipping Tool (SnippingTool / ScreenSketch). When its toolbar is visible, take a screenshot of Lucid's own active_window so we can confirm it launched, then close it via Esc / close button. Reply 'task complete: snip launched'.",
-      "expect_signal": "snip launched",
       "max_steps": 12,
       "needs": []
     },
@@ -190,7 +220,6 @@
       "id": "K4",
       "category": "app",
       "instruction": "Open Task Manager (Ctrl+Shift+Esc). Switch to the Processes tab if not already there, and tell me the name of the top-most process row visible. Reply 'task complete: top proc=<name>'. Then close Task Manager.",
-      "expect_signal": "top proc",
       "max_steps": 12,
       "needs": []
     },
@@ -198,15 +227,15 @@
       "id": "K5",
       "category": "app",
       "instruction": "Open Visual Studio Code. Once the welcome tab or last workspace is loaded, read the title bar via active_window and reply 'task complete: vscode=<title>'. Do not modify any file.",
-      "expect_signal": "vscode",
       "max_steps": 10,
-      "needs": ["app:Code"]
+      "needs": [
+        "app:Code"
+      ]
     },
     {
       "id": "K6",
       "category": "app",
       "instruction": "Open the Clock app (Windows clock / alarms) or the system tray clock flyout (click the time in the taskbar). Read the current time as displayed, reply 'task complete: clock=<HH:MM>'.",
-      "expect_signal": "clock",
       "max_steps": 10,
       "needs": []
     },
@@ -214,105 +243,228 @@
       "id": "K7",
       "category": "app",
       "instruction": "Use run_shell with 'powershell -c Get-ChildItem -Path $env:USERPROFILE\\Downloads -File -ErrorAction SilentlyContinue | Sort-Object Length -Descending | Select-Object -First 5 Name,Length | ConvertTo-Json -Compress' and reply 'task complete: top5 downloads=<json>'.",
-      "expect_signal": "top5 downloads",
       "max_steps": 4,
       "needs": []
     },
     {
+      "id": "K8",
+      "category": "app",
+      "instruction": "Open Sticky Notes (StikyNot). Once a yellow note is visible, type the text 'Lucid E2E K8' into it. Do NOT save (Sticky Notes auto-saves — that's fine, but do not delete other existing notes). Reply 'task complete: sticky note ok'. If Sticky Notes is not installed reply 'task complete: sticky unavailable'.",
+      "max_steps": 12,
+      "needs": [
+        "app:StikyNot"
+      ]
+    },
+    {
+      "id": "K9",
+      "category": "app",
+      "instruction": "Open Windows Terminal (wt.exe). Once the prompt is visible, type the command 'Get-Date -Format \"HH:mm\"' and press Enter. Read the output time it printed and reply 'task complete: wt time=<HH:MM>'. If Windows Terminal is not installed, fall back to PowerShell (powershell.exe) with the same command, and reply 'task complete: wt time=<HH:MM>' anyway.",
+      "max_steps": 12,
+      "needs": []
+    },
+    {
+      "id": "K10",
+      "category": "app",
+      "instruction": "Open the Microsoft Photos app. Once its main window (collection / library) is visible, read the active_window title and reply 'task complete: photos title=<title>'. Do not open or modify any image. If Photos is not installed reply 'task complete: photos unavailable'.",
+      "max_steps": 10,
+      "needs": [
+        "app:Microsoft.Photos"
+      ]
+    },
+    {
+      "id": "K11",
+      "category": "app",
+      "instruction": "Open the Windows Mail app. Once the main window is visible, report the name of the currently selected folder in the left rail (Inbox / Drafts / Sent / etc.) and reply 'task complete: mail folder=<name>'. Do NOT open, reply, forward, or send any message. If Mail is not installed or not signed in, reply 'task complete: mail unavailable'.",
+      "max_steps": 12,
+      "needs": [
+        "app:Mail"
+      ]
+    },
+    {
+      "id": "O1",
+      "category": "office",
+      "instruction": "Open Microsoft Word (winword). On the start screen click 'Blank document'. Once the empty document is visible, type the exact text 'Lucid E2E O1 dryrun'. Read the active_window title (should contain 'Word') and reply 'task complete: word title=<title>'. Do NOT save the document; if Word asks to save on close, click 'Don't Save'. If Word is not installed reply 'task complete: word unavailable'.",
+      "max_steps": 18,
+      "needs": [
+        "app:winword"
+      ]
+    },
+    {
+      "id": "O2",
+      "category": "office",
+      "instruction": "Open Microsoft Excel. Click 'Blank workbook'. Click cell A1, type the formula '=137*24+9' and press Enter. Click A1 again to re-select it, then read the displayed value (should be 3297). Reply 'task complete: excel a1=<value>'. Do NOT save. If Excel asks to save on close, click 'Don't Save'. If Excel is not installed reply 'task complete: excel unavailable'.",
+      "max_steps": 20,
+      "needs": [
+        "app:excel"
+      ]
+    },
+    {
+      "id": "O3",
+      "category": "office",
+      "instruction": "Open Microsoft PowerPoint. Click 'Blank Presentation'. On slide 1 click the 'Click to add title' placeholder, then type 'Lucid E2E O3'. Reply 'task complete: ppt slide ok'. Do NOT save. If PowerPoint asks to save on close, click 'Don't Save'. If PowerPoint is not installed reply 'task complete: ppt unavailable'.",
+      "max_steps": 18,
+      "needs": [
+        "app:powerpnt"
+      ]
+    },
+    {
+      "id": "O4",
+      "category": "office",
+      "instruction": "Open Microsoft Outlook (the desktop app, not OWA). Once the Inbox is visible, report the subject of the topmost message in the message list. Do NOT open, reply, forward, mark-read, or delete any message. Reply 'task complete: outlook top=<subject>'. If Outlook is not installed or not signed in (no inbox visible after launch + 5s), reply 'task complete: outlook unavailable'.",
+      "max_steps": 14,
+      "needs": [
+        "app:outlook"
+      ]
+    },
+    {
+      "id": "O5",
+      "category": "office",
+      "instruction": "Open Microsoft OneNote. Once a notebook page is visible (any existing page is fine), click in the page body and type the text 'Lucid E2E O5 dryrun'. OneNote auto-saves — that is fine. Reply 'task complete: onenote ok'. If OneNote is not installed or not signed in, reply 'task complete: onenote unavailable'.",
+      "max_steps": 16,
+      "needs": [
+        "app:onenote"
+      ]
+    },
+    {
       "id": "L1",
       "category": "combo",
-      "instruction": "Multi-app: (1) Open Notepad, (2) type 'Lucid combo L1 ' followed by today's YYYY-MM-DD date, (3) save as %USERPROFILE%\\Desktop\\lucid-e2e-L1.txt, (4) close Notepad, (5) use read_file to verify the saved content begins with 'Lucid combo L1', (6) reply 'task complete: combo L1 ok'.",
-      "expect_signal": "combo L1 ok",
+      "instruction": "Multi-app: (1) Open Notepad, (2) type 'Lucid combo L1 ' followed by today's YYYY-MM-DD date, (3) save as %USERPROFILE%\\Downloads\\Test\\lucid-e2e-L1.txt (create the folder first via run_shell if needed), (4) close Notepad, (5) use read_file to verify the saved content begins with 'Lucid combo L1', (6) reply 'task complete: combo L1 ok'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-L1.txt",
+          "must_exist": true,
+          "must_contain": "Lucid combo L1"
+        }
+      ],
       "max_steps": 22,
       "needs": []
     },
     {
       "id": "L2",
       "category": "combo",
-      "instruction": "Multi-app: (1) Use Edge to open https://example.com, (2) once loaded, take an L2 screenshot of the active window, (3) describe the page in ONE short sentence, (4) use write_file to save that sentence to %USERPROFILE%\\Desktop\\lucid-e2e-L2.txt, (5) reply 'task complete: combo L2 saved'.",
-      "expect_signal": "combo L2 saved",
+      "instruction": "Multi-app: (1) Use Edge to open https://example.com, (2) once loaded, take an L2 screenshot of the active window, (3) describe the page in ONE short sentence, (4) use write_file to save that sentence to %USERPROFILE%\\Downloads\\Test\\lucid-e2e-L2.txt (create the folder first via run_shell if needed), (5) reply 'task complete: combo L2 saved'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-L2.txt",
+          "must_exist": true
+        }
+      ],
       "max_steps": 16,
-      "needs": ["network", "app:msedge"]
+      "needs": [
+        "network",
+        "app:msedge"
+      ]
     },
     {
       "id": "L3",
       "category": "combo",
-      "instruction": "Multi-app chain: (1) Use run_shell 'powershell -c (Get-Date).ToString(\"yyyy-MM-dd HH:mm:ss\")' to capture a timestamp, (2) Open Notepad, (3) type 'L3 timestamp <the captured value>', (4) save as %USERPROFILE%\\Desktop\\lucid-e2e-L3.txt, (5) close Notepad, (6) reply 'task complete: combo L3 ok'.",
-      "expect_signal": "combo L3 ok",
+      "instruction": "Multi-app chain: (1) Use run_shell 'powershell -c (Get-Date).ToString(\"yyyy-MM-dd HH:mm:ss\")' to capture a timestamp, (2) Open Notepad, (3) type 'L3 timestamp <the captured value>', (4) save as %USERPROFILE%\\Downloads\\Test\\lucid-e2e-L3.txt (create the folder first via run_shell if needed), (5) close Notepad, (6) reply 'task complete: combo L3 ok'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-L3.txt",
+          "must_exist": true,
+          "must_contain": "L3 timestamp"
+        }
+      ],
       "max_steps": 22,
       "needs": []
     },
     {
       "id": "L4",
       "category": "combo",
-      "instruction": "Multi-app: (1) Take a fullscreen L1 screenshot, (2) count the number of apps pinned in the taskbar (excluding Start, Search, Widgets, Task View), (3) Open Notepad, (4) type 'taskbar pinned count = <N>', (5) save as %USERPROFILE%\\Desktop\\lucid-e2e-L4.txt, (6) reply 'task complete: combo L4 N=<N>'.",
-      "expect_signal": "combo L4",
+      "instruction": "Multi-app: (1) Take a fullscreen L1 screenshot, (2) count the number of apps pinned in the taskbar (excluding Start, Search, Widgets, Task View), (3) Open Notepad, (4) type 'taskbar pinned count = <N>', (5) save as %USERPROFILE%\\Downloads\\Test\\lucid-e2e-L4.txt (create the folder first via run_shell if needed), (6) reply 'task complete: combo L4 N=<N>'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-L4.txt",
+          "must_exist": true,
+          "must_contain": "taskbar pinned count"
+        }
+      ],
       "max_steps": 18,
       "needs": []
     },
     {
       "id": "L5",
       "category": "combo",
-      "instruction": "Multi-app: (1) Open File Explorer to %USERPROFILE%\\Desktop, (2) verify visually that the file 'lucid-e2e-L1.txt' is listed, (3) regardless of result, use run_shell + Test-Path to confirm, (4) reply 'task complete: combo L5 visual=<yes|no> shell=<True|False>'. Do not delete anything.",
-      "expect_signal": "combo L5",
+      "instruction": "Multi-app: (1) Open File Explorer to %USERPROFILE%\\Downloads\\Test, (2) verify visually that the file 'lucid-e2e-L1.txt' is listed, (3) regardless of result, use run_shell + Test-Path to confirm, (4) reply 'task complete: combo L5 visual=<yes|no> shell=<True|False>'. Do not delete anything.",
       "max_steps": 14,
-      "needs": ["after:L1"]
+      "needs": [
+        "after:L1"
+      ]
     },
     {
       "id": "M1",
       "category": "messaging",
       "instruction": "Open WeChat (微信). Once the main window is visible, find the conversation pinned at the very top of the chat list and report its display name. Do NOT open any conversation, do NOT send anything. Reply 'task complete: wechat top=<name>'. If WeChat is not installed or not logged in, reply 'task complete: wechat unavailable' and stop.",
-      "expect_signal": "wechat",
       "max_steps": 12,
-      "needs": ["app:WeChat"]
+      "needs": [
+        "app:WeChat"
+      ]
     },
     {
       "id": "M2",
       "category": "messaging",
       "instruction": "Open WeChat (微信), navigate to the 文件传输助手 (File Transfer) chat with yourself, type the exact text 'lucid-e2e-M2 ping' into the input box but do NOT press Send (do not click the send button, do not press Enter). Take a screenshot to confirm the text is in the box, then clear the input box (Ctrl+A, Delete). Reply 'task complete: wechat dryrun ok'. If WeChat is unavailable, reply 'task complete: wechat unavailable'.",
-      "expect_signal": "wechat",
       "max_steps": 18,
-      "needs": ["app:WeChat"]
+      "needs": [
+        "app:WeChat"
+      ]
     },
     {
       "id": "M3",
       "category": "messaging",
       "instruction": "Open Microsoft Teams. Once the main window is visible, report the name of the currently selected left-rail tab (Activity / Chat / Teams / Calendar / Files / etc.) and the count of unread badge numbers visible across the rail. Reply 'task complete: teams tab=<tab> unread=<N or none>'. If Teams is not installed or not logged in, reply 'task complete: teams unavailable'.",
-      "expect_signal": "teams",
       "max_steps": 12,
-      "needs": ["app:Teams"]
+      "needs": [
+        "app:Teams"
+      ]
     },
     {
       "id": "M4",
       "category": "messaging",
       "instruction": "Open Microsoft Teams, click the Chat tab, find the chat with yourself (or the very first chat in the list if no self-chat exists), and type 'lucid-e2e-M4 dryrun' into the message box but do NOT send. Take a screenshot to confirm. Then clear the box (Ctrl+A, Delete). Reply 'task complete: teams dryrun ok'. If Teams is unavailable, reply 'task complete: teams unavailable'.",
-      "expect_signal": "teams",
       "max_steps": 20,
-      "needs": ["app:Teams"]
+      "needs": [
+        "app:Teams"
+      ]
     },
     {
       "id": "N1",
       "category": "combo",
       "instruction": "Multi-app messaging combo: (1) Use run_shell 'powershell -c (Get-Date).ToString(\"HH:mm\")' to capture the current HH:MM, (2) Open WeChat and navigate to 文件传输助手, (3) type 'lucid-e2e-N1 dryrun at <HH:MM>' into the input box but DO NOT send, (4) screenshot to confirm, (5) clear the box (Ctrl+A, Delete), (6) reply 'task complete: combo N1 ok'. If WeChat is unavailable reply 'task complete: wechat unavailable'.",
-      "expect_signal": "combo N1",
       "max_steps": 22,
-      "needs": ["app:WeChat"]
+      "needs": [
+        "app:WeChat"
+      ]
     },
     {
       "id": "N2",
       "category": "combo",
-      "instruction": "Multi-app: (1) Take a fullscreen screenshot, (2) describe in ONE short Chinese-or-English sentence what application currently has the foreground window, (3) Open Notepad, (4) type 'foreground at start = <that sentence>', (5) save as %USERPROFILE%\\Desktop\\lucid-e2e-N2.txt, (6) reply 'task complete: combo N2 ok'. Do not change focus before step 1.",
-      "expect_signal": "combo N2",
+      "instruction": "Multi-app: (1) Take a fullscreen screenshot, (2) describe in ONE short Chinese-or-English sentence what application currently has the foreground window, (3) Open Notepad, (4) type 'foreground at start = <that sentence>', (5) save as %USERPROFILE%\\Downloads\\Test\\lucid-e2e-N2.txt (create the folder first via run_shell if needed), (6) reply 'task complete: combo N2 ok'. Do not change focus before step 1.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-N2.txt",
+          "must_exist": true,
+          "must_contain": "foreground at start"
+        }
+      ],
       "max_steps": 18,
       "needs": []
     },
     {
       "id": "N3",
       "category": "combo",
-      "instruction": "Multi-app cross-tool: (1) Open Microsoft Teams, (2) read the title of the active window via active_window, (3) Open Notepad, (4) type 'teams window title = <that title>', (5) save as %USERPROFILE%\\Desktop\\lucid-e2e-N3.txt, (6) reply 'task complete: combo N3 ok'. If Teams is unavailable, instead type 'teams unavailable' into Notepad, save, and reply 'task complete: combo N3 fallback'.",
-      "expect_signal": "combo N3",
+      "instruction": "Multi-app cross-tool: (1) Open Microsoft Teams, (2) read the title of the active window via active_window, (3) Open Notepad, (4) type 'teams window title = <that title>', (5) save as %USERPROFILE%\\Downloads\\Test\\lucid-e2e-N3.txt (create the folder first via run_shell if needed), (6) reply 'task complete: combo N3 ok'. If Teams is unavailable, instead type 'teams unavailable' into Notepad, save, and reply 'task complete: combo N3 fallback'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-N3.txt",
+          "must_exist": true
+        }
+      ],
       "max_steps": 22,
-      "needs": ["app:Teams"]
+      "needs": [
+        "app:Teams"
+      ]
     }
   ]
 }

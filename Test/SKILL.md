@@ -18,19 +18,38 @@ zh-CN). The skill itself is in English; only the *outputs* are Chinese.
 
 Exceptions (keep these in English even inside Chinese prose):
 
-- Status enums (`pass` / `fail` / `timeout` / `error` / `no-data` / `ok` /
-  `max_steps` / `cancelled` / `api_error`) and `severity` / `category_of_fix`
-  values (`prompt` / `tool` / `config` / `new-region` / `new-app-spec` /
-  `bug-fix` / `low` / `medium` / `high`) — needed for downstream grep /
-  clustering.
+- Status enums (`pass` / `fail` / `partial` / `timeout` / `error` / `no-data` /
+  `ok` / `max_steps` / `cancelled` / `api_error`) and `severity` /
+  `category_of_fix` values (`prompt` / `tool` / `config` / `new-region` /
+  `new-app-spec` / `bug-fix` / `low` / `medium` / `high`) — needed for
+  downstream grep / clustering.
 - File paths, `thread_id`, command lines, JSON field names (`status`,
-  `final_text`, `expect_signal`, etc.).
+  `final_text`, `expect_files`, `goal_met`, etc.).
 - Quoted `instruction` text — keep verbatim in whatever language it was
   written; do not translate.
 - The subagent prompt's role + output contract block (the
   "You are a VS Code Copilot subagent…" paragraph and the trailing
   `severity:` / `category_of_fix:` two lines) — subagents reply more
   reliably in English to an English contract.
+
+---
+
+## Subagent fan-out is mandatory
+
+**Every thread with a `thread_dir` must be judged by a subagent before
+`report.md` is written.** No inline judgement, no "assumed pass", no
+sampling, no cost-saving carve-outs. The only skip is `thread_dir ==
+null` (verdict is `no-data`, no signal to mine).
+
+Rationale: the goal layer needs `context.log` + screenshots to catch
+claim-vs-reality mismatches; `final_text` alone is not enough. Cutting
+corners here is exactly how a thread that says "task complete" but
+actually clicked the wrong window slips through as `pass`.
+
+If the user explicitly says they only want a partial audit (e.g.
+"只看失败的" / "only check the failures"), confirm with them and add a
+big caveat box at the top of `report.md`. Default behaviour is
+fan-out-everything.
 
 ---
 
@@ -61,33 +80,104 @@ re-read events.jsonl just to recompute them:
 
 ```json
 { "id": "A1", "category": "cognitive", "instruction": "...",
-  "expect_signal": "3297", "thread_id": "thread-...",
+  "thread_id": "thread-...",
   "thread_dir": "C:\\Users\\...\\dev.lucid\\logs\\threads\\thread-...",
   "queued_ms": ..., "ended_ms": ...,
   "status": "ok|max_steps|error|api_error|cancelled",
-  "final_text": "..." }
+  "final_text": "...",
+  "expect_files": [   // optional; copied verbatim from queries.json
+    { "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-B1.txt",
+      "must_exist": true, "must_contain": "hello from lucid e2e B1" }
+  ] }
 ```
+
+Note: there is **no `expect_signal`** field. The skill no longer relies
+on a brittle substring match against `final_text` — instead the **goal
+layer** below is judged by reading the `instruction` + `final_text` and
+asking "does the model's claim plausibly match the asked-for goal?".
+For fast-pass rows the main agent does this inline; for non-pass / slow
+rows a subagent does it with screenshots + context.log in hand. This
+avoids paraphrase traps (e.g. the model says "in Scientific mode"
+instead of the literal phrase "scientific mode confirmed") and
+unavailable-fallback traps (e.g. the model says "excel unavailable" but
+the prompt's literal expect signal was `3297`).
 
 `status` and `final_text` are backfilled at end-of-run. If `status` is
 `null`, the task did not produce a `task_close` event — likely killed by
 the harness or never started; mark as `no-data`.
 
+All file deliverables for this test set live under
+`%USERPROFILE%\Downloads\Test\` (`C:\Users\<user>\Downloads\Test\`).
+Expand the `%USERPROFILE%` env var when you check `expect_files` paths
+on disk.
+
 ## Verdict rules (apply per query)
+
+A query is `pass` only if **all three** layers agree:
+
+1. **Run layer** (manifest, mechanical): `status == "ok"`.
+2. **Goal layer** (AI judgement on `instruction` + `final_text`):
+   reports `goal_met: pass | fail | partial`. For `status=="ok"` fast
+   rows the main agent judges this inline (one cheap reasoning step per
+   row); for non-pass and slow rows a subagent judges it with
+   `context.log` + screenshots in hand. Replaces the old brittle
+   `expect_signal` substring match.
+3. **Deliverables layer** (`expect_files`, mechanical, when present):
+   every entry passes its file check on disk.
 
 ```
 verdict =
-  pass     if status == "ok"
-              AND expect_signal (lowercase) is in final_text (lowercase)
-              AND no negative marker in final_text
-  fail     if status == "ok" but expect_signal missing OR negative marker present
-  timeout  if status == "max_steps"
-  error    if status in ("error", "api_error", "cancelled")
-  no-data  if status is null
+  pass         if status == "ok"
+                  AND goal_met == "pass"
+                  AND every expect_files entry passes (see below)
+  fail         if status == "ok" AND goal_met == "pass"
+                  but at least one expect_files entry FAILS its disk check
+                  (mark as fail with a `交付文件不符` reason)
+  fail         if status == "ok" but goal_met == "fail"
+                  (record the subagent's one-line reason)
+  partial      if status == "ok" AND goal_met == "partial"
+                  (informational — counted separately, not as pass)
+  timeout      if status == "max_steps"
+  error        if status in ("error", "api_error", "cancelled")
+  no-data      if status is null
 ```
 
-Negative markers: `task failed`, `任务失败`, `无法完成`, `cannot complete`.
-Positive markers (only used as a soft fallback when `expect_signal == ""`):
-`task complete`, `任务完成`.
+**Goal-layer rubric** (applies whether you're judging inline or via
+subagent):
+
+- `goal_met: pass` — the `final_text` (cross-checked against
+  `context.log` / step screenshots if anything looks suspicious)
+  demonstrates that the task's goal was achieved. Paraphrases are fine
+  ("in Scientific mode" ≡ "scientific mode confirmed"). The advertised
+  *unavailable* fallback for messaging / office tasks (`<app>
+  unavailable` when the app isn't installed / signed in) counts as
+  `pass` — the task is supposed to gracefully bail in that case.
+- `goal_met: partial` — the model did some of the work but not all
+  (e.g. opened the app and located the right cell but never typed the
+  formula; reached the WeChat input box but didn't paste the text).
+- `goal_met: fail` — the model claims success in chat but cross-checks
+  show it didn't actually do it (clicked wrong contact, typed in the
+  wrong window, hallucinated a reading of the screen, etc.); or the
+  model gave up / crashed without completing.
+
+**Deliverables check** (per `expect_files` entry):
+
+- Expand `%USERPROFILE%` (use the harness host's value — `C:\Users\<user>`).
+- `must_exist: true` → path must exist (file or dir).
+- `must_exist: false` → path must NOT exist.
+- `must_contain: "<sub>"` (only meaningful when `must_exist: true`) →
+  read the file as UTF-8 / UTF-16 (BOM-aware; Notepad on Windows defaults
+  to UTF-8 + BOM since Win11) and assert the substring is present
+  case-insensitively. If decoding fails on every common encoding,
+  treat as a check failure with `文件编码未识别` in the reason.
+- For dry-run / no-side-effect tasks (no `expect_files` present), the
+  deliverables layer is vacuously satisfied.
+
+When a query downgrades from `pass` to `fail` purely because of the
+deliverables layer, surface that explicitly in the report row's `reason`
+column (e.g. `交付文件缺失: lucid-e2e-C1.txt` /
+`交付内容不符: lucid-e2e-L1.txt 缺子串 "Lucid combo L1"`). The model can
+claim "task complete" all it wants — if the file isn't there, it lied.
 
 `duration_s = (ended_ms - queued_ms) / 1000` if both are present.
 
@@ -100,82 +190,56 @@ Positive markers (only used as a soft fallback when `expect_signal == ""`):
 
 ## Procedure
 
-### Step 1 — Read overview
+1. §1 — Read manifest, compute mechanical layers (run + deliverables),
+   bucket rows.
+2. §2 — Fan out one subagent **per thread with a `thread_dir`**.
+   Each returns `goal_met` + hot-spot / wasted-work / one-fix analysis.
+3. §3 — Combine the three layers into the final verdict, then write
+   `report.md` and `iteration-plan.md`.
+
+### Step 1 — Read overview (mechanical)
 
 1. Read `<run_dir>/manifest.json`.
-2. For each query compute verdict + duration_s + `exec_s`. Keep the table
-   in your scratch buffer.
-3. Aggregate:
-   - `pass / fail / timeout / error / no-data` counts
-   - `pass_rate`
-   - `p50 / p95 / max` of `exec_s` over **passing** queries only
-4. (Optional) If `<baseline_dir>` was given, do the same for it and compute
-   per-id `Δ duration_s`. Flag regressions where `Δduration > 30%`.
+2. For each query compute `duration_s` + `exec_s`, the **run layer**
+   (`status == "ok"`?) and the **deliverables layer** (every `expect_files`
+   entry passes its disk check?). Capture the deliverables-failure reason
+   string when applicable. Keep this in your scratch buffer — you cannot
+   compute the final verdict yet because the goal layer hasn't run.
+3. Provisional bucketing for **fan-out ordering** in Step 2:
+   - `provisional_fail`: `status != "ok"` (timeout / error / no-data),
+     OR deliverables layer failed.
+   - `provisional_pass_slow`: `status == "ok"` AND deliverables OK AND
+     `exec_s > p95` (over `status==ok` rows; cap p95 at 5 entries).
+   - `provisional_pass_fast`: everything else.
+4. (Optional) If `<baseline_dir>` was given, do the same for it and
+   compute per-id `Δ duration_s`. Flag regressions where
+   `Δduration > 30%`.
 
 > Don't compute per-thread step / image / tool-call counts in §1 — those
-> are subagent territory. Only do them if you have time.
+> are subagent territory.
 
-### Step 2 — Write `report.md` (Chinese prose)
+### Step 2 — Fan out one subagent per thread (ALL threads)
 
-Write `<run_dir>/report.md` with these sections, in this order. Translate
-the section labels below to Chinese in the actual file (template shown in
-English here for clarity):
+Fan out **one subagent per query that has a `thread_dir`** — including
+fast passes. Rationale: every thread needs a goal-layer judgement
+(otherwise the verdict can't be finalized), and fast passes can still
+hide wasted screenshots / redundant tool calls / opportunities to add
+an app-spec seed tip.
 
-```markdown
-# E2E 报告 —— <run_dir name>
-
-## §1 汇总表
-| id | category | verdict | status | exec_s | wall_s | expect | events |
-|---|---|---|---|---:|---:|---|---|
-| A1 | cognitive | **pass** | ok | 4.2 | 4.2 | ✓ | [events](<thread_dir>/events.jsonl) |
-| ... |
-
-## §2 总量
-- 总数：N，pass P，fail F，timeout T，error E，no-data D
-- 通过率：PCT%
-- 通过任务的 exec_s：p50 = ...，p95 = ...，max = ...
-
-## §3 基线对比（仅当用户提供 baseline 时）
-| id | now | prev | Δ duration_s | regressed |
-| ... |
-
-## §4 失败 / 超时 / 出错的线程
-For each non-pass thread: id, verdict, status, instruction (truncated),
-link to events.jsonl. Do NOT inline events here — subagents read them.
-
-## §5 慢尾（exec_s above p95）
-List them so §3 fan-out covers slow passes too, not just failures.
-
-## §6 下一步
-"运行 Step 3（subagent fan-out）拿改进建议。"
-
-## §7 下一轮重跑命令
-把本轮 **非 pass**（fail / timeout / error / no-data 且有 thread_dir）
-外加 **慢尾**（exec_s > p95，最多 5 条）的 id 拼成一条命令，方便用户直接
-复制粘贴跑下一轮（可选地先把对应修复落地）：
-
-```powershell
-.\.venv\Scripts\python.exe Test\run.py --only <id1>,<id2>,...
-```
-
-如果一条都没有（全 pass 且没有慢尾），写一行 `本轮全过且无慢尾，无需重跑`。
-```
-
-### Step 3 — Fan out one subagent per relevant thread
-
-Threads to fan out:
-- **All** failed / timeout / error / no-data-with-thread-dir threads
-  (highest signal).
-- **Plus the slow tail**: passing threads with `exec_s > p95`, capped at 5
-  to avoid swamping the IDE.
-- Skip fast passes — the subagent will just say "nothing to fix".
+- Skip only queries with `thread_dir == null` (never started — verdict
+  is `no-data`, no signal to mine).
+- Order: `provisional_fail` first, then `provisional_pass_slow`, then
+  `provisional_pass_fast`. The high-signal subagents finish first and
+  the user sees actionable bullets in chat sooner.
+- **Concurrency**: launch in batches of 4–6 to avoid swamping the IDE.
+  For runs with > 30 threads, expect this step to dominate wall-time;
+  proceed anyway — that's the point. **Do NOT short-circuit by
+  judging fast passes inline.**
 
 For each selected query call `runSubagent`:
 
 - `description`: `"E2E analyze <id>"` (English).
 - `prompt`: the template below, fully filled in.
-
-**Concurrency**: launch in batches of 4–6. Failures first, slow-tail last.
 
 > Also write the same prompt to `<run_dir>/subagent-prompts/<id>.md` so a
 > human can re-trigger one subagent later without re-running this skill.
@@ -184,16 +248,16 @@ For each selected query call `runSubagent`:
 
 The "scene info" block is in Chinese (easier for the human to skim
 on disk); the role + output contract is English so the subagent reliably
-ends with the two machine-readable lines.
+ends with the three machine-readable lines.
 
 ```markdown
 # E2E 线程分析 —— <id>（<category>）
 
 **任务指令**：<instruction>
 
-**结果**：`<verdict>` · status=`<status>` · exec_s=<exec_s> · wall_s=<wall_s>
+**机械层初步判断**：status=`<status>` · exec_s=<exec_s> · wall_s=<wall_s>
 
-**期望信号**：`<expect_signal>` —— <HIT|MISS>
+**交付文件检查**：<无 / 依次列出每个 expect_files 项及 ✓✗ 与原因>
 
 **final_text**：
 ```
@@ -201,36 +265,147 @@ ends with the two machine-readable lines.
 ```
 
 **事件文件**：`<thread_dir>\events.jsonl`
+**人类可读日志**：`<thread_dir>\context.log`（按步带 LLM 文字 + 工具调用 + 工具结果）
+**步骤截图**：`<thread_dir>\step-*.png`（如 `step-001-post-active_window.png`）—— 至少抽看 2~3 张关键节点的图
 
 ---
 
-You are a VS Code Copilot subagent. Read the events.jsonl above (one JSON
-event per line; use read_file with large line ranges). Then answer 3
-questions in **Simplified Chinese**, **each ≤ 60 Chinese characters**:
+You are a VS Code Copilot subagent. Investigate this single Lucid thread
+and produce a short Chinese diagnosis **plus a goal-layer verdict**.
+
+**Required reading** (use `read_file` with large line ranges; don't make
+many small reads):
+
+1. `events.jsonl` — machine-readable timeline (one JSON event per line).
+   Look for `tool_call` / `tool_result` / `step_start` / `step_summary` /
+   `assistant_text` / `task_close`.
+2. `context.log` — the same timeline rendered for humans, includes the
+   model's narration. Often clearer for spotting "model was confused".
+3. **At least 2–3 `step-*.png` screenshots** via `view_image`. Pick:
+   - the screenshot just before the first failure / longest step, AND
+   - the final screenshot before `task_close`, AND
+   - any screenshot the model's narration calls out as wrong / surprising.
+   Even on a passing thread, glance at one mid-run screenshot to check
+   whether the model wasted clicks on UI it could have skipped.
+
+First, **judge the goal layer**: did the task achieve the goal stated
+in the `instruction`? Use the rubric:
+
+- `pass` — the deliverable / observation matches what the instruction
+  asked for. Paraphrases are fine. The advertised `<app> unavailable`
+  fallback (when the app isn't installed / signed in) counts as `pass`.
+- `partial` — part of the multi-step instruction was done but not all.
+- `fail` — the model claims success in chat but cross-checks (context.log
+  + screenshots) show it didn't actually do it (clicked wrong target,
+  typed in the wrong window, hallucinated a screen reading, etc.); or
+  the model gave up / errored out without completing.
+
+Then answer 3 questions in **Simplified Chinese**, **each ≤ 60 Chinese
+characters**:
 
 1. **热点 (Hot spot)** — which step burned the most time, and why?
    (clicked wrong / waited for screenshot / LLM thinking loop / tool retry /
    vision misread / real desktop interference). Cite the step number(s).
+   For a fast pass, instead answer: "哪一步还能再省时间？"
 2. **浪费 (Wasted work)** — any step we could have skipped? (repeated
    screenshots, should have used a meta tool instead of vision, unnecessary
-   wait, etc.)
+   wait, redundant `active_window` after a click that already auto-attached
+   one, etc.) Reference the screenshot(s) you viewed if the waste is
+   visible there.
 3. **一个修复 (One fix)** — a single concrete change Lucid could make.
    Pick one of: `prompt` / `tool` / `config` / `new-region` /
    `new-app-spec` / `bug-fix`, and say exactly what to change.
 
-Finish with **two lines, exactly** (English, machine-readable):
+Finish with **three lines, exactly** (English, machine-readable):
 
 ```
+goal_met: pass|partial|fail
 severity: low|medium|high
 category_of_fix: prompt|tool|config|new-region|new-app-spec|bug-fix
 ```
 
-Do not write anything after those two lines.
+Do not write anything after those three lines. If you cannot determine
+`goal_met` (e.g. the thread has no `task_close` / `final_text` is empty),
+still emit the line as `goal_met: fail` and put the reason in the
+一个修复 answer.
 ```
 
-### Step 4 — Aggregate subagent replies
+### Step 3 — Finalize verdicts + write `report.md`
 
-1. Build a table: `id | verdict | severity | category_of_fix | one-line fix`.
+Now combine the three layers per query:
+
+```
+final_verdict =
+  no-data      if status is null
+  timeout      if status == "max_steps"
+  error        if status in ("error", "api_error", "cancelled")
+  fail         if status == "ok" AND goal_met == "fail"
+  partial      if status == "ok" AND goal_met == "partial"
+  fail         if status == "ok" AND goal_met == "pass"
+                  AND any expect_files entry FAILS its disk check
+                  (reason: 交付文件缺失 / 交付内容不符 / 文件编码未识别)
+  pass         if status == "ok" AND goal_met == "pass"
+                  AND every expect_files entry passes
+```
+
+If a subagent's reply did NOT end with a parseable `goal_met:` line,
+treat its `goal_met` as `fail` and put `subagent 未给出 goal_met` in the
+`reason` column (this should be rare — the prompt is explicit).
+
+Aggregate:
+
+- `pass / partial / fail / timeout / error / no-data` counts
+- `pass_rate` (pass only — partial does not count as pass)
+- `p50 / p95 / max` of `exec_s` over `final_verdict == "pass"` rows only
+- (Optional) baseline `Δ duration_s` table if `<baseline_dir>` was given
+
+Write `<run_dir>/report.md` (Chinese; template in English for clarity):
+
+```markdown
+# E2E 报告 —— <run_dir name>
+
+## §1 汇总表
+| id | category | verdict | status | exec_s | wall_s | goal | files | reason | events |
+|---|---|---|---|---:|---:|---|---|---|---|
+| A1 | cognitive | **pass**    | ok | 4.2  | 4.2  | pass    | —  | | [events](<thread_dir>/events.jsonl) |
+| C1 | notepad   | **fail**    | ok | 38.1 | 41.0 | pass    | ✗  | 交付文件缺失 lucid-e2e-C1.txt | [events](...) |
+| D2 | calculator| **partial** | ok | 12.0 | 12.4 | partial | —  | 切到 Scientific 但未输入 sin(30) | [events](...) |
+| ... |
+
+## §2 总量
+- 总数：N，pass P，partial Pa，fail F，timeout T，error E，no-data D
+- 通过率：PCT%（仅 pass 计入）
+- 通过任务的 exec_s：p50 = ...，p95 = ...，max = ...
+
+## §3 基线对比（仅当用户提供 baseline 时）
+| id | now | prev | Δ duration_s | regressed |
+| ... |
+
+## §4 失败 / 超时 / 出错 / partial 的线程
+For each non-pass thread: id, final_verdict, status, goal_met,
+instruction (truncated), the subagent's 一个修复 line,
+link to events.jsonl. Do NOT inline events here.
+
+## §5 慢尾（exec_s above p95）
+通过任务里 exec_s 落在 p95 以上的列出来 —— 这些虽然过了但值得看是否能加速。
+
+## §6 下一步
+指向 `iteration-plan.md`。
+
+## §7 下一轮重跑命令
+把本轮 **非 pass**（fail / partial / timeout / error / no-data 且有
+thread_dir）外加 **慢尾**（exec_s > p95，最多 5 条）的 id 拼成一条命令：
+
+```powershell
+.\.venv\Scripts\python.exe Test\run.py --only <id1>,<id2>,...
+```
+
+如果一条都没有（全 pass 且没有慢尾），写一行 `本轮全过且无慢尾，无需重跑`。
+```
+
+### Step 4 — Aggregate subagent replies for the iteration plan
+
+1. Build a table: `id | final_verdict | goal_met | severity | category_of_fix | one-line fix`.
 2. Cluster by `category_of_fix` and count.
 3. **High-leverage fixes**: any concrete fix proposed by ≥ 2 subagents
    (paraphrase liberally — "wait for window" and "add settle delay" should
@@ -286,7 +461,9 @@ fixes to land.
   may *write* the three artifacts above into it, nothing else).
 - Do not delete failed runs even if they look broken — they may carry the
   most signal.
-- If a subagent reply does not end with the two `severity:` /
-  `category_of_fix:` lines, drop it from the aggregate (don't guess).
+- If a subagent reply does not end with the three `goal_met:` /
+  `severity:` / `category_of_fix:` lines, treat its `goal_met` as `fail`
+  (per Step 3) and drop its severity / category_of_fix from the
+  aggregate (don't guess).
 - If `<run_dir>/iteration-plan.md` already exists, overwrite it (this skill
   is the source of truth for that file).

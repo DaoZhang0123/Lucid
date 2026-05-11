@@ -172,8 +172,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="path to queries.json")
     parser.add_argument("--only", default="",
                         help="comma-separated query ids to run")
-    parser.add_argument("--global-timeout", type=int, default=60 * 60,
-                        help="hard cap in seconds for the whole run")
+    parser.add_argument("--global-timeout", type=int, default=120 * 60,
+                        help="hard cap in seconds for the whole run (default 120 min; 48 queries serial typically take 65–80 min)")
     parser.add_argument("--enqueue-gap-ms", type=int, default=300,
                         help="delay between successive start_task calls")
     parser.add_argument("--poll-interval", type=float, default=5.0,
@@ -242,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
                 "id": q["id"],
                 "category": q.get("category", ""),
                 "instruction": q["instruction"],
-                "expect_signal": q.get("expect_signal", ""),
+                "expect_files": q.get("expect_files"),
                 "max_steps_soft": q.get("max_steps"),
                 "thread_id": tid,
                 "thread_dir": str(threads_root / tid) if tid else None,

@@ -9,6 +9,7 @@ https://docs.claude.com/en/docs/build-with-claude/computer-use
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -242,6 +243,19 @@ class ComputerTool:
             adj = self._maybe_unscreen_coord(cap, ix, iy)
             if adj is not None:
                 params["coordinate"] = [adj[0], adj[1]]
+                # Breadcrumb: the model gave screen-pixel coords; we
+                # silently translated them to image-pixel. Surface this
+                # in stderr (-> run.log) so a stale-local-variable
+                # regression like the 20260511 WeChat click bug is
+                # caught at a glance instead of needing math.
+                print(
+                    f"[coord_unscreened] {action} ({ix},{iy}) screen-pixel "
+                    f"-> ({adj[0]},{adj[1]}) image-pixel "
+                    f"(cap level={cap.level.value} sent={cap.sent_size} "
+                    f"raw={cap.raw_size} offset={cap.offset})",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 return None
             ox, oy = cap.offset
             rw, rh = cap.raw_size
@@ -325,6 +339,11 @@ class ComputerTool:
         bounds_err = self._check_coord_bounds(a, p)
         if bounds_err is not None:
             return bounds_err
+        # _check_coord_bounds may have rewritten p["coordinate"] (e.g.
+        # _maybe_unscreen_coord translating a screen-pixel guess back into
+        # image-pixel). Re-read so the click handlers below see the fixed
+        # value, not the stale original we captured a few lines up.
+        coord = p.get("coordinate")
 
         if a == "screenshot":
             level = _parse_level(p.get("level"))

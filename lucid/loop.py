@@ -495,9 +495,10 @@ class Agent:
                 last_exc = e
                 kind = "connection"
             except APIStatusError as e:
-                # 仅重试 5xx（8xx 不存在但以防万一）
+                # 重试 5xx，以及 499（nginx/网关层 "Client Closed Request"，
+                # 通常是网关空闲超时或瞬时断流，不是真的 4xx 业务错误）。
                 status = getattr(e, "status_code", 0) or 0
-                if status < 500:
+                if status < 500 and status != 499:
                     raise
                 last_exc = e
                 kind = f"http{status}"

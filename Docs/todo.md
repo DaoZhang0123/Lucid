@@ -156,6 +156,7 @@
 - [x] **初始化**: 有一些电脑上的配置，比如查看任务栏之类的，会影响到taskbar notify的功能，最好用一个任务来代替用户完成配置。任务等级可以弄成最低
 - [x] **scheduler**: 定时任务可以加一个按钮，启动测试
 - [x] **theme**: light/dark theme（2026-05-09）：[lib/theme.ts](app/src/lib/theme.ts) 持久化 `localStorage["lucid.theme"]`，默认跟随 `prefers-color-scheme`；`+layout.svelte` 调 `setupTheme()` 在子页面渲染前同步落 `<html data-theme>`，并集中放 `:global(html[data-theme="dark"] ...)` 重涂常见表面（body / footer / .bubble.assistant / .row / .chip / textarea/input/select / .tool / final-* / code / .hint / scope-bar / ConfirmModal），各页面 `<style>` 不必逐个改。主页 header 加 🌙/☀️ 按钮（i18n key `header.theme_toggle` 三语齐）。
+- [x] **蟹钳鼠标**: Lucid移动鼠标的时候鼠标变成一个蟹钳，提醒用户这是由Lucid操纵的
 
 ---
 

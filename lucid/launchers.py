@@ -374,6 +374,21 @@ def _send_hotkey(combo: Any) -> None:
             pyautogui.press(combo)
 
 
+def _wait_for_windows(spec: dict[str, Any], timeout: float = 1.5, interval: float = 0.1) -> list[WindowMatch]:
+    """Poll `_find_windows(spec)` up to `timeout` seconds; return the first
+    non-empty result, or `[]` if the deadline elapses. Used after we trigger
+    a launch (hotkey / URI / exe) so that slow-painting windows like WeChat's
+    main panel get a fair chance to appear before we declare failure."""
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        wins = _find_windows(spec)
+        if wins:
+            return wins
+        if time.monotonic() >= deadline:
+            return []
+        time.sleep(interval)
+
+
 def launch_app(cfg: LaunchersConfig, name: str) -> dict[str, Any]:
     """Try to start / focus an app. Returns a structured result dict."""
     spec = get_launcher(cfg, name)
@@ -410,17 +425,44 @@ def launch_app(cfg: LaunchersConfig, name: str) -> dict[str, Any]:
     if shortcut:
         try:
             _send_hotkey(shortcut)
-            time.sleep(0.4)
-            wins2 = _find_windows(spec)
-            return {
-                "ok": True,
-                "method": "shortcut",
-                "slug": slug,
-                "name": spec.get("name", slug),
-                "shortcut": shortcut,
-                "hwnd": (wins2[0].hwnd if wins2 else None),
-                "message": f"launched {spec.get('name', slug)} via shortcut {shortcut!r}",
-            }
+            wins2 = _wait_for_windows(spec, timeout=1.5)
+            note = ""
+            if not wins2:
+                # Many app hotkeys (e.g. WeChat's Ctrl+Alt+W) are TOGGLES:
+                # if the app's main window was already visible but our title /
+                # process matcher missed it in step 1, the hotkey just *hid* it.
+                # Detection: nothing visible after the hotkey + a generous
+                # wait. Recovery: send the same hotkey again to toggle back
+                # on, then poll once more. This is harmless when the first
+                # press was a real "show" that simply hadn't painted yet —
+                # in that case the second press would hide it again, BUT we
+                # only re-send when wins2 is empty, so by definition there
+                # was nothing to hide.
+                _send_hotkey(shortcut)
+                wins2 = _wait_for_windows(spec, timeout=1.5)
+                if wins2:
+                    note = " (hotkey is a toggle; first press hid an existing window, second press restored it)"
+            if wins2:
+                w = wins2[0]
+                _force_foreground(w.hwnd)
+                return {
+                    "ok": True,
+                    "method": "shortcut",
+                    "slug": slug,
+                    "name": spec.get("name", slug),
+                    "shortcut": shortcut,
+                    "hwnd": w.hwnd,
+                    "window_title": w.title,
+                    "pid": w.pid,
+                    "message": f"launched {spec.get('name', slug)} via shortcut {shortcut!r}{note}",
+                }
+            # No window after two attempts → fall through to next launch
+            # method, but remember the hint.
+            last_err = (
+                f"shortcut {shortcut!r} fired but no matching window appeared "
+                f"within 3s (hotkey may not be registered, or app failed to start); "
+                f"trying next method"
+            )
         except Exception as e:
             last_err = f"shortcut failed: {e}"
         else:
@@ -434,8 +476,9 @@ def launch_app(cfg: LaunchersConfig, name: str) -> dict[str, Any]:
         try:
             # Use start via cmd so URIs like ms-settings: get routed correctly.
             subprocess.Popen(["cmd", "/c", "start", "", uri], shell=False)
-            time.sleep(0.4)
-            wins2 = _find_windows(spec)
+            wins2 = _wait_for_windows(spec, timeout=1.5)
+            if wins2:
+                _force_foreground(wins2[0].hwnd)
             return {
                 "ok": True,
                 "method": "uri",
@@ -453,8 +496,9 @@ def launch_app(cfg: LaunchersConfig, name: str) -> dict[str, Any]:
     if exe:
         try:
             subprocess.Popen(exe, shell=True)
-            time.sleep(0.5)
-            wins2 = _find_windows(spec)
+            wins2 = _wait_for_windows(spec, timeout=2.0)
+            if wins2:
+                _force_foreground(wins2[0].hwnd)
             return {
                 "ok": True,
                 "method": "exe",
