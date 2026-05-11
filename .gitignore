@@ -16,3 +16,7 @@ pip_install.log
 # Runtime data
 logs/
 *.log
+
+# E2E test runs (per-machine artifacts: manifest.json, sidecar.stderr.log,
+# report.md, subagent-prompts/, iteration-plan.md, screenshots, etc.)
+Test/runs/
