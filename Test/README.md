@@ -51,7 +51,7 @@ level; subagents pull them from `events.jsonl` if relevant.
 
 ---
 
-## 1. The query set (48 queries)
+## 1. The query set (57 queries)
 
 File: [queries.json](queries.json). Each entry:
 
@@ -81,28 +81,31 @@ start-menu fallback) for each:
 |---|---|---|---|
 | A | cognitive | 2 | Pure reasoning, `read_file` meta tool (no GUI) |
 | B | fileio | 3 | `write_file` / `read_file` / `run_shell` trio |
-| C | notepad | 2 | **Notepad** (notepad.exe): launch + keyboard input + Save-As dialog (C1 saves, C2 dry-run) |
+| C | notepad | 2 | **Notepad** (notepad.exe): launch + keyboard input + Save-As dialog (both C1 and C2 save to disk) |
 | D | calculator | 2 | **Calculator** (calc.exe): standard arithmetic via clicks (D1) + Scientific-mode switch (D2) |
 | E | explorer | 2 | **File Explorer** (explorer.exe): GUI navigation + count subfolders (E1); `run_shell` create/delete cycle (E2) |
-| F | browser | 2 | **Microsoft Edge** (msedge.exe): example.com load (F1) + DuckDuckGo search (F2) |
+| F | browser | 3 | **Microsoft Edge** (msedge.exe): example.com load (F1) + Bing GUI search (F2) + `read_webpage` headless Bing search (F3) |
 | G | vscode | 2 | `run_shell` line-count (G1) + `Select-String` grep (G2) — VS Code-shaped tasks done via shell |
 | H | settings | 2 | **Settings** (Win+I): Display resolution (H1) + System > About (H2) — hardest vision class |
 | I | multi-step | 2 | Cross-tool / cross-app: shell→write→read chain (I1); fullscreen + taskbar pinned-icon read (I2) |
 | J | resilience | 1 | Deliberate "app not installed" branch — must stop, not loop |
-| K | app | 11 | Single-app coverage: **Edge** (about:blank title, K1) / **Paint** (mspaint, draw a stroke, K2) / **Snipping Tool** (SnippingTool / ScreenSketch, K3) / **Task Manager** (taskmgr, top process row, K4) / **VS Code** (Code, title bar, K5) / **Clock / tray clock flyout** (K6) / Downloads sort via `run_shell` (K7) / **Sticky Notes** (StikyNot, K8) / **Windows Terminal** (wt.exe, with PowerShell fallback, K9) / **Photos** (Microsoft.Photos, K10) / **Mail** (Windows Mail, K11) |
+| K | app | 11 | Single-app coverage: **Edge** (about:blank title, K1) / **Paint** (mspaint, draw stroke + save PNG, K2) / **Snipping Tool** (SnippingTool / ScreenSketch, K3) / **Task Manager** (taskmgr, top process row, K4) / **VS Code** (Code, title bar, K5) / **Clock / tray clock flyout** (K6) / Downloads sort via `run_shell` (K7) / **Sticky Notes** (StikyNot, K8) / **Windows Terminal** (wt.exe, with PowerShell fallback, K9) / **Photos** (Microsoft.Photos, K10) / **Mail** (Windows Mail, K11) |
 | L | combo | 5 | **Multi-app chains**: Notepad+`read_file` verify (L1) / Edge→`write_file` persist (L2) / shell→Notepad timestamp (L3) / fullscreen→Notepad pinned-count (L4) / Notepad+Explorer visual+shell double-check (L5) |
-| M | messaging | 4 | **WeChat (微信)** + **Microsoft Teams**, all dry-run (type but never send; Ctrl+A Delete after screenshot): WeChat top-pinned chat name (M1) / WeChat 文件传输助手 dry-type (M2) / Teams left-rail tab + unread (M3) / Teams self-chat dry-type (M4); each has a not-installed / not-signed-in fallback |
-| N | combo (with messaging) | 3 | shell→WeChat 文件传输助手 timestamp dry-run (N1) / fullscreen foreground-detect→Notepad (N2) / Teams title→Notepad (N3) |
-| O | office | 5 | **Microsoft Office desktop apps**, all dry-run (no save / no send): **Word** (winword, type into blank doc, read title, O1) / **Excel** (excel, =137*24+9 in A1, O2) / **PowerPoint** (powerpnt, blank deck + title, O3) / **Outlook** (outlook, read top inbox subject, do NOT open it, O4) / **OneNote** (onenote, type on a fresh page, O5); each has an unavailable fallback |
+| M | messaging | 4 | **WeChat (微信)** + **Microsoft Teams**: read-only probes do NOT send (M1 WeChat top-pinned chat name / M3 Teams left-rail tab + unread); self-chat probes DO send end-to-end since the recipient is yourself (M2 WeChat 文件传输助手 ping + Enter / M4 Teams self-chat ping + Enter); each has a not-installed / not-signed-in fallback |
+| N | combo (with messaging) | 3 | shell→WeChat 文件传输助手 self-send (N1) / fullscreen foreground-detect→Notepad (N2) / Teams title→Notepad (N3) |
+| O | office | 5 | **Microsoft Office desktop apps** — exercise the full save path: **Word** (winword, type + Ctrl+S → lucid-e2e-O1.docx) / **Excel** (excel, =137*24+9 in A1 + save lucid-e2e-O2.xlsx) / **PowerPoint** (powerpnt, blank deck + title + save lucid-e2e-O3.pptx) / **Outlook** (outlook, read-only top inbox subject, O4) / **OneNote** (onenote, type on a fresh page, auto-saves, O5); each has an unavailable fallback |
+| P | combo (search + app) | 8 | **Bing search × app**, two paths per target app: HEADLESS (`read_webpage` on `bing.com/search?q=...`) and GUI (Edge GUI search box). Notepad save (P1 headless / P2 GUI) / Excel A1+B1 save (P3 headless / P4 GUI) / Teams self-chat send (P5 headless / P6 GUI) / WeChat 文件传输助手 self-send (P7 headless / P8 GUI). All Teams/WeChat targets are self-chats so Send is exercised end-to-end. |
 
 > A single failure is not fatal — analysis handles them individually.
 > L/N standardize the "open X, do Y, verify with Z" chains from the
-> README examples (closest to real usage). M only verifies "can we reach
-> the input box and type"; it never produces an outgoing message.
-> O similarly only verifies "can we open the Office app and interact";
-> it never persists a file (Don't Save on close) and never sends mail.
-> If an Office app or a messaging client is not installed / not signed in,
-> the `<app> unavailable` fallback scores as a (degraded) pass — see §4.
+> README examples (closest to real usage). M exercises the full input
+> path; for self-chats (M2 / M4) Send/Enter is pressed end-to-end
+> because the recipient is you. P exercises search×app integration
+> across both the headless `read_webpage` path and the GUI Bing path,
+> with the messaging targets (P5–P8) also self-sending. O queries save
+> to disk so the Save dialog / Ctrl+S path is covered. If an Office
+> app or a messaging client is not installed / not signed in, the
+> `<app> unavailable` fallback scores as a (degraded) pass — see §4.
 
 ---
 
@@ -126,7 +129,7 @@ start-menu fallback) for each:
    first task that needs the folder will `mkdir` it). Don't pre-create
    the folder either — the agent should learn to do that itself.
 
-### Step B — Run the queries (25–60 min depending on model)
+### Step B — Run the queries (30–80 min depending on model)
 
 ```powershell
 cd d:\Project\Lucid
@@ -139,7 +142,7 @@ Optional flags:
 # Run only specific ids (debug / re-run failures from previous round)
 .\.venv\Scripts\python.exe Test\run.py --only A1,B2,L1,M3
 
-# Bigger global timeout (default 120 min — 48 queries serial typically take 65–80 min)
+# Bigger global timeout (default 120 min — 57 queries serial typically take 75–95 min)
 .\.venv\Scripts\python.exe Test\run.py --global-timeout 10800
 
 # Cancel the current task if its events.jsonl has not advanced for N
@@ -157,7 +160,7 @@ What `run.py` does (one paragraph):
 1. `subprocess.Popen(["python", "-m", "lucid", "--sidecar"])`; stdin/stdout
    carry NDJSON JSON-RPC frames.
 2. Wait for sidecar's `{"event":"ready"}`.
-3. `start_task` 48 times in order (300 ms apart). The sidecar's internal
+3. `start_task` 57 times in order (300 ms apart). The sidecar's internal
    priority queue runs them one at a time — `run.py` is **only an
    enqueuer**, not a scheduler.
 4. Persist `manifest.json` to `Test/runs/<YYYYmmdd-HHMMSS>/`, one entry
@@ -175,7 +178,7 @@ What `run.py` does (one paragraph):
 You'll see something like:
 
 ```
-[run.py] sidecar ready; enqueueing 48 queries
+[run.py] sidecar ready; enqueueing 57 queries
 [run.py] enqueued  A1 → thread-... (running)
 [run.py] enqueued  A2 → thread-... (pos=1)
 ...
@@ -229,7 +232,7 @@ Copilot will, per `SKILL.md`:
    .\.venv\Scripts\python.exe Test\run.py --only <ids the skill computed>
    ```
 
-   Comma-separated, no spaces. Much faster than re-running all 48 while
+   Comma-separated, no spaces. Much faster than re-running all 57 while
    you're iterating on a fix.
 
 ---
@@ -248,7 +251,7 @@ Per-iteration minimum bar:
 
 ## 4. Known limits / TODO
 
-- Sidecar is a single worker — 48 queries run **serially**. Concurrency
+- Sidecar is a single worker — 57 queries run **serially**. Concurrency
   needs a worker pool, plus a way to keep GUI-foreground tasks from
   fighting (only `run_shell` / `read_file` / `write_file` are safe to
   parallelize).
@@ -256,6 +259,10 @@ Per-iteration minimum bar:
   Outlook / OneNote) both depend on the client being installed and signed
   in. Not-installed / not-signed-in falls into the `<app> unavailable`
   branch which scores as pass — note that's a **degraded** pass.
+- Category M / N / P self-chat queries (M2, M4, N1, P5–P8) press Send/Enter
+  end-to-end — messages persist in your own 文件传输助手 / Teams self-chat
+  transcript. That is intentional (the recipient is you) but expect the
+  chat history to grow with each run.
 - `run.py` deliberately doesn't talk to the Tauri app; running both
   simultaneously would spawn two sidecars.
 - Baseline comparison currently only diffs `duration_s` (no step count —
@@ -267,7 +274,7 @@ Per-iteration minimum bar:
 
 | File | Role |
 |---|---|
-| [queries.json](queries.json) | The 48 standard queries; append new ones, never remove old ids |
+| [queries.json](queries.json) | The 57 standard queries; append new ones, never remove old ids |
 | [run.py](run.py) | Enqueuer + manifest writer; the only executable entry point |
 | [SKILL.md](SKILL.md) | The skill VS Code Copilot uses to do analysis |
 | [README.md](README.md) | This document |

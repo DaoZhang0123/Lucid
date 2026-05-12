@@ -124,6 +124,15 @@ LAUNCH_APP_SCHEMA: dict = {
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Launcher slug (e.g. 'wechat', 'vscode', 'chrome', 'explorer', 'settings')."},
+                "page": {
+                    "type": "string",
+                    "description": (
+                        "Optional URI suffix for apps that support deep-links. Appended to the app's base URI: "
+                        "e.g. for `settings`, page='display' opens `ms-settings:display` directly (skipping the home page); "
+                        "page='network' → `ms-settings:network`. When set, focus-existing-window is skipped so the deep-link "
+                        "actually navigates. Ignored on apps that don't have a URI launcher."
+                    ),
+                },
             },
             "required": ["name"],
         },
@@ -175,6 +184,21 @@ FOCUS_WINDOW_SCHEMA: dict = {
             },
             "required": ["title_substring"],
         },
+    },
+}
+
+GET_WINDOW_TITLE_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "get_window_title",
+        "description": (
+            "Return the exact title string of the **currently focused (foreground) window** — read directly via "
+            "Win32 `GetWindowTextW`, no screenshot, no OCR, no shell. Use whenever the task is 'what's the title of "
+            "the active window?' / 'what document is open in <app>?' / verifying which file the editor is editing — "
+            "this is faster, exact, and avoids both shell-quoting bugs (PowerShell `$_.MainWindowTitle | Where ...`) "
+            "and OCR truncation. Also useful right after `focus_window` / `launch_app` to confirm the right window came up."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
     },
 }
 
@@ -583,6 +607,7 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
         out.append(LIST_APPS_SCHEMA)
         out.append(CHECK_APP_RUNNING_SCHEMA)
         out.append(FOCUS_WINDOW_SCHEMA)
+        out.append(GET_WINDOW_TITLE_SCHEMA)
         out.append(UPDATE_LAUNCHER_SCHEMA)
     if getattr(cfg, "regions", None) and cfg.regions.enabled:
         out.append(REGION_SCHEMA)
@@ -682,7 +707,8 @@ def dispatch_meta_tool(
         if not name:
             return ToolResult(error="name required")
 
-        result = launchers_mod.launch_app(cfg.launchers, name)
+        page = (args.get("page") or "").strip() or None
+        result = launchers_mod.launch_app(cfg.launchers, name, page=page)
         # On success, also append the app's tips body so the model gets it for free.
         out_lines = [f"launch_app: {result.get('message', '')}"]
         for k in ("ok", "method", "slug", "hwnd", "pid", "window_title"):
@@ -799,6 +825,13 @@ def dispatch_meta_tool(
             output=info.get("message", ""),
             error=None if info.get("ok") else info.get("message"),
         )
+
+    if fn_name == "get_window_title" and getattr(cfg, "launchers", None) and cfg.launchers.enabled:
+        from .window import active_window
+        info = active_window()
+        if info is None:
+            return ToolResult(error="no foreground window (or non-Windows host)")
+        return ToolResult(output=f"foreground window title: {info.title!r}")
 
     if fn_name == "update_launcher" and getattr(cfg, "launchers", None) and cfg.launchers.enabled:
         name = (args.get("name") or "").strip()

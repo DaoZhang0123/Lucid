@@ -1,6 +1,8 @@
-"""E2E harness — feed the 20 queries to a fresh `lucid --sidecar` process and
-record where each thread landed. The sidecar's own priority queue does the
-scheduling; we are merely an enqueuer + a poller.
+"""E2E harness — feed the queries to a fresh `lucid --sidecar` process one
+at a time. We send `start_task` for query N, poll `get_status` until that
+thread is no longer the running worker, then move on to query N+1. This
+way you can watch a single task run start-to-finish without an opaque
+queue piling up ahead of it.
 
 Usage::
 
@@ -43,6 +45,60 @@ RUNS_ROOT = REPO_ROOT / "Test" / "runs"
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _log(msg: str) -> None:
+    """Print a line prefixed with the current HH:MM:SS so a stuck task is
+    obvious from the terminal scrollback. All harness prints go through
+    this so the user can tell at a glance whether a `running…` line was
+    written 5 seconds ago or 50 minutes ago."""
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def _snapshot_expect_files(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Stat every `expect_files` spec right now and return a per-spec record
+    of (exists / size / mtime / contains_match). Used by the harness to pin
+    deliverables state at task-close time, so a later task that deletes the
+    same path cannot retroactively flip an earlier task's verdict.
+    """
+    out: list[dict[str, Any]] = []
+    for spec in specs or []:
+        path_raw = spec.get("path") or ""
+        path = os.path.expandvars(path_raw)
+        rec: dict[str, Any] = {
+            "path": path_raw,
+            "resolved": path,
+            "must_exist": bool(spec.get("must_exist", True)),
+            "must_contain": spec.get("must_contain"),
+            "snapshot_ms": _now_ms(),
+        }
+        try:
+            st = os.stat(path)
+            rec["exists"] = True
+            rec["size"] = st.st_size
+            rec["mtime_ms"] = int(st.st_mtime * 1000)
+        except (FileNotFoundError, NotADirectoryError):
+            rec["exists"] = False
+        except OSError as exc:
+            rec["exists"] = False
+            rec["stat_error"] = str(exc)
+        if rec.get("exists") and rec.get("must_contain"):
+            sub = str(rec["must_contain"])
+            data: str | None = None
+            for enc in ("utf-8-sig", "utf-8", "utf-16", "gbk", "cp1252"):
+                try:
+                    with open(path, "r", encoding=enc) as f:
+                        data = f.read()
+                    break
+                except (UnicodeError, OSError):
+                    continue
+            if data is None:
+                rec["contains_match"] = None
+                rec["decode_failed"] = True
+            else:
+                rec["contains_match"] = sub.lower() in data.lower()
+        out.append(rec)
+    return out
 
 
 def _load_queries(path: Path, only: list[str] | None) -> list[dict[str, Any]]:
@@ -149,8 +205,34 @@ class SidecarClient:
                 {"id": rid, "method": method, "params": params},
                 ensure_ascii=False,
             )
-            self.proc.stdin.write(payload + "\n")
-            self.proc.stdin.flush()
+            # Watchdog: if the sidecar wedges and stops draining stdin, the
+            # OS pipe buffer (~64 KB on Windows) eventually fills and a
+            # plain `stdin.write` will block forever — the `timeout=` below
+            # only governs the read side. Push the write into a worker
+            # thread and time it out so we surface a TimeoutError instead
+            # of deadlocking the harness on L-something forever.
+            write_done = threading.Event()
+            write_exc: list[BaseException] = []
+
+            def _do_write() -> None:
+                try:
+                    assert self.proc and self.proc.stdin
+                    self.proc.stdin.write(payload + "\n")
+                    self.proc.stdin.flush()
+                except BaseException as exc:  # noqa: BLE001
+                    write_exc.append(exc)
+                finally:
+                    write_done.set()
+
+            t = threading.Thread(target=_do_write, name="sidecar-stdin-write", daemon=True)
+            t.start()
+            if not write_done.wait(timeout=max(2.0, min(timeout, 10.0))):
+                raise TimeoutError(
+                    f"RPC {method} stdin.write blocked >"
+                    f"{max(2.0, min(timeout, 10.0)):.0f}s (sidecar pipe full?)"
+                )
+            if write_exc:
+                raise RuntimeError(f"RPC {method} stdin.write failed: {write_exc[0]}")
         deadline = time.time() + timeout
         with self._cv:
             while rid not in self._results:
@@ -175,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--global-timeout", type=int, default=120 * 60,
                         help="hard cap in seconds for the whole run (default 120 min; 48 queries serial typically take 65–80 min)")
     parser.add_argument("--enqueue-gap-ms", type=int, default=300,
-                        help="delay between successive start_task calls")
+                        help="(deprecated, ignored — tasks now run strictly serially)")
     parser.add_argument("--poll-interval", type=float, default=5.0,
                         help="seconds between get_status polls")
     parser.add_argument("--per-task-cap", type=int, default=20 * 60,
@@ -183,9 +265,9 @@ def main(argv: list[str] | None = None) -> int:
                              "not been updated for this many seconds (queue "
                              "keeps going)")
     parser.add_argument("--queue-idle-cap", type=int, default=10 * 60,
-                        help="bail out the whole run if neither the running "
-                             "thread nor the queue length has changed for "
-                             "this many seconds (sidecar truly wedged)")
+                        help="(deprecated, ignored — only one task is in "
+                             "flight at a time now; per-task-cap is what "
+                             "matters)")
     args = parser.parse_args(argv)
 
     only = [x for x in (args.only or "").split(",") if x.strip()]
@@ -214,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if not client.ready.wait(timeout=45):
             raise SystemExit("sidecar did not emit `ready` within 45s")
-        print(f"[run.py] sidecar ready; enqueueing {len(queries)} queries")
+        _log(f"sidecar ready; running {len(queries)} queries serially")
 
         manifest: dict[str, Any] = {
             "run_id": run_id,
@@ -225,152 +307,254 @@ def main(argv: list[str] | None = None) -> int:
         }
         write_manifest(manifest)
 
-        for q in queries:
-            res = client.send(
-                "start_task",
-                {
+        def _events_mtime(tdir: str | None) -> float:
+            if not tdir:
+                return 0.0
+            ev = Path(tdir) / "events.jsonl"
+            try:
+                return ev.stat().st_mtime
+            except (FileNotFoundError, OSError):
+                return 0.0
+
+        def _has_task_close(tdir: str | None) -> bool:
+            """Cheap fallback for "task done" when RPC is stale: tail the
+            events.jsonl and look for a task_close event near the end. We
+            only scan the last ~32KB so it stays cheap on long threads."""
+            if not tdir:
+                return False
+            ev = Path(tdir) / "events.jsonl"
+            try:
+                size = ev.stat().st_size
+                with ev.open("rb") as f:
+                    if size > 32_768:
+                        f.seek(-32_768, 2)
+                    tail = f.read().decode("utf-8", errors="replace")
+            except (FileNotFoundError, OSError):
+                return False
+            for line in reversed(tail.splitlines()):
+                if not line.strip():
+                    continue
+                try:
+                    evt = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if evt.get("event") == "task_close":
+                    return True
+            return False
+
+        total = len(queries)
+        global_deadline = time.time() + args.global_timeout
+        aborted_reason: str | None = None
+
+        for idx, q in enumerate(queries, start=1):
+            tag = f"[query = {idx}/{total}] {q['id']}"
+            if time.time() > global_deadline:
+                _log(f"{tag} skipped — global-timeout reached")
+                aborted_reason = "global_timeout"
+                break
+            if client.proc is not None and client.proc.poll() is not None:
+                _log(f"{tag} skipped — sidecar process has exited (code {client.proc.returncode})")
+                aborted_reason = "sidecar_died"
+                break
+
+            _log(f"{tag} → start_task: {q['instruction'][:80]}")
+            try:
+                res = client.send(
+                    "start_task",
+                    {
+                        "instruction": q["instruction"],
+                        "autonomy": "full",
+                        # `max_steps` in queries.json is an analytical "soft
+                        # budget"; allow some overshoot for the agent loop.
+                        "max_steps": int(q.get("max_steps") or 30) * 2 + 10,
+                    },
+                    timeout=20,
+                ) or {}
+            except Exception as exc:
+                _log(f"{tag} start_task RPC failed: {exc}; recording harness_error")
+                manifest["queries"].append({
+                    "id": q["id"],
+                    "category": q.get("category", ""),
                     "instruction": q["instruction"],
-                    "autonomy": "full",
-                    # Hard cap for the agent loop. `max_steps` in queries.json
-                    # is an analytical "soft budget"; allow some overshoot.
-                    "max_steps": int(q.get("max_steps") or 30) * 2 + 10,
-                },
-                timeout=20,
-            ) or {}
+                    "expect_files": q.get("expect_files"),
+                    "max_steps_soft": q.get("max_steps"),
+                    "thread_id": None,
+                    "thread_dir": None,
+                    "queued_ms": _now_ms(),
+                    "queue_position": None,
+                    "started_immediately": False,
+                    "status": "harness_error",
+                    "final_text": f"start_task RPC failed: {exc}",
+                })
+                write_manifest(manifest)
+                if client.proc is not None and client.proc.poll() is not None:
+                    aborted_reason = "sidecar_died_during_enqueue"
+                    break
+                # The sidecar is alive but wedged — its main thread isn't
+                # servicing RPCs. If we just `continue`, every subsequent
+                # start_task will also time out, and eventually the OS
+                # stdin pipe fills (~64 KB) and the next `stdin.write`
+                # deadlocks the harness for hours (the L4 hang). Kill the
+                # wedged sidecar and start a fresh one so the rest of the
+                # suite can still run. Each restart is reported in the
+                # manifest via the harness_error rows above.
+                _log(f"{tag} sidecar appears wedged; restarting it for next query")
+                try:
+                    if client.proc is not None and client.proc.poll() is None:
+                        client.proc.kill()
+                        try:
+                            client.proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            pass
+                except Exception as kexc:
+                    _log(f"{tag} sidecar kill failed: {kexc}")
+                client = SidecarClient(stderr_log)
+                try:
+                    client.start()
+                    if not client.ready.wait(timeout=45):
+                        _log(f"{tag} fresh sidecar did not emit `ready` within 45s; aborting run")
+                        aborted_reason = "sidecar_restart_failed"
+                        break
+                    _log(f"{tag} fresh sidecar ready; resuming")
+                except Exception as sexc:
+                    _log(f"{tag} sidecar restart failed: {sexc}; aborting run")
+                    aborted_reason = "sidecar_restart_failed"
+                    break
+                continue
+
             tid = res.get("thread_id")
-            entry = {
+            tdir = str(threads_root / tid) if tid else None
+            entry: dict[str, Any] = {
                 "id": q["id"],
                 "category": q.get("category", ""),
                 "instruction": q["instruction"],
                 "expect_files": q.get("expect_files"),
                 "max_steps_soft": q.get("max_steps"),
                 "thread_id": tid,
-                "thread_dir": str(threads_root / tid) if tid else None,
+                "thread_dir": tdir,
                 "queued_ms": _now_ms(),
                 "queue_position": res.get("position"),
                 "started_immediately": bool(res.get("started")),
             }
             manifest["queries"].append(entry)
-            mark = "running" if res.get("started") else f"pos={res.get('position')}"
-            print(f"[run.py] enqueued {q['id']:>3} → {tid} ({mark})")
             write_manifest(manifest)
-            time.sleep(args.enqueue_gap_ms / 1000.0)
+            _log(f"{tag} thread={tid}; waiting for completion")
 
-        print(f"[run.py] all enqueued; polling every {args.poll_interval:.1f}s")
+            # Wait for THIS task to finish before sending the next one.
+            cur_mtime = _events_mtime(tdir)
+            cur_mtime_seen_at = time.time()
+            cancelled = False
+            last_log = time.time()
+            while True:
+                if time.time() > global_deadline:
+                    _log(f"{tag} global-timeout reached while waiting; bailing out")
+                    aborted_reason = "global_timeout"
+                    break
+                if client.proc is not None and client.proc.poll() is not None:
+                    _log(f"{tag} sidecar process exited (code {client.proc.returncode}); bailing out")
+                    aborted_reason = "sidecar_died"
+                    break
 
-        # Map thread_id -> manifest entry, so we can resolve events.jsonl path
-        # given just a tid (used by stuck detection below).
-        tid_to_entry: dict[str, dict[str, Any]] = {
-            e["thread_id"]: e for e in manifest["queries"] if e.get("thread_id")
-        }
-
-        def _events_mtime(tid: str | None) -> float:
-            if not tid:
-                return 0.0
-            entry = tid_to_entry.get(tid)
-            if not entry:
-                return 0.0
-            tdir = entry.get("thread_dir")
-            if not tdir:
-                return 0.0
-            ev = Path(tdir) / "events.jsonl"
-            try:
-                return ev.stat().st_mtime
-            except FileNotFoundError:
-                return 0.0
-            except OSError:
-                return 0.0
-
-        deadline = time.time() + args.global_timeout
-        # Per-task progress: when did the current thread's events.jsonl last
-        # grow? If `--per-task-cap` seconds pass with no growth, cancel that
-        # ONE task (sidecar moves on to the next) — do NOT shutdown the run.
-        cur_tid: str | None = None
-        cur_mtime: float = 0.0
-        cur_mtime_seen_at: float = time.time()
-        cancelled_tids: set[str] = set()
-        # Queue-level wedge: neither tid nor queue_len has changed in a long
-        # time AND no events progress either. Triggers a hard abort.
-        last_qlen = -1
-        queue_unchanged_since = time.time()
-
-        while True:
-            if time.time() > deadline:
-                print("[run.py] global-timeout hit; bailing out")
-                manifest["aborted"] = "global_timeout"
-                break
-            try:
-                st = client.send("get_status", {}, timeout=10) or {}
-            except Exception as exc:
-                print(f"[run.py] get_status failed: {exc}; retrying")
-                time.sleep(args.poll_interval)
-                continue
-            running = st.get("running")
-            current_tid = st.get("current_thread_id")
-            qlen = len(st.get("queue") or [])
-            if not running and qlen == 0:
-                print("[run.py] queue drained, no worker running — done")
-                break
-
-            # Track current task's events.jsonl mtime
-            now = time.time()
-            if current_tid != cur_tid:
-                cur_tid = current_tid
-                cur_mtime = _events_mtime(current_tid)
-                cur_mtime_seen_at = now
-                print(f"[run.py] running={current_tid} queue_len={qlen}")
-            else:
-                m = _events_mtime(current_tid)
+                # ALWAYS update events.jsonl mtime first, BEFORE any RPC.
+                # The sidecar's RPC dispatch can starve under heavy GUI load
+                # (screenshot / click takes seconds while the worker holds
+                # the main thread); if we tied the idle clock to get_status
+                # success, a healthy task that's actively writing events
+                # would look idle just because the RPC reply is slow.
+                now = time.time()
+                m = _events_mtime(tdir)
                 if m > cur_mtime:
                     cur_mtime = m
                     cur_mtime_seen_at = now
 
-            # Per-task stuck → cancel just this one
-            if (
-                current_tid
-                and current_tid not in cancelled_tids
-                and now - cur_mtime_seen_at > args.per_task_cap
-            ):
-                print(
-                    f"[run.py] per-task-cap ({args.per_task_cap}s) hit on "
-                    f"{current_tid}; cancelling this task, queue continues"
-                )
                 try:
-                    client.send("cancel", {}, timeout=10)
+                    st = client.send("get_status", {}, timeout=10) or {}
+                    rpc_ok = True
                 except Exception as exc:
-                    print(f"[run.py] cancel RPC failed: {exc}")
-                cancelled_tids.add(current_tid)
-                # Reset the per-task clock so we don't immediately re-cancel
-                # in case the cancel takes a few seconds to take effect.
-                cur_mtime_seen_at = now
+                    if client.proc is not None and client.proc.poll() is not None:
+                        _log(f"{tag} sidecar process exited; bailing out")
+                        aborted_reason = "sidecar_died"
+                        break
+                    # Don't retry-continue: events.jsonl growth is enough
+                    # signal that the task is alive. Just log and proceed
+                    # so per-task-cap / log cadence still see real progress.
+                    _log(f"{tag} get_status failed: {exc} "
+                         f"(events still growing? mtime_age="
+                         f"{int(now - cur_mtime_seen_at)}s)")
+                    st = {}
+                    rpc_ok = False
 
-            # Queue-level wedge: queue length stuck AND no events activity
-            if qlen != last_qlen:
-                last_qlen = qlen
-                queue_unchanged_since = now
-            stuck = (
-                now - queue_unchanged_since > args.queue_idle_cap
-                and now - cur_mtime_seen_at > args.queue_idle_cap
-            )
-            if stuck:
-                print(
-                    f"[run.py] queue-idle-cap ({args.queue_idle_cap}s) hit "
-                    f"with no events progress; bailing out"
-                )
-                manifest["aborted"] = "stuck"
+                current_tid = st.get("current_thread_id") if rpc_ok else None
+                running = st.get("running") if rpc_ok else None
+                # Done when RPC succeeded AND there is no running worker AND
+                # our tid is not the current one anymore. (`current_thread_id`
+                # clears once the worker finishes the task.) When RPC keeps
+                # failing we cannot tell — fall back to "no events growth +
+                # per-task-cap elapsed" as the kill switch.
+                if rpc_ok and not running and current_tid != tid:
+                    break
+                # RPC-stale fallback: if events.jsonl already contains a
+                # task_close event for this thread, the task is done and we
+                # should move on regardless of the wedged RPC.
+                if not rpc_ok and _has_task_close(tdir):
+                    _log(f"{tag} task_close seen on disk while RPC was stale; advancing")
+                    break
+
+                if now - last_log >= max(args.poll_interval * 4, 20.0):
+                    rpc_tag = "" if rpc_ok else " [rpc-stale]"
+                    _log(f"{tag} running… (idle {int(now - cur_mtime_seen_at)}s){rpc_tag}")
+                    last_log = now
+
+                # Per-task-cap fires on real events idleness, regardless of
+                # RPC health. current_tid may be None when RPC is stale —
+                # don't gate the cancel on it.
+                if (
+                    not cancelled
+                    and now - cur_mtime_seen_at > args.per_task_cap
+                ):
+                    _log(
+                        f"{tag} per-task-cap ({args.per_task_cap}s) hit with "
+                        f"no events progress; cancelling this task"
+                    )
+                    try:
+                        client.send("cancel", {}, timeout=10)
+                    except Exception as exc:
+                        _log(f"{tag} cancel RPC failed: {exc}")
+                    cancelled = True
+                    cur_mtime_seen_at = now
+
+                time.sleep(args.poll_interval)
+
+            if aborted_reason:
                 break
+            # Snapshot expect_files on disk at this exact moment, BEFORE the
+            # next task can mutate them (B3 delete-after-B1 was the canonical
+            # bug: B1 wrote the file correctly, B3 deleted it as part of its
+            # own goal, then end-of-run deliverables check saw "missing" and
+            # blamed B1). The skill's report.md trusts this snapshot over a
+            # post-hoc disk read.
+            entry["deliverables_snapshot"] = _snapshot_expect_files(
+                q.get("expect_files") or []
+            )
+            _log(f"{tag} done")
 
-            time.sleep(args.poll_interval)
-
+        if aborted_reason:
+            manifest["aborted"] = aborted_reason
         manifest["ended_ms"] = _now_ms()
         # Backfill end-of-task info by scanning each thread's events.jsonl
         # while the sidecar is still up (file handles are flushed on close()).
+        # Threads that never produced a task_close (sidecar died mid-run, etc.)
+        # are tagged `no_close` so analysis can tell them apart from genuine
+        # task failures.
         for q in manifest["queries"]:
+            if q.get("status") == "harness_error":
+                continue
             tdir = q.get("thread_dir")
             if not tdir:
                 continue
             ev_path = Path(tdir) / "events.jsonl"
             if not ev_path.exists():
+                q.setdefault("status", "no_events")
                 continue
             close_evt = None
             try:
@@ -390,9 +574,11 @@ def main(argv: list[str] | None = None) -> int:
                 q["status"] = close_evt.get("status")
                 q["final_text"] = close_evt.get("final_text")
                 q["ended_ms"] = close_evt.get("ts_ms")
+            else:
+                q.setdefault("status", "no_close")
 
         write_manifest(manifest)
-        print(f"[run.py] done. manifest: {manifest_path}")
+        _log(f"done. manifest: {manifest_path}")
         return 0
     finally:
         client.stop()

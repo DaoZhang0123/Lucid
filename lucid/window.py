@@ -15,6 +15,16 @@ class WindowInfo:
     width: int
     height: int
 
+    @property
+    def right(self) -> int:
+        # Exclusive right edge, matches Win32 RECT semantics: rect.right = left + width.
+        return self.left + self.width
+
+    @property
+    def bottom(self) -> int:
+        # Exclusive bottom edge, matches Win32 RECT semantics: rect.bottom = top + height.
+        return self.top + self.height
+
 
 def active_window() -> WindowInfo | None:
     if sys.platform != "win32":

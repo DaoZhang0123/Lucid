@@ -138,7 +138,14 @@ class ComputerTool:
                             "items": {"type": "integer"},
                             "minItems": 2,
                             "maxItems": 2,
-                            "description": "[x, y] in the most recent screenshot's pixel coordinates.",
+                            "description": (
+                                "[x, y] in the most recent screenshot's pixel coordinates. "
+                                "For `left_click_drag` this is the DESTINATION of the drag — the cursor's "
+                                "CURRENT position is used as the start, so you MUST issue a `mouse_move` "
+                                "(or a left_click that lands you on the start) just before the drag; calling "
+                                "`left_click_drag` without first moving the cursor will silently drag from "
+                                "wherever the cursor happens to be (often nowhere useful)."
+                            ),
                         },
                         "text": {
                             "type": "string",
@@ -281,7 +288,11 @@ class ComputerTool:
                 sx, sy = cap.model_to_screen(ix, iy)
             except Exception:
                 return None
-            err = self._validate_click_in_foreground(sx, sy)
+            try:
+                err = self._validate_click_in_foreground(sx, sy)
+            except Exception:
+                # Guard must never turn into a fake tool error — fail open.
+                err = None
             if err is not None:
                 return ToolResult(error=err)
         return None
@@ -304,14 +315,29 @@ class ComputerTool:
             win = active_window()
         except Exception:
             return None
-        if win is None or win.width <= 0 or win.height <= 0:
+        if win is None:
+            return None
+        # Read rect via getattr so a stale build that's missing the
+        # `right`/`bottom` properties does NOT raise AttributeError and turn a
+        # legitimate click into a fake "tool error" sent back to the model.
+        # If anything is off, fail-open (return None == allow the click).
+        try:
+            left = int(win.left)
+            top = int(win.top)
+            width = int(win.width)
+            height = int(win.height)
+            right = int(getattr(win, "right", left + width))
+            bottom = int(getattr(win, "bottom", top + height))
+        except Exception:
+            return None
+        if width <= 0 or height <= 0:
             # Lock screen / secure desktop / no foreground — don't block.
             return None
-        if win.left <= sx < win.right and win.top <= sy < win.bottom:
+        if left <= sx < right and top <= sy < bottom:
             return None
         return (
             f"click ({sx},{sy}) is outside foreground window "
-            f"'{win.title}' rect ({win.left},{win.top})-({win.right},{win.bottom}); refusing. "
+            f"'{getattr(win, 'title', '?')}' rect ({left},{top})-({right},{bottom}); refusing. "
             f"If this is intentional (e.g. clicking a notification or another window), "
             f"call action='screenshot' with level='fullscreen' first to re-orient."
         )

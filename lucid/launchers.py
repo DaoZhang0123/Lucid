@@ -389,7 +389,7 @@ def _wait_for_windows(spec: dict[str, Any], timeout: float = 1.5, interval: floa
         time.sleep(interval)
 
 
-def launch_app(cfg: LaunchersConfig, name: str) -> dict[str, Any]:
+def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict[str, Any]:
     """Try to start / focus an app. Returns a structured result dict."""
     spec = get_launcher(cfg, name)
     if spec is None:
@@ -401,11 +401,63 @@ def launch_app(cfg: LaunchersConfig, name: str) -> dict[str, Any]:
         )}
     slug = spec["slug"]
 
+    # If `page` is provided, the caller wants a URI deep-link (e.g.
+    # ms-settings:display) — skip the focus-existing path and go straight to
+    # the URI step, otherwise the existing window is brought up at its current
+    # page and the deep-link is silently ignored.
+    page_clean = (page or "").strip()
+    if page_clean and spec.get("uri"):
+        deeplink_uri = f"{spec['uri']}{page_clean}"
+        try:
+            subprocess.Popen(["cmd", "/c", "start", "", deeplink_uri], shell=False)
+            wins2 = _wait_for_windows(spec, timeout=2.0)
+            if wins2:
+                _force_foreground(wins2[0].hwnd)
+            return {
+                "ok": True,
+                "method": "uri_deeplink",
+                "slug": slug,
+                "name": spec.get("name", slug),
+                "uri": deeplink_uri,
+                "page": page_clean,
+                "hwnd": (wins2[0].hwnd if wins2 else None),
+                "message": f"launched {spec.get('name', slug)} via uri {deeplink_uri}",
+            }
+        except Exception as e:
+            return {"ok": False, "method": "uri_deeplink", "slug": slug,
+                    "uri": deeplink_uri, "message": f"uri deep-link failed: {e}"}
+
     # Step 1: already-running window → focus
     wins = _find_windows(spec)
     if wins:
         w = wins[0]
         ok = _force_foreground(w.hwnd)
+        msg = (
+            f"activated existing window of {spec.get('name', slug)} "
+            f"(hwnd=0x{w.hwnd:x}, pid={w.pid}); SetForegroundWindow={'ok' if ok else 'soft-fail'}"
+        )
+        extra: dict[str, Any] = {}
+        # For browsers, surface whether the *existing* instance has CDP enabled.
+        # If it doesn't, an `--remote-debugging-port=9222` flag was not on the
+        # original launch and `read_webpage(active_tab=true)` will time out —
+        # tell the model now so it can degrade to a screenshot+OCR path.
+        if slug in ("chrome", "edge"):
+            try:
+                from .webread import cdp_probe
+                cdp_ok = cdp_probe(port=9222, timeout_s=0.4)
+            except Exception:
+                cdp_ok = False
+            extra["cdp_available"] = cdp_ok
+            if cdp_ok:
+                msg += "; CDP enabled at :9222 (read_webpage(active_tab=true) OK)"
+            else:
+                msg += (
+                    "; CDP NOT enabled on this existing instance — "
+                    "read_webpage(active_tab=true) WILL FAIL. To enable: close ALL "
+                    f"{slug} windows, then call launch_app('{slug}') again so we can "
+                    "start it with --remote-debugging-port=9222. Otherwise use a "
+                    "screenshot/OCR path for content."
+                )
         return {
             "ok": True,
             "method": "focus_existing_window",
@@ -414,10 +466,8 @@ def launch_app(cfg: LaunchersConfig, name: str) -> dict[str, Any]:
             "hwnd": w.hwnd,
             "window_title": w.title,
             "pid": w.pid,
-            "message": (
-                f"activated existing window of {spec.get('name', slug)} "
-                f"(hwnd=0x{w.hwnd:x}, pid={w.pid}); SetForegroundWindow={'ok' if ok else 'soft-fail'}"
-            ),
+            "message": msg,
+            **extra,
         }
 
     # Step 2: shortcut

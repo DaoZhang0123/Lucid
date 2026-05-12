@@ -294,6 +294,23 @@ def _cdp_list_tabs(port: int = 9222, timeout_s: float = 2.0) -> list[dict[str, A
     return data
 
 
+def cdp_probe(port: int = 9222, timeout_s: float = 0.4) -> bool:
+    """Quick TCP probe of the CDP /json/version endpoint.
+
+    Returns True iff the browser at ``port`` is listening with the DevTools
+    protocol enabled. Used by ``launch_app`` for chrome/edge to tell the model
+    *up front* whether ``read_webpage(active_tab=true)`` will work, instead of
+    making it discover the closed port via a 25 s timeout later.
+    """
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/json/version", timeout=timeout_s
+        ) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def _cdp_pick_tab(tabs: list[dict[str, Any]], url_match: str | None = None) -> dict[str, Any]:
     pages = [t for t in tabs if t.get("type") == "page"]
     if not pages:

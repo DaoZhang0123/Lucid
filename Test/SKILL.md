@@ -162,6 +162,14 @@ subagent):
 
 **Deliverables check** (per `expect_files` entry):
 
+- **First, prefer `q["deliverables_snapshot"]` if present.** Since 2026-05-12
+  the harness pins each task's expect_files state at task-close time
+  (`exists` / `size` / `mtime_ms` / `contains_match` / `decode_failed`).
+  Trust this over a fresh disk read — a later task in the same run may
+  have deleted / overwritten the same path on purpose (B3 deletes the
+  file B1 wrote; without the snapshot, B1 looks like a fail).
+- Fall back to a fresh disk read (the rules below) only when
+  `deliverables_snapshot` is absent (older runs).
 - Expand `%USERPROFILE%` (use the harness host's value — `C:\Users\<user>`).
 - `must_exist: true` → path must exist (file or dir).
 - `must_exist: false` → path must NOT exist.
@@ -357,12 +365,43 @@ Aggregate:
 - `pass / partial / fail / timeout / error / no-data` counts
 - `pass_rate` (pass only — partial does not count as pass)
 - `p50 / p95 / max` of `exec_s` over `final_verdict == "pass"` rows only
+- **Runtime totals (always required, do not skip)**:
+  - `total_wall_s` = `max(ended_ms) - manifest.started_ms` (from
+    `<run_dir>/manifest.json`; convert ms → s; also format as `Xm Ys`).
+  - `threads_with_ended_ms` = count of queries with non-null `ended_ms`
+    vs total (e.g. `32 / 48`). Mention any threads missing `ended_ms`
+    here so the harness-liveness story is visible at a glance.
+  - `ok_exec_sum_s` = sum of `exec_s` over `status == "ok"` rows.
+  - `parallelism_ratio` = `ok_exec_sum_s / total_wall_s` (≈ 1.0 means
+    fully serial; > 1 means real parallelism). Add a one-line note when
+    `wall ≈ exec_sum + slow_outliers` so the reader sees obvious
+    serialization.
+  - `slow_tail_share` = `sum(exec_s of rows where exec_s > p95) / total_wall_s`
+    as a percent. Flag when ≥ 30%.
 - (Optional) baseline `Δ duration_s` table if `<baseline_dir>` was given
 
 Write `<run_dir>/report.md` (Chinese; template in English for clarity):
 
 ```markdown
 # E2E 报告 —— <run_dir name>
+
+## §0 Runtime Stats（必填，源：manifest.json + _scratch/mech.json）
+| 指标 | 值 |
+|------|-----|
+| run started | <YYYY-MM-DD HH:MM:SS from manifest.started_ms> |
+| last thread ended | <max ended_ms> |
+| **total wall-clock** | **<X> s ≈ <Xm Ys>** |
+| 派发完成的线程 | <ended_count> / <total>（说明缺 ended_ms 的线程，如 harness 中途死亡） |
+| ok 线程数（mech） | <N> |
+| ok 线程 exec_s 总和 | <S> s ≈ <Xm Ys>（约占 wall 的 <pct>%） |
+| ok 线程 exec_s 平均 | <avg> s |
+| ok 线程 exec_s p50 / p95 / max | <p50> / <p95> / <max> s |
+| max wall_s | <max wall_s>（哪条 id） |
+| 慢尾合计 / 占 wall | <slow_sum>s / <pct>% |
+
+观察：
+- 串行/并行：当 `ok_exec_sum + slow_outliers ≈ wall` 时显式指出"完全串行，无并行收益"。
+- harness liveness：若有线程缺 `ended_ms`，列出 id 段并给出最后存活的 id（与 §6 hand-off 呼应）。
 
 ## §1 汇总表
 | id | category | verdict | status | exec_s | wall_s | goal | files | reason | events |
@@ -376,6 +415,7 @@ Write `<run_dir>/report.md` (Chinese; template in English for clarity):
 - 总数：N，pass P，partial Pa，fail F，timeout T，error E，no-data D
 - 通过率：PCT%（仅 pass 计入）
 - 通过任务的 exec_s：p50 = ...，p95 = ...，max = ...
+- 全 run wall-clock：<X> s（详见 §0）
 
 ## §3 基线对比（仅当用户提供 baseline 时）
 | id | now | prev | Δ duration_s | regressed |
@@ -457,8 +497,27 @@ fixes to land.
 
 ## Constraints
 
-- Do not re-run `run.py`. Analysis is read-only on the run directory (you
-  may *write* the three artifacts above into it, nothing else).
+- Do not re-run `run.py`. Analysis is read-only on the source code
+  outside `<run_dir>`. **All intermediate / scratch files** (one-off
+  Python composer scripts, mechanical-layer JSON dumps, prompt
+  generators, etc.) **must be written inside `<run_dir>` itself** —
+  never under `Test/`, `lucid/`, or the workspace root. This way the
+  whole run is self-contained: the user can keep, archive, or delete
+  the run directory as a unit, and there is nothing to clean up
+  afterwards. Suggested layout:
+
+  ```
+  <run_dir>/
+    manifest.json              # written by run.py
+    sidecar.stderr.log         # written by run.py
+    subagent-prompts/<id>.md   # one per thread, written by §2
+    _scratch/                  # any helper .py / .json this skill creates
+    report.md                  # final, written by §3
+    iteration-plan.md          # final, written by §5
+  ```
+
+  Do NOT delete `_scratch/` after composing — it is part of the run's
+  audit trail and lets a human re-run a single composer step later.
 - Do not delete failed runs even if they look broken — they may carry the
   most signal.
 - If a subagent reply does not end with the three `goal_met:` /
