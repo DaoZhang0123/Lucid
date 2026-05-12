@@ -1,5 +1,5 @@
 {
-  "version": 11,
+  "version": 16,
   "notes": "Standing E2E queries — re-run every iteration. SKILL.md keys on `id`. All file deliverables go to %USERPROFILE%\\Downloads\\Test\\ (NOT the desktop). Each query has only an `instruction` (and optional `expect_files`). Verdict is computed by the SKILL: (1) Run layer = manifest.status == 'ok'; (2) Goal layer = a per-thread subagent reads instruction + final_text (+ context.log if needed) and judges whether the task's goal was achieved (goal_met = pass / fail / partial); (3) Deliverables layer = each `expect_files` entry passes its disk check (existence + optional must_contain substring). Categories: cognitive / fileio / notepad / calculator / explorer / browser / vscode / settings / multi-step / resilience / app (single-app coverage: Edge / Paint / Snipping Tool / Task Manager / VS Code / Clock / Downloads sort / Sticky Notes / Windows Terminal / Photos / Mail) / office (Word / Excel / PowerPoint / Outlook / OneNote — all dry-run, read-only or transient) / messaging (WeChat / Teams, dry-run only — never actually sends) / combo (multi-app integration). Designed to run against a REAL desktop (whatever is open). Do NOT pre-clean. Messaging + office queries are dry-run: type/click but never save, never send; if app is not installed or not signed in, reply '<app> unavailable' and stop — that is a degraded pass.",
   "queries": [
     {
@@ -44,10 +44,10 @@
     {
       "id": "B3",
       "category": "fileio",
-      "instruction": "Use run_shell to execute: powershell -Command \"Remove-Item -LiteralPath $env:USERPROFILE\\Downloads\\Test\\lucid-e2e-B1.txt -Force -ErrorAction SilentlyContinue; Test-Path $env:USERPROFILE\\Downloads\\Test\\lucid-e2e-B1.txt\". Reply 'task complete: removed' if Test-Path printed False.",
+      "instruction": "Use run_shell to execute: powershell -Command \"New-Item -ItemType File -Path $env:USERPROFILE\\Downloads\\Test\\lucid-e2e-B3.txt -Force | Out-Null; Remove-Item -LiteralPath $env:USERPROFILE\\Downloads\\Test\\lucid-e2e-B3.txt -Force -ErrorAction SilentlyContinue; Test-Path $env:USERPROFILE\\Downloads\\Test\\lucid-e2e-B3.txt\". Reply 'task complete: removed' if Test-Path printed False. (Note: this query intentionally targets its own B3 sentinel file, NOT B1's, so B1's deliverable survives for evaluation.)",
       "expect_files": [
         {
-          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-B1.txt",
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-B3.txt",
           "must_exist": false
         }
       ],
@@ -78,14 +78,28 @@
     {
       "id": "D1",
       "category": "calculator",
-      "instruction": "Open the Windows Calculator app and compute 137 * 24 + 9 inside it (click the buttons). Tell me the result shown in the display, then reply 'task complete: calc=<number>'.",
+      "instruction": "Open the Windows Calculator app and compute 137 * 24 + 9 inside it (click the buttons). Read the result shown in the display, then persist it: use run_shell to write the displayed number to %USERPROFILE%\\Downloads\\Test\\lucid-e2e-D1.txt (e.g. `cmd /c echo <N> > %USERPROFILE%\\Downloads\\Test\\lucid-e2e-D1.txt`, or PowerShell `Set-Content`). Create the folder first via run_shell if needed. Reply 'task complete: calc=<number>'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-D1.txt",
+          "must_exist": true,
+          "must_contain": "3297"
+        }
+      ],
       "max_steps": 100,
       "needs": []
     },
     {
       "id": "D2",
       "category": "calculator",
-      "instruction": "Open Calculator, switch to Scientific mode (View menu / hamburger), and report which buttons are visible in the top row. Reply 'task complete: scientific mode confirmed' once you see sin/cos/tan buttons. Use that wording verbatim — do not paraphrase.",
+      "instruction": "Open Calculator, switch to Scientific mode (View menu / hamburger). Make sure the angle unit is DEG (not RAD/GRAD), then compute sin(45) by clicking the buttons (`4`, `5`, then `sin`). Read the displayed result (should be approx 0.7071...). Persist it: use run_shell to write the displayed value to %USERPROFILE%\\Downloads\\Test\\lucid-e2e-D2.txt (e.g. `cmd /c echo <value> > %USERPROFILE%\\Downloads\\Test\\lucid-e2e-D2.txt`, or PowerShell `Set-Content`; create the folder first via run_shell if needed). Reply 'task complete: sin45=<value>'.",
+      "expect_files": [
+        {
+          "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-D2.txt",
+          "must_exist": true,
+          "must_contain": "0.707"
+        }
+      ],
       "max_steps": 100,
       "needs": []
     },
@@ -123,7 +137,7 @@
     {
       "id": "F2",
       "category": "browser",
-      "instruction": "In Microsoft Edge, navigate to https://duckduckgo.com and search for 'Tauri 2 documentation'. Read the title of the first organic result and reply 'task complete: first=<title>'.",
+      "instruction": "In Microsoft Edge, navigate to https://www.bing.com and search for 'Tauri 2 documentation'. Read the title of the first organic result (skip ads / 'People also ask' / 'Related searches') and reply 'task complete: first=<title>'.",
       "max_steps": 100,
       "needs": [
         "network"
@@ -431,7 +445,7 @@
     {
       "id": "M4",
       "category": "messaging",
-      "instruction": "Open Microsoft Teams, click the Chat tab, find the chat with yourself (or the very first chat in the list if no self-chat exists), and type 'lucid-e2e-M4 dryrun' into the message box but do NOT send. Take a screenshot to confirm. Then clear the box (Ctrl+A, Delete). Reply 'task complete: teams dryrun ok'. If Teams is unavailable, reply 'task complete: teams unavailable'.",
+      "instruction": "Open Microsoft Teams, click the Chat tab, find the chat with yourself (or the very first chat in the list if no self-chat exists), type 'lucid-e2e-M4 ping' into the message box, then press Enter to send (self-chat is safe and is the point of this test). Take a screenshot to confirm the sent message appears in the chat transcript. Reply 'task complete: teams sent ok'. If Teams is unavailable, reply 'task complete: teams unavailable'.",
       "max_steps": 100,
       "needs": [
         "app:Teams"
@@ -440,7 +454,7 @@
     {
       "id": "N1",
       "category": "combo",
-      "instruction": "Multi-app messaging combo: (1) Use run_shell 'powershell -c (Get-Date).ToString(\"HH:mm\")' to capture the current HH:MM, (2) Open WeChat and navigate to 文件传输助手, (3) type 'lucid-e2e-N1 dryrun at <HH:MM>' into the input box but DO NOT send, (4) screenshot to confirm, (5) clear the box (Ctrl+A, Delete), (6) reply 'task complete: combo N1 ok'. If WeChat is unavailable reply 'task complete: wechat unavailable'.",
+      "instruction": "Multi-app messaging combo: (1) Use run_shell 'powershell -c (Get-Date).ToString(\"HH:mm\")' to capture the current HH:MM, (2) Open WeChat and navigate to 文件传输助手, (3) type 'lucid-e2e-N1 ping at <HH:MM>' into the input box, (4) press Enter to send (文件传输助手 is your own clipboard chat — safe to send), (5) take a screenshot to confirm the sent message appears in the chat transcript, (6) reply 'task complete: combo N1 ok'. If WeChat is unavailable reply 'task complete: wechat unavailable'.",
       "max_steps": 100,
       "needs": [
         "app:WeChat"
