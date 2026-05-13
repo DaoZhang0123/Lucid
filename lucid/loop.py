@@ -747,6 +747,14 @@ class Agent:
                     return final
                 # 不调工具又没说完成：温和提醒一下，继续走下一步。最终兜底是 max_steps。
                 log.warning("assistant returned text without tool_call; reminding to continue")
+                consecutive_narration = locals().get('consecutive_narration', 0) + 1
+                NARRATION_LIMIT = 3
+                if consecutive_narration >= NARRATION_LIMIT:
+                    final = (f"task failed: narration_loop ({consecutive_narration} consecutive assistant-only turns)")
+                    log.error(final)
+                    log.close(status="narration_loop", final_text=final)
+                    self._emit("final", status="error", text=final)
+                    return final
                 messages.append({
                     "role": "user",
                     "content": (
@@ -754,6 +762,7 @@ class Agent:
                         "or summarise and finish with a message starting with \"task complete:\" or \"task failed:\"."
                     ),
                 })
+                locals()['consecutive_narration'] = consecutive_narration
                 continue
 
             # 派发每个 tool_call

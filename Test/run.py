@@ -390,6 +390,8 @@ def main(argv: list[str] | None = None) -> int:
                 aborted_reason = "sidecar_died"
                 break
 
+            # 每个任务前新建 thread，避免截图/manifest 冲突
+            client.send("thread_new", {"title": q["instruction"][:80]}, timeout=10)
             _log(f"{tag} → start_task: {q['instruction'][:80]}")
             try:
                 res = client.send(
