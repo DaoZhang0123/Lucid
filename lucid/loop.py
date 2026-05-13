@@ -18,6 +18,7 @@ from openai import APIError, APIConnectionError, APIStatusError
 from rich.console import Console
 
 from .config import Config
+from .cursor_indicator import CrabCursor
 from .input_driver import InputDriver
 from .llm_client import build_llm_client as _build_llm_client
 from .runlog import ThreadLog
@@ -458,18 +459,23 @@ class Agent:
         # 这里在 finally 落盘到 thread 目录的 messages.json。
         self._current_messages = []
         self._current_prelude_len = 0
+        # 蟹钳鼠标：整个 run 期间把系统光标换成蟹钳，结束（含取消/异常）自动还原。
+        # 受 [input].crab_cursor 控制，默认开启。
+        crab_enabled = bool(getattr(self.cfg.input, "crab_cursor", True))
         try:
-            return self._run(instruction, log)
-        except CancelledError:
-            log.warning("cancelled")
-            log.close(status="cancelled")
-            self._emit("final", status="cancelled", text="")
-            return "(已取消)"
-        except Exception as e:
-            log.error(f"{type(e).__name__}: {e}")
-            log.close(status="error")
-            self._emit("error", message=f"{type(e).__name__}: {e}")
-            raise
+            with CrabCursor(enabled=crab_enabled):
+                try:
+                    return self._run(instruction, log)
+                except CancelledError:
+                    log.warning("cancelled")
+                    log.close(status="cancelled")
+                    self._emit("final", status="cancelled", text="")
+                    return "(已取消)"
+                except Exception as e:
+                    log.error(f"{type(e).__name__}: {e}")
+                    log.close(status="error")
+                    self._emit("error", message=f"{type(e).__name__}: {e}")
+                    raise
         finally:
             self._save_messages_tail(log)
 

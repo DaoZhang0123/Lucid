@@ -135,6 +135,9 @@ class InputConfig:
     # paste the whole string verbatim via clipboard and let the target widget
     # interpret newlines as soft breaks.
     type_split_newlines: bool = False
+    # 蟹钳鼠标：Lucid 跑任务期间把系统光标换成一只橙色蟹钳，
+    # 提醒用户这是由 Lucid 操纵的。任务结束 / 取消 / 崩溃都会还原。
+    crab_cursor: bool = True
 
 
 @dataclass

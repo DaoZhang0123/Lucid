@@ -130,6 +130,7 @@
   - 注入：起手 prompt 里只列 skill 的 `name + description + params`（紧凑摘要），避免 prompt 膨胀；模型决定调用某 skill 时再把 steps 完整展开。
   - 配置：`[skills] enabled / max_skills / max_steps_per_skill`。
   - 与 templates 的区别：templates 是"一句固定 instruction"，skills 是"参数化的多步剧本 + 可被 Agent 主动调度"。
+  - 增加skill，并且要支持online search然后offline load，但是要在system prompt里指明这是网上下载的，如果违反安全原则则去掉
 - [ ] **多 Agent 设计：planner / checker / executor 三角**：把现在单 Agent 的 ReAct 拆三个角色，三者共享 thread messages 与截图，但各有 system prompt：
   - **Planner**：拿到 user instruction + 当前屏幕，输出"高层步骤计划 + 验收标准"（不调 `computer`），写入 thread。
   - **Executor**：现有 ReAct，按 plan 调 `computer` 推进。
@@ -156,11 +157,10 @@
 - [x] **初始化**: 有一些电脑上的配置，比如查看任务栏之类的，会影响到taskbar notify的功能，最好用一个任务来代替用户完成配置。任务等级可以弄成最低
 - [x] **scheduler**: 定时任务可以加一个按钮，启动测试
 - [x] **theme**: light/dark theme（2026-05-09）：[lib/theme.ts](app/src/lib/theme.ts) 持久化 `localStorage["lucid.theme"]`，默认跟随 `prefers-color-scheme`；`+layout.svelte` 调 `setupTheme()` 在子页面渲染前同步落 `<html data-theme>`，并集中放 `:global(html[data-theme="dark"] ...)` 重涂常见表面（body / footer / .bubble.assistant / .row / .chip / textarea/input/select / .tool / final-* / code / .hint / scope-bar / ConfirmModal），各页面 `<style>` 不必逐个改。主页 header 加 🌙/☀️ 按钮（i18n key `header.theme_toggle` 三语齐）。
-- [ ] **蟹钳鼠标**: Lucid移动鼠标的时候鼠标变成一个蟹钳，提醒用户这是由Lucid操纵的
+- [x] **蟹钳鼠标**: Lucid移动鼠标的时候鼠标变成一个蟹钳，提醒用户这是由Lucid操纵的（绿幕生图 → [packaging/chroma_key.py](packaging/chroma_key.py) 抠透明 → [packaging/make_crab_cursor.py](packaging/make_crab_cursor.py) 用 PIL+ctypes-free 自写 ICONDIR 输出 32/48/64/96/128 多尺寸 `.cur`，hotspot 落在咬合点 (40%, 30%)，open / closed 两套共享同一 hotspot 不会跳。运行时 [lucid/cursor_indicator.py](lucid/cursor_indicator.py) 用 `LoadCursorFromFileW` + `CopyIcon` + `SetSystemCursor` 在 `Agent.run()` 进入时把 14 种系统光标 (`OCR_NORMAL/HAND/IBEAM/WAIT/SIZE*/NO/APPSTARTING/HELP`) 全替换成 open 蟹钳；点击/拖拽时 `tools.dispatch` 调 `pulse_click()` 切到 closed 蟹钳，~120ms 最小可见时长保证短点击也能看到，再切回 open；run 结束 `SystemParametersInfoW(SPI_SETCURSORS)` 一行还原。atexit + SIGINT/SIGTERM 三重保险防止 sidecar 崩了用户留着蟹钳光标到注销。受 `[input].crab_cursor` 控制，默认开。资源 `lucid/assets/crab_claw{,_closed}.{png,cur}` 通过 `lucid.spec` 的 `datas` 打进 PyInstaller bundle。）
 - [ ] **设置里加联系方式**: https://github.com/DaoZhang0123/ zhangdao@buaa.edu.cn https://x.com/zhangdao439566
 - [ ] **auto reply**: auto reply设定prompt
 - [x] **安装位置在 ~/.lucid**（用户数据目录从 `%LOCALAPPDATA%\dev.lucid\` 迁到 `C:\Users\<name>\.lucid\`；Python 侧统一走 `Path.home() / ".lucid"`，Tauri 侧 `lucid_home()` 走 `USERPROFILE/.lucid`；config / inbox / logs / templates / schedules / memory / tools / copilot.json / queue.json / regions / launchers 等全部迁过去）
-- [ ] 增加skill，并且要支持online search然后offline load，但是要在system prompt里指明这是网上下载的，如果违反安全原则则去掉
 
 ---
 

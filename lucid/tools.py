@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .input_driver import InputDriver
+from .cursor_indicator import pulse_click as _crab_pulse_click
 from .screen import Capture, ScreenLevel, ScreenSensor
 
 
@@ -201,11 +202,27 @@ class ComputerTool:
         # while; everything else should be sub-second. 20s catches a wedge
         # quickly without false-positiving on slow IME / multi-line typing.
         timeout_s = 20.0 if action == "type" else 15.0
+        # 蟹钳点击脉冲：click / drag 类动作执行期间将光标换为闭合态，
+        # ~120ms 后还原为张开态。脱离 CrabCursor block 时自动 no-op。
+        _PULSE_ACTIONS = {
+            "left_click", "right_click", "middle_click",
+            "double_click", "triple_click", "left_click_drag",
+        }
+        pulse_ctx = _crab_pulse_click() if action in _PULSE_ACTIONS else None
         t = threading.Thread(
             target=_runner, daemon=True, name=f"computer_tool_{action}"
         )
-        t.start()
-        t.join(timeout=timeout_s)
+        if pulse_ctx is not None:
+            pulse_ctx.__enter__()
+        try:
+            t.start()
+            t.join(timeout=timeout_s)
+        finally:
+            if pulse_ctx is not None:
+                try:
+                    pulse_ctx.__exit__(None, None, None)
+                except Exception:
+                    pass
         if t.is_alive():
             return ToolResult(
                 error=(
