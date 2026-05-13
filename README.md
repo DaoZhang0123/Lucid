@@ -76,13 +76,12 @@ Lucid ships as a Windows desktop app (`lucid.exe` engine + Tauri/WebView2 GUI). 
 
 ### Honest about itself
 - Per-run logs at `%LOCALAPPDATA%\dev.lucid\logs\threads\<thread>\` — `events.jsonl`, `messages.json`, every screenshot, full LLM context dumps.
-- Three autonomy levels: `full` / `confirm_critical` / `confirm_each`. HITL keyword list (`delete`, `format`, `transfer`, `confirm payment`, …) intercepts the dangerous ones even on `full`.
 
 ---
 
 ## Example prompts — what people actually use it for
 
-These are real one-liners you can paste into the chat box. Adjust paths / names. The autonomy level is set in the footer.
+These are real one-liners you can paste into the chat box. Adjust paths / names.
 
 ### 📝 Office stuff
 
@@ -128,7 +127,7 @@ Schedules of action `task` with a daily / weekly / interval trigger:
 
 > *"In FL Studio, mute track 3, render the project to `D:\music\demo.wav`."*
 
-(Game UIs are visually unusual — set autonomy to `confirm_each` the first time so you can step through.)
+(Game UIs are visually unusual — the first time, watch closely so you can hit the emergency hotkey if it goes off-track.)
 
 ### 🧪 Sanity checks (no mouse / keyboard)
 
@@ -230,15 +229,15 @@ cd D:\Project\Lucid
 # Connectivity smoke test (single round, no mouse/keyboard)
 .venv\Scripts\python.exe -m lucid --smoke-test "Who are you? One sentence."
 
-# Cautious mode: ask y/n on each step
-.venv\Scripts\python.exe -m lucid --max-steps 4 --autonomy confirm_each `
+# Run a task
+.venv\Scripts\python.exe -m lucid `
     "Take a fullscreen screenshot and tell me how many windows are visible."
 
 # Switch model
 .venv\Scripts\python.exe -m lucid --model claude-sonnet-4.5 "Open Notepad and type hello"
 
-# Full autonomy (only on a sandbox / VM)
-.venv\Scripts\python.exe -m lucid --autonomy full "Open Notepad, type hello world, save to Desktop"
+# Run on a sandbox / VM only when you trust the instruction
+.venv\Scripts\python.exe -m lucid "Open Notepad, type hello world, save to Desktop"
 ```
 
 If you see `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`, set `[llm.proxy].api_key` in `%LOCALAPPDATA%\dev.lucid\config.toml` or export `LITELLM_MASTER_KEY`.
@@ -255,11 +254,11 @@ Key sections:
 
 | Section | What it controls |
 | --- | --- |
-| `[llm]` | provider, max steps, max tokens, prompt-cache, temperature/top-p, screenshot retention |
+| `[llm]` | provider, max tokens, prompt-cache, temperature/top-p, screenshot retention |
 | `[llm.anthropic]` / `[llm.copilot]` / `[llm.proxy]` | per-provider model + endpoint + key |
 | `[logging]` | per-run log dir, text/image levels (`DEBUG/INFO/WARNING/ERROR/OFF`), `png`/`jpg`, retention |
 | `[screenshot]` | three-pyramid intervals, downscale long edges, per-level retention, change-detection threshold |
-| `[safety]` | HITL keywords, emergency hotkey (`ctrl+alt+esc`), default autonomy, click verification, save-dialog guard |
+| `[safety]` | emergency hotkey (`ctrl+alt+esc`), click verification, save-dialog guard |
 | `[input]` | `chinese_input = "clipboard"` (recommended) or `unicode_sendinput`, action delay |
 | `[visual_notify]` | taskbar polling, dHash threshold, LLM confirmation cadence, auto-chat instruction |
 | `[doze]` | idle-time reflection limits |

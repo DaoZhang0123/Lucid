@@ -6,14 +6,12 @@
       "id": "A1",
       "category": "cognitive",
       "instruction": "What is 137 * 24 + 9? Reply only with the number, no words.",
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "A2",
       "category": "cognitive",
       "instruction": "Use read_file to open D:\\Project\\Lucid\\README.md and tell me the very first H1 title (the line starting with a single '#'). Reply with just that title.",
-      "max_steps": 100,
       "needs": [
         "file:D:\\Project\\Lucid\\README.md"
       ]
@@ -29,14 +27,12 @@
           "must_contain": "hello from lucid e2e B1"
         }
       ],
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "B2",
       "category": "fileio",
       "instruction": "Use read_file to open the file %USERPROFILE%\\Downloads\\Test\\lucid-e2e-B1.txt and reply with its exact content on a single line, then 'task complete:'.",
-      "max_steps": 100,
       "needs": [
         "after:B1"
       ]
@@ -51,7 +47,6 @@
           "must_exist": false
         }
       ],
-      "max_steps": 100,
       "needs": []
     },
     {
@@ -65,14 +60,12 @@
           "must_contain": "Lucid E2E test C1"
         }
       ],
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "C2",
       "category": "notepad",
       "instruction": "Open Notepad and type today's date in YYYY-MM-DD format. Do NOT save. After typing, reply 'task complete: notepad typed'.",
-      "max_steps": 100,
       "needs": []
     },
     {
@@ -86,7 +79,6 @@
           "must_contain": "3297"
         }
       ],
-      "max_steps": 100,
       "needs": []
     },
     {
@@ -100,14 +92,12 @@
           "must_contain": "0.707"
         }
       ],
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "E1",
       "category": "explorer",
       "instruction": "Open File Explorer and navigate to D:\\Project\\Lucid. Tell me how many top-level subfolders are visible (folders only, not files). Reply 'task complete: <N> folders'.",
-      "max_steps": 100,
       "needs": [
         "dir:D:\\Project\\Lucid"
       ]
@@ -122,14 +112,12 @@
           "must_exist": false
         }
       ],
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "F1",
       "category": "browser",
       "instruction": "Open Microsoft Edge to https://example.com . Wait for it to load, then describe in ONE sentence what the page contains. Reply 'task complete: <one sentence>'.",
-      "max_steps": 100,
       "needs": [
         "network"
       ]
@@ -138,7 +126,6 @@
       "id": "F2",
       "category": "browser",
       "instruction": "In Microsoft Edge, navigate to https://www.bing.com and search for 'Tauri 2 documentation'. Read the title of the first organic result (skip ads / 'People also ask' / 'Related searches') and reply 'task complete: first=<title>'.",
-      "max_steps": 100,
       "needs": [
         "network"
       ]
@@ -147,7 +134,6 @@
       "id": "F3",
       "category": "browser",
       "instruction": "Use the `read_webpage` meta-tool (headless, NOT the GUI) to fetch https://www.bing.com/search?q=Rust+programming+language and read the first organic result's title (skip ads / 'People also ask' / 'Related searches'). Reply 'task complete: first=<title>'.",
-      "max_steps": 100,
       "needs": [
         "network"
       ]
@@ -156,7 +142,6 @@
       "id": "G1",
       "category": "vscode",
       "instruction": "Use run_shell to compute the line count of D:\\Project\\Lucid\\lucid\\sidecar.py via 'powershell -c (Get-Content -LiteralPath D:\\Project\\Lucid\\lucid\\sidecar.py).Length' and reply 'task complete: sidecar=<N> lines'.",
-      "max_steps": 100,
       "needs": [
         "file:D:\\Project\\Lucid\\lucid\\sidecar.py"
       ]
@@ -165,7 +150,6 @@
       "id": "G2",
       "category": "vscode",
       "instruction": "Use run_shell to run 'powershell -c Select-String -Path D:\\Project\\Lucid\\Docs\\todo.md -Pattern cron -SimpleMatch | Measure-Object | Select-Object -ExpandProperty Count' and reply 'task complete: matches=<N>'.",
-      "max_steps": 100,
       "needs": [
         "file:D:\\Project\\Lucid\\Docs\\todo.md"
       ]
@@ -174,14 +158,12 @@
       "id": "H1",
       "category": "settings",
       "instruction": "Open Windows Settings (Win+I), navigate to System > Display, and report the current display resolution shown there. Reply 'task complete: resolution=<WxH>'.",
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "H2",
       "category": "settings",
       "instruction": "Open Settings (Win+I) and find 'About' (System > About). Report the Windows edition and version. Reply 'task complete: <edition> <version>'.",
-      "max_steps": 100,
       "needs": []
     },
     {
@@ -195,7 +177,6 @@
           "must_contain": "sidecar.py"
         }
       ],
-      "max_steps": 100,
       "needs": [
         "dir:D:\\Project\\Lucid\\lucid"
       ]
@@ -204,21 +185,18 @@
       "id": "I2",
       "category": "multi-step",
       "instruction": "Take a fullscreen screenshot. From the taskbar at the bottom, list the pinned app icons left-to-right (skip the search box and Start button). Reply 'task complete: taskbar=<comma-separated names>'.",
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "J1",
       "category": "resilience",
       "instruction": "Try to launch an app called 'lucid_definitely_not_installed_app_xyz'. If launch_app reports it is not installed (or you cannot find it after one search), do NOT keep retrying. Reply 'task complete: app not installed' and stop.",
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "K1",
       "category": "app",
       "instruction": "Open Microsoft Edge and navigate to about:blank. Wait for the address bar to be empty, then read the window title via active_window. Reply 'task complete: edge title=<title>'.",
-      "max_steps": 100,
       "needs": [
         "app:msedge"
       ]
@@ -227,7 +205,6 @@
       "id": "K2",
       "category": "app",
       "instruction": "Open Paint (mspaint). Once the canvas is visible, draw a single short stroke anywhere on the canvas using a left-button drag (any 2 points). Do NOT save. Reply 'task complete: paint stroke ok'.",
-      "max_steps": 100,
       "needs": [
         "app:mspaint"
       ]
@@ -236,21 +213,18 @@
       "id": "K3",
       "category": "app",
       "instruction": "Open the Snipping Tool (SnippingTool / ScreenSketch). When its toolbar is visible, take a screenshot of Lucid's own active_window so we can confirm it launched, then close it via Esc / close button. Reply 'task complete: snip launched'.",
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "K4",
       "category": "app",
       "instruction": "Open Task Manager (Ctrl+Shift+Esc). Switch to the Processes tab if not already there, and tell me the name of the top-most process row visible. Reply 'task complete: top proc=<name>'. Then close Task Manager.",
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "K5",
       "category": "app",
       "instruction": "Open Visual Studio Code. Once the welcome tab or last workspace is loaded, read the title bar via active_window and reply 'task complete: vscode=<title>'. Do not modify any file.",
-      "max_steps": 100,
       "needs": [
         "app:Code"
       ]
@@ -259,21 +233,18 @@
       "id": "K6",
       "category": "app",
       "instruction": "Open the Clock app (Windows clock / alarms) or the system tray clock flyout (click the time in the taskbar). Read the current time as displayed, reply 'task complete: clock=<HH:MM>'.",
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "K7",
       "category": "app",
       "instruction": "Use run_shell with 'powershell -c Get-ChildItem -Path $env:USERPROFILE\\Downloads -File -ErrorAction SilentlyContinue | Sort-Object Length -Descending | Select-Object -First 5 Name,Length | ConvertTo-Json -Compress' and reply 'task complete: top5 downloads=<json>'.",
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "K8",
       "category": "app",
       "instruction": "Open Sticky Notes (StikyNot). Once a yellow note is visible, type the text 'Lucid E2E K8' into it. Do NOT save (Sticky Notes auto-saves — that's fine, but do not delete other existing notes). Reply 'task complete: sticky note ok'. If Sticky Notes is not installed reply 'task complete: sticky unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:StikyNot"
       ]
@@ -282,14 +253,12 @@
       "id": "K9",
       "category": "app",
       "instruction": "Open Windows Terminal (wt.exe). Once the prompt is visible, type the command 'Get-Date -Format \"HH:mm\"' and press Enter. Read the output time it printed and reply 'task complete: wt time=<HH:MM>'. If Windows Terminal is not installed, fall back to PowerShell (powershell.exe) with the same command, and reply 'task complete: wt time=<HH:MM>' anyway.",
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "K10",
       "category": "app",
       "instruction": "Open the Microsoft Photos app. Once its main window (collection / library) is visible, read the active_window title and reply 'task complete: photos title=<title>'. Do not open or modify any image. If Photos is not installed reply 'task complete: photos unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:Microsoft.Photos"
       ]
@@ -298,7 +267,6 @@
       "id": "K11",
       "category": "app",
       "instruction": "Open the Windows Mail app. Once the main window is visible, report the name of the currently selected folder in the left rail (Inbox / Drafts / Sent / etc.) and reply 'task complete: mail folder=<name>'. Do NOT open, reply, forward, or send any message. If Mail is not installed or not signed in, reply 'task complete: mail unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:Mail"
       ]
@@ -307,7 +275,6 @@
       "id": "O1",
       "category": "office",
       "instruction": "Open Microsoft Word (winword). On the start screen click 'Blank document'. Once the empty document is visible, type the exact text 'Lucid E2E O1 dryrun'. Read the active_window title (should contain 'Word') and reply 'task complete: word title=<title>'. Do NOT save the document; if Word asks to save on close, click 'Don't Save'. If Word is not installed reply 'task complete: word unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:winword"
       ]
@@ -316,7 +283,6 @@
       "id": "O2",
       "category": "office",
       "instruction": "Open Microsoft Excel. Click 'Blank workbook'. Click cell A1, type the formula '=137*24+9' and press Enter. Click A1 again to re-select it, then read the displayed value (should be 3297). Reply 'task complete: excel a1=<value>'. Do NOT save. If Excel asks to save on close, click 'Don't Save'. If Excel is not installed reply 'task complete: excel unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:excel"
       ]
@@ -325,7 +291,6 @@
       "id": "O3",
       "category": "office",
       "instruction": "Open Microsoft PowerPoint. Click 'Blank Presentation'. On slide 1 click the 'Click to add title' placeholder, then type 'Lucid E2E O3'. Reply 'task complete: ppt slide ok'. Do NOT save. If PowerPoint asks to save on close, click 'Don't Save'. If PowerPoint is not installed reply 'task complete: ppt unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:powerpnt"
       ]
@@ -334,7 +299,6 @@
       "id": "O4",
       "category": "office",
       "instruction": "Open Microsoft Outlook (the desktop app, not OWA). Once the Inbox is visible, report the subject of the topmost message in the message list. Do NOT open, reply, forward, mark-read, or delete any message. Reply 'task complete: outlook top=<subject>'. If Outlook is not installed or not signed in (no inbox visible after launch + 5s), reply 'task complete: outlook unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:outlook"
       ]
@@ -343,7 +307,6 @@
       "id": "O5",
       "category": "office",
       "instruction": "Open Microsoft OneNote. Once a notebook page is visible (any existing page is fine), click in the page body and type the text 'Lucid E2E O5 dryrun'. OneNote auto-saves — that is fine. Reply 'task complete: onenote ok'. If OneNote is not installed or not signed in, reply 'task complete: onenote unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:onenote"
       ]
@@ -359,7 +322,6 @@
           "must_contain": "Lucid combo L1"
         }
       ],
-      "max_steps": 100,
       "needs": []
     },
     {
@@ -372,7 +334,6 @@
           "must_exist": true
         }
       ],
-      "max_steps": 100,
       "needs": [
         "network",
         "app:msedge"
@@ -389,7 +350,6 @@
           "must_contain": "L3 timestamp"
         }
       ],
-      "max_steps": 100,
       "needs": []
     },
     {
@@ -403,14 +363,12 @@
           "must_contain": "taskbar pinned count"
         }
       ],
-      "max_steps": 100,
       "needs": []
     },
     {
       "id": "L5",
       "category": "combo",
       "instruction": "Multi-app: (1) Open File Explorer to %USERPROFILE%\\Downloads\\Test, (2) verify visually that the file 'lucid-e2e-L1.txt' is listed, (3) regardless of result, use run_shell + Test-Path to confirm, (4) reply 'task complete: combo L5 visual=<yes|no> shell=<True|False>'. Do not delete anything.",
-      "max_steps": 100,
       "needs": [
         "after:L1"
       ]
@@ -419,7 +377,6 @@
       "id": "M1",
       "category": "messaging",
       "instruction": "Open WeChat (微信). Once the main window is visible, find the conversation pinned at the very top of the chat list and report its display name. Do NOT open any conversation, do NOT send anything. Reply 'task complete: wechat top=<name>'. If WeChat is not installed or not logged in, reply 'task complete: wechat unavailable' and stop.",
-      "max_steps": 100,
       "needs": [
         "app:WeChat"
       ]
@@ -428,7 +385,6 @@
       "id": "M2",
       "category": "messaging",
       "instruction": "Open WeChat (微信), navigate to the 文件传输助手 (File Transfer) chat with yourself, type the exact text 'lucid-e2e-M2 ping' into the input box but do NOT press Send (do not click the send button, do not press Enter). Take a screenshot to confirm the text is in the box, then clear the input box (Ctrl+A, Delete). Reply 'task complete: wechat dryrun ok'. If WeChat is unavailable, reply 'task complete: wechat unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:WeChat"
       ]
@@ -437,7 +393,6 @@
       "id": "M3",
       "category": "messaging",
       "instruction": "Open Microsoft Teams. Once the main window is visible, report the name of the currently selected left-rail tab (Activity / Chat / Teams / Calendar / Files / etc.) and the count of unread badge numbers visible across the rail. Reply 'task complete: teams tab=<tab> unread=<N or none>'. If Teams is not installed or not logged in, reply 'task complete: teams unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:Teams"
       ]
@@ -446,7 +401,6 @@
       "id": "M4",
       "category": "messaging",
       "instruction": "Open Microsoft Teams, click the Chat tab, find the chat with yourself (or the very first chat in the list if no self-chat exists), type 'lucid-e2e-M4 ping' into the message box, then press Enter to send (self-chat is safe and is the point of this test). Take a screenshot to confirm the sent message appears in the chat transcript. Reply 'task complete: teams sent ok'. If Teams is unavailable, reply 'task complete: teams unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:Teams"
       ]
@@ -455,7 +409,6 @@
       "id": "N1",
       "category": "combo",
       "instruction": "Multi-app messaging combo: (1) Use run_shell 'powershell -c (Get-Date).ToString(\"HH:mm\")' to capture the current HH:MM, (2) Open WeChat and navigate to 文件传输助手, (3) type 'lucid-e2e-N1 ping at <HH:MM>' into the input box, (4) press Enter to send (文件传输助手 is your own clipboard chat — safe to send), (5) take a screenshot to confirm the sent message appears in the chat transcript, (6) reply 'task complete: combo N1 ok'. If WeChat is unavailable reply 'task complete: wechat unavailable'.",
-      "max_steps": 100,
       "needs": [
         "app:WeChat"
       ]
@@ -471,7 +424,6 @@
           "must_contain": "foreground at start"
         }
       ],
-      "max_steps": 100,
       "needs": []
     },
     {
@@ -484,7 +436,6 @@
           "must_exist": true
         }
       ],
-      "max_steps": 100,
       "needs": [
         "app:Teams"
       ]
@@ -500,7 +451,6 @@
           "must_contain": "P1 first"
         }
       ],
-      "max_steps": 100,
       "needs": [
         "network"
       ]
@@ -516,7 +466,6 @@
           "must_contain": "P2 first"
         }
       ],
-      "max_steps": 100,
       "needs": [
         "network",
         "app:msedge"
@@ -532,7 +481,6 @@
           "must_exist": true
         }
       ],
-      "max_steps": 100,
       "needs": [
         "network",
         "app:excel"
@@ -548,7 +496,6 @@
           "must_exist": true
         }
       ],
-      "max_steps": 100,
       "needs": [
         "network",
         "app:msedge",
@@ -559,7 +506,6 @@
       "id": "P5",
       "category": "combo",
       "instruction": "Search-tool + Teams combo (HEADLESS search + Teams self-send, end-to-end): (1) Use `read_webpage` on https://www.bing.com/search?q=Microsoft+Teams+keyboard+shortcuts to fetch Bing results, (2) extract the FIRST organic result's title, (3) Open Microsoft Teams, (4) click the Chat tab, find the chat with yourself (or the very first chat in the list if no self-chat exists), (5) type 'lucid-e2e-P5 first = <that title>' into the message box, (6) press Enter to send (self-chat is safe and is the point of this test), (7) take a screenshot to confirm the sent message appears in the chat transcript, (8) reply 'task complete: combo P5 ok'. If Teams is unavailable reply 'task complete: teams unavailable'.",
-      "max_steps": 100,
       "needs": [
         "network",
         "app:Teams"
@@ -569,7 +515,6 @@
       "id": "P6",
       "category": "combo",
       "instruction": "Browser + Teams combo (GUI Bing + Teams self-send, end-to-end): (1) Open Microsoft Edge, (2) navigate to https://www.bing.com and search 'Microsoft Teams release notes', (3) for the FIRST organic result read its title, (4) Open Microsoft Teams, (5) click the Chat tab, find the chat with yourself (or the first chat in the list if no self-chat exists), (6) type 'lucid-e2e-P6 first = <that title>' into the message box, (7) press Enter to send (self-chat is safe), (8) take a screenshot to confirm the sent message appears in the chat transcript, (9) reply 'task complete: combo P6 ok'. If Teams is unavailable reply 'task complete: teams unavailable'.",
-      "max_steps": 100,
       "needs": [
         "network",
         "app:msedge",
@@ -580,7 +525,6 @@
       "id": "P7",
       "category": "combo",
       "instruction": "Search-tool + WeChat combo (HEADLESS search + WeChat self-send, end-to-end): (1) Use `read_webpage` on https://www.bing.com/search?q=Rust+programming+language to fetch Bing results, (2) extract the FIRST organic result's title, (3) Open WeChat (微信), (4) navigate to the 文件传输助手 (File Transfer) chat with yourself, (5) type 'lucid-e2e-P7 first = <that title>' into the input box, (6) press Enter to send (文件传输助手 is your own clipboard chat — safe to send), (7) take a screenshot to confirm the sent message appears in the chat transcript, (8) reply 'task complete: combo P7 ok'. If WeChat is not installed or not logged in, reply 'task complete: wechat unavailable'.",
-      "max_steps": 100,
       "needs": [
         "network",
         "app:WeChat"
@@ -590,7 +534,6 @@
       "id": "P8",
       "category": "combo",
       "instruction": "Browser + WeChat combo (GUI Bing + WeChat self-send, end-to-end): (1) Open Microsoft Edge, (2) navigate to https://www.bing.com and search 'Python official site', (3) for the FIRST organic result read its title, (4) Open WeChat (微信), (5) navigate to 文件传输助手, (6) type 'lucid-e2e-P8 first = <that title>' into the input box, (7) press Enter to send (self-chat is safe), (8) take a screenshot to confirm the sent message appears in the chat transcript, (9) reply 'task complete: combo P8 ok'. If WeChat is unavailable reply 'task complete: wechat unavailable'.",
-      "max_steps": 100,
       "needs": [
         "network",
         "app:msedge",

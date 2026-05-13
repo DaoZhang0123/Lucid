@@ -398,10 +398,6 @@ def main(argv: list[str] | None = None) -> int:
                     "start_task",
                     {
                         "instruction": q["instruction"],
-                        "autonomy": "full",
-                        # `max_steps` in queries.json is an analytical "soft
-                        # budget"; allow some overshoot for the agent loop.
-                        "max_steps": int(q.get("max_steps") or 30) * 2 + 10,
                     },
                     timeout=20,
                 ) or {}
@@ -412,7 +408,6 @@ def main(argv: list[str] | None = None) -> int:
                     "category": q.get("category", ""),
                     "instruction": q["instruction"],
                     "expect_files": q.get("expect_files"),
-                    "max_steps_soft": q.get("max_steps"),
                     "thread_id": None,
                     "thread_dir": None,
                     "queued_ms": _now_ms(),
@@ -447,7 +442,6 @@ def main(argv: list[str] | None = None) -> int:
                 "category": q.get("category", ""),
                 "instruction": q["instruction"],
                 "expect_files": q.get("expect_files"),
-                "max_steps_soft": q.get("max_steps"),
                 "thread_id": tid,
                 "thread_dir": tdir,
                 "queued_ms": _now_ms(),

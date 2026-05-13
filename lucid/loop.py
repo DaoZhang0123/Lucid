@@ -21,7 +21,6 @@ from .config import Config
 from .input_driver import InputDriver
 from .llm_client import build_llm_client as _build_llm_client
 from .runlog import ThreadLog
-from .safety import SafetyLayer
 from .screen import Capture, ScreenLevel, ScreenSensor
 from .tools import ComputerTool, ToolResult
 from . import memory as memory_mod
@@ -46,6 +45,12 @@ class CancelledError(RuntimeError):
 EventSink = Callable[[dict[str, Any]], None]
 
 
+# Hard ceiling on agent loop iterations. Not user-configurable; the model is
+# expected to bail out itself with `task failed: ...` once it can't make
+# progress. This is a final kill-switch for runaway loops.
+HARD_STEP_CAP = 200
+
+
 class Agent:
     def __init__(
         self,
@@ -66,7 +71,6 @@ class Agent:
         self.sensor.set_root_config(cfg)
         self.driver = InputDriver(cfg.input)
         self.tool = ComputerTool(self.sensor, self.driver, cfg.screenshot)
-        self.safety = SafetyLayer(cfg.safety, event_sink=self._emit)
         self.event_sink = event_sink
         self.cancel_event = cancel_event
         self.thread_log = thread_log
@@ -444,14 +448,12 @@ class Agent:
     def run(self, instruction: str) -> str:
         log = self.thread_log or ThreadLog.create(self.cfg.logging, instruction)
         log.info(
-            f"proxy={self.cfg.llm.proxy.base_url} model={self.model} "
-            f"max_steps={self.cfg.llm.max_steps} autonomy={self.cfg.safety.autonomy}"
+            f"proxy={self.cfg.llm.proxy.base_url} model={self.model}"
         )
         run_dir = str(log.run_dir) if log.run_dir is not None else None
         thread_id = self.thread_log.id if self.thread_log is not None else None
         self._emit("run_start", instruction=instruction, run_dir=run_dir,
-                   model=self.model, max_steps=self.cfg.llm.max_steps,
-                   autonomy=self.cfg.safety.autonomy, thread_id=thread_id)
+                   model=self.model, thread_id=thread_id)
         # 用于 F3 续接：_run 里会在每次 prune / 步末更新 self._current_messages，
         # 这里在 finally 落盘到 thread 目录的 messages.json。
         self._current_messages = []
@@ -653,12 +655,17 @@ class Agent:
         save_dialog_triggers = {"ctrl+s", "ctrl+shift+s", "f12", "ctrl+o"}
         save_dialog_close_keys = {"return", "enter", "esc", "escape"}
 
-        for step in range(self.cfg.llm.max_steps):
+        # Hard safety cap: 200 steps. The system prompt tells the model to
+        # bail out itself when it can't make progress (`task failed: ...`).
+        hard_cap = HARD_STEP_CAP
+        consecutive_narration = 0
+        NARRATION_LIMIT = 3
+        for step in range(hard_cap):
             self._check_cancel()
             self._current_step = step + 1
-            self._rule(f"[cyan]Step {step + 1}/{self.cfg.llm.max_steps}")
-            log.info(f"--- step {step + 1}/{self.cfg.llm.max_steps} ---")
-            self._emit("step_start", step=step + 1, max_steps=self.cfg.llm.max_steps)
+            self._rule(f"[cyan]Step {step + 1}")
+            log.info(f"--- step {step + 1} ---")
+            self._emit("step_start", step=step + 1, max_steps=hard_cap)
             recompressed, dropped = self.context_mgr.compress_old_images(
                 messages,
                 keep_per_level={
@@ -745,10 +752,9 @@ class Agent:
                     log.close(status="ok", final_text=final)
                     self._emit("final", status="ok", text=final)
                     return final
-                # 不调工具又没说完成：温和提醒一下，继续走下一步。最终兜底是 max_steps。
+                # 不调工具又没说完成：温和提醒一下，继续走下一步。
                 log.warning("assistant returned text without tool_call; reminding to continue")
-                consecutive_narration = locals().get('consecutive_narration', 0) + 1
-                NARRATION_LIMIT = 3
+                consecutive_narration += 1
                 if consecutive_narration >= NARRATION_LIMIT:
                     final = (f"task failed: narration_loop ({consecutive_narration} consecutive assistant-only turns)")
                     log.error(final)
@@ -762,10 +768,10 @@ class Agent:
                         "or summarise and finish with a message starting with \"task complete:\" or \"task failed:\"."
                     ),
                 })
-                locals()['consecutive_narration'] = consecutive_narration
                 continue
 
             # 派发每个 tool_call
+            consecutive_narration = 0
             had_screenshot = False
             # The Capture returned by this step's most recent screenshot tool
             # call (None if the step contained no screenshot). Used by the
@@ -799,9 +805,6 @@ class Agent:
                     )
                     if tr is None:
                         tr = ToolResult(error=f"unknown tool: {fn_name}")
-                elif self.safety.should_confirm(action, args) and not self.safety.confirm(action, args):
-                    tr = ToolResult(error="user declined this action")
-                    log.warning(f"user declined {action} {args}")
                 else:
                     tr = self._maybe_pre_click_verify(action, args, log)
                     if tr is not None and tr.image_png:

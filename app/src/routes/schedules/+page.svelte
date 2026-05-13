@@ -21,7 +21,7 @@
   type Sched = {
     id: string; name: string; instruction: string; spec: Spec;
     action?: "task" | "visual_notify" | "scan_launcher_icons" | "promote_tray_icons";
-    autonomy: string; max_steps: number; enabled: boolean;
+    enabled: boolean;
     next_ms?: number; last_run_ms?: number;
     constraints?: Constraints;
     auto_chat_apps?: string[];
@@ -32,15 +32,10 @@
   let items = $state<Sched[]>([]);
   let err = $state("");
   let editing = $state<Sched | null>(null);
-  // Global default for max_steps, fetched from sidecar (config.toml [llm].max_steps).
-  // Falls back to 50 only if the status call fails.
-  let defaultMaxSteps = $state(50);
 
   let name = $state("");
   let instruction = $state("");
   let action = $state<"task" | "visual_notify" | "scan_launcher_icons" | "promote_tray_icons">("task");
-  let autonomy = $state<"full" | "confirm_critical" | "confirm_each">("confirm_critical");
-  let maxSteps = $state(25);
   let enabled = $state(true);
   let kind = $state<"secondly" | "minutely" | "hourly" | "daily" | "weekly">("daily");
   let everySeconds = $state(2);
@@ -209,8 +204,6 @@
     name = "";
     instruction = "";
     action = "task";
-    autonomy = "confirm_critical";
-    maxSteps = defaultMaxSteps;
     enabled = true;
     kind = "daily";
     everySeconds = 2;
@@ -242,8 +235,6 @@
     name = s.name;
     instruction = s.instruction;
     action = (s.action as "task" | "visual_notify" | "scan_launcher_icons" | "promote_tray_icons") ?? "task";
-    autonomy = (s.autonomy as any) ?? "confirm_critical";
-    maxSteps = s.max_steps ?? defaultMaxSteps;
     enabled = !!s.enabled;
     kind = s.spec.kind as any;
     if (s.spec.kind === "secondly") everySeconds = s.spec.every;
@@ -340,9 +331,9 @@
       const spec = buildSpec();
       const constraints = buildConstraints();
       if (editing) {
-        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, autonomy, maxSteps, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null });
+        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null });
       } else {
-        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, autonomy, maxSteps, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null });
+        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null });
       }
       reset();
       await load();
@@ -443,16 +434,6 @@
   }
 
   onMount(async () => {
-    // Pull the global step budget from sidecar so the new-schedule form
-    // mirrors config.toml [llm].max_steps instead of hard-coding 25.
-    try {
-      const st = await invoke<any>("sidecar_get_status");
-      const m = Number(st?.max_steps);
-      if (Number.isFinite(m) && m > 0) {
-        defaultMaxSteps = m;
-        if (!editing) maxSteps = m;
-      }
-    } catch { /* keep fallback 50 */ }
     try {
       const r = await invoke<{ items: InstalledApp[] }>("installed_apps_list");
       installedApps = r?.items ?? [];
@@ -658,16 +639,6 @@
       </div>
     </fieldset>
 
-    {#if action !== "visual_notify" && action !== "scan_launcher_icons" && action !== "promote_tray_icons"}
-      <label>{$_("schedules.autonomy_label")}
-        <select bind:value={autonomy}>
-          <option value="full">full</option>
-          <option value="confirm_critical">confirm_critical</option>
-          <option value="confirm_each">confirm_each</option>
-        </select>
-      </label>
-      <label>{$_("schedules.max_steps_label")} <input type="number" min="1" max="200" bind:value={maxSteps} /></label>
-    {/if}
     <label><input type="checkbox" bind:checked={enabled} /> {$_("schedules.enabled_label")}</label>
 
     <div class="actions">
@@ -690,8 +661,7 @@
           </div>
           <div class="instr">{displayInstruction(s)}</div>
           <div class="meta">
-            {$_("schedules.next_label")} {fmtTime(s.next_ms)} · {$_("schedules.last_label")} {fmtTime(s.last_run_ms)} ·
-            {#if isVisualNotify(s)}{$_("schedules.visual_notify_meta")}{:else if isLauncherScan(s)}{$_("schedules.launcher_scan_meta")}{:else if isTrayPromote(s)}{$_("schedules.tray_promote_meta")}{:else}{s.autonomy} · {$_("schedules.step_count", { values: { n: s.max_steps } })}{/if}
+            {$_("schedules.next_label")} {fmtTime(s.next_ms)} · {$_("schedules.last_label")} {fmtTime(s.last_run_ms)}{#if isVisualNotify(s)} · {$_("schedules.visual_notify_meta")}{:else if isLauncherScan(s)} · {$_("schedules.launcher_scan_meta")}{:else if isTrayPromote(s)} · {$_("schedules.tray_promote_meta")}{/if}
           </div>
         </div>
         <div class="ops">

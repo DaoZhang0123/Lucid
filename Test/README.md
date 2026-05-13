@@ -64,7 +64,6 @@ File: [queries.json](queries.json). Each entry:
       "must_exist": true,
       "must_contain": "hello from lucid e2e B1" }
   ],
-  "max_steps": 6,                 // soft budget (informational only)
   "needs": []                     // optional preconditions
 }
 ```
@@ -115,13 +114,8 @@ start-menu fallback) for each:
 
 1. **Close the Lucid GUI** (the NSIS desktop app), so it doesn't open a
    second sidecar that fights for config.
-2. Make sure `%LOCALAPPDATA%\dev.lucid\config.toml` has
-   `autonomy = "full"` — HITL prompts would block the entire queue.
-   **Danger words** (`delete file` / `format` / `transfer` / …) are still
-   blocked, so `queries.json` deliberately avoids those phrasings; deletes
-   go through `run_shell` + `Remove-Item` style.
-3. Verify an LLM backend is reachable (Anthropic / Copilot / proxy).
-4. **Do NOT pre-clean the desktop**. This is intentional — real
+2. Verify an LLM backend is reachable (Anthropic / Copilot / proxy).
+3. **Do NOT pre-clean the desktop**. This is intentional — real
    environments have 50 windows, a packed taskbar, a cluttered desktop;
    the agent must work under that interference. The `lucid-e2e-*` temp
    files all live under `%USERPROFILE%\Downloads\Test\` and can be

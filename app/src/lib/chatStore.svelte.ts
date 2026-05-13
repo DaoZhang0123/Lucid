@@ -39,7 +39,6 @@ export const chat = $state({
   currentStep: 0,
   totalSteps: 0,
   sidecarReady: false,
-  sidecarStderr: [] as string[],
   threads: [] as ThreadMeta[],
   activeThreadId: null as string | null,
   // 任务队列中的 thread id 集合，用于侧边栏“⏳ 排队中”标记
@@ -76,7 +75,6 @@ function handleEvent(v: any) {
   const k = v.event;
   if (k === "ready") {
     chat.sidecarReady = true;
-    if (typeof v.max_steps === "number" && v.max_steps > 0) chat.totalSteps = v.max_steps;
     // 新 sidecar 的内存队列必然是空（队列不持久化）。如果旧前端 state
     // 里还挂着上次会话的 ghost "排队中" 标记，必须现在清掉，否则侧边栏
     // 会显示永远不会被 dequeue 的假任务。如果 sidecar 后续在 ready 里
@@ -86,7 +84,7 @@ function handleEvent(v: any) {
       : [];
     chat.runningThreadId = null;
     chat.running = false;
-    push({ kind: "system", text: `sidecar ready · provider=${v.provider ?? "?"} · model=${v.model} · autonomy=${v.autonomy} · max_steps=${v.max_steps}` });
+    push({ kind: "system", text: `sidecar ready · provider=${v.provider ?? "?"} · model=${v.model}` });
     void refreshThreadList();
   } else if (k === "thread_changed") {
     const newId = v.id ?? null;
@@ -209,9 +207,7 @@ export async function ensureChatListeners(): Promise<void> {
   unlistenEvent = await listen<any>("lucid://event", (e) => handleEvent(e.payload));
   unlistenSidecar = await listen<any>("lucid://sidecar", (e) => {
     const v = e.payload;
-    if (v.kind === "stderr") {
-      chat.sidecarStderr = [...chat.sidecarStderr, v.line].slice(-50);
-    } else if (v.kind === "spawn") {
+    if (v.kind === "spawn") {
       push({ kind: "system", text: `sidecar 启动中：${v.exe}` });
     } else if (v.kind === "exit") {
       chat.sidecarReady = false;
@@ -290,8 +286,6 @@ function pushUserAttachments(refs: FileRef[]): void {
 
 export async function startTask(
   text: string,
-  autonomy: string,
-  maxSteps: number,
   fileRefs: FileRef[] = [],
 ): Promise<void> {
   if (!text) return;
@@ -306,8 +300,6 @@ export async function startTask(
     const res: any = await invoke("sidecar_start_task", {
       args: {
         instruction: text,
-        autonomy,
-        maxSteps,
         fileRefs: fileRefs.length ? fileRefs : undefined,
       },
     });

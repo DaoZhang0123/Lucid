@@ -77,7 +77,6 @@ pub fn run() {
             sidecar::sidecar_start_task,
             sidecar::sidecar_cancel,
             sidecar::sidecar_get_status,
-            sidecar::sidecar_set_autonomy,
             sidecar::sidecar_ping,
             sidecar::list_runs,
             sidecar::read_run,

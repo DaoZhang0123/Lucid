@@ -6,7 +6,7 @@
   import { appConfirm } from "$lib/appConfirm.svelte";
   import { startTask, ensureChatListeners } from "$lib/chatStore.svelte";
 
-  type Tpl = { id: string; name: string; instruction: string; autonomy: string; max_steps: number };
+  type Tpl = { id: string; name: string; instruction: string };
 
   let items = $state<Tpl[]>([]);
   let err = $state("");
@@ -14,8 +14,6 @@
 
   let name = $state("");
   let instruction = $state("");
-  let autonomy = $state<"full" | "confirm_critical" | "confirm_each">("confirm_critical");
-  let maxSteps = $state(25);
 
   async function load() {
     err = "";
@@ -31,16 +29,12 @@
     editing = null;
     name = "";
     instruction = "";
-    autonomy = "confirm_critical";
-    maxSteps = 25;
   }
 
   function startEdit(t: Tpl) {
     editing = t;
     name = t.name;
     instruction = t.instruction;
-    autonomy = (t.autonomy as any) ?? "confirm_critical";
-    maxSteps = t.max_steps ?? 25;
   }
 
   async function save() {
@@ -49,11 +43,11 @@
       if (!instruction.trim()) { err = $_("templates.instruction_required"); return; }
       if (editing) {
         await invoke("template_update", {
-          id: editing.id, name, instruction, autonomy, maxSteps,
+          id: editing.id, name, instruction,
         });
       } else {
         await invoke("template_add", {
-          name, instruction, autonomy, maxSteps,
+          name, instruction,
         });
       }
       reset();
@@ -76,7 +70,7 @@
 
   async function runNow(t: Tpl) {
     await ensureChatListeners();
-    await startTask(t.instruction, t.autonomy, t.max_steps);
+    await startTask(t.instruction);
     await goto("/");
   }
 
@@ -102,14 +96,6 @@
     <label>{$_("templates.instruction_label")}
       <textarea rows="4" bind:value={instruction} placeholder={$_("templates.instruction_placeholder")}></textarea>
     </label>
-    <label>{$_("templates.autonomy_label")}
-      <select bind:value={autonomy}>
-        <option value="full">full</option>
-        <option value="confirm_critical">confirm_critical</option>
-        <option value="confirm_each">confirm_each</option>
-      </select>
-    </label>
-    <label>{$_("templates.max_steps_label")} <input type="number" min="1" max="200" bind:value={maxSteps} /></label>
     <div class="actions">
       <button onclick={save}>{editing ? $_("templates.save_edit_button") : $_("templates.save_new_button")}</button>
       {#if editing}<button class="ghost" onclick={reset}>{$_("templates.cancel_button")}</button>{/if}
@@ -123,7 +109,6 @@
         <div class="info">
           <div class="name">{t.name}</div>
           <div class="instr">{t.instruction}</div>
-          <div class="meta">{t.autonomy} · {$_("templates.step_count", { values: { n: t.max_steps } })}</div>
         </div>
         <div class="ops">
           <button onclick={() => runNow(t)}>{$_("templates.run_button")}</button>

@@ -21,11 +21,9 @@
 ============== ==========================================================
 ``ping``        连通性探活，返回 ``{"pong": True}``。
 ``start_task``  开始一个任务。使用当前 active thread（没有则以该 instruction
-                为标题自动新建）。``params``: ``{"instruction": str,
-                "autonomy"?: ..., "max_steps"?: int}``。
+                为标题自动新建）。``params``: ``{"instruction": str}``。
 ``cancel``      请求取消当前任务。
 ``get_status``  返回运行中的任务状态。
-``set_autonomy`` 修改默认自动度。
 ``thread_new``    ``{title?}`` 创建新 thread 并设为 active。
 ``thread_list``   列出所有 thread（按 updated_ms 倒序）。
 ``thread_read``   ``{id}`` 读某 thread 的 events.jsonl + meta。
@@ -36,7 +34,7 @@
 
 事件类型：
 
-- ``run_start`` ``{instruction, run_dir, model, max_steps, autonomy}``
+- ``run_start`` ``{instruction, run_dir, model}``
 - ``error`` ``{message}``
 
 启动方式：``python -m lucid --sidecar``。
@@ -284,8 +282,6 @@ instruction in this run.
                 payload.append({
                     "thread_id": tid,
                     "instruction": it.get("instruction") or "",
-                    "autonomy": it.get("autonomy"),
-                    "max_steps": it.get("max_steps"),
                     "priority": int(it.get("priority", 1)),
                     "extra_system": it.get("extra_system") or "",
                     "file_refs": it.get("file_refs") or [],
@@ -345,8 +341,6 @@ instruction in this run.
             queue_item = {
                 "instruction": entry.get("instruction") or "",
                 "thread": thread,
-                "autonomy": entry.get("autonomy"),
-                "max_steps": entry.get("max_steps"),
                 "priority": int(entry.get("priority", 1)),
                 "extra_system": entry.get("extra_system") or "",
                 "file_refs": file_refs if isinstance(file_refs, list) else [],
@@ -376,15 +370,13 @@ instruction in this run.
         self._append_startup_log(f"argv={sys.argv}")
         self._append_startup_log(f"cwd={os.getcwd()}")
         self._append_startup_log(
-            f"provider={(self.cfg.llm.provider or 'proxy').lower()} model={self._active_model()} autonomy={self.cfg.safety.autonomy} max_steps={self.cfg.llm.max_steps}"
+            f"provider={(self.cfg.llm.provider or 'proxy').lower()} model={self._active_model()}"
         )
         self._append_startup_log(
             f"visual_notify enabled={getattr(self.cfg, 'visual_notify', None) and self.cfg.visual_notify.enabled} poll_interval={getattr(self.cfg.visual_notify, 'poll_interval_sec', 'n/a') if getattr(self.cfg, 'visual_notify', None) else 'n/a'}"
         )
         _writeln({"event": "ready", "model": self._active_model(),
                   "provider": (self.cfg.llm.provider or "proxy").lower(),
-                  "autonomy": self.cfg.safety.autonomy,
-                  "max_steps": self.cfg.llm.max_steps,
                   # 队列不持久化，重启后一定是空。显式带上让前端有权
                   # 威 reset上轮会话留下的 ghost “排队中” 状态。
                   "queue": self._queue_snapshot()})
@@ -397,8 +389,6 @@ instruction in this run.
                 instruction=self._LAUNCHER_SCAN_INSTRUCTION,
                 spec={"kind": "daily", "time": "03:30"},
                 action=self._LAUNCHER_SCAN_ACTION,
-                autonomy="full",
-                max_steps=1,
                 enabled=True,
             )
         except Exception as exc:
@@ -412,8 +402,6 @@ instruction in this run.
                 instruction=self._TRAY_PROMOTE_INSTRUCTION,
                 spec={"kind": "daily", "time": "03:35"},
                 action=self._TRAY_PROMOTE_ACTION,
-                autonomy="full",
-                max_steps=1,
                 enabled=True,
             )
         except Exception as exc:
@@ -483,8 +471,6 @@ instruction in this run.
                 instruction=self._VISUAL_NOTIFY_INSTRUCTION,
                 spec={"kind": "secondly", "every": recommended_every},
                 action=self._VISUAL_NOTIFY_ACTION,
-                autonomy="full",
-                max_steps=1,
                 enabled=True,
                 auto_chat_apps=["微信", "Microsoft Teams"],
             )
@@ -926,8 +912,6 @@ instruction in this run.
             "instruction": self._current_instruction,
             "current_thread_id": self._current_thread_id,
             "queue": self._queue_snapshot(),
-            "autonomy": self.cfg.safety.autonomy,
-            "max_steps": self.cfg.llm.max_steps,
             "model": self._active_model(),
             "provider": (self.cfg.llm.provider or "proxy").lower(),
         }
@@ -996,13 +980,6 @@ instruction in this run.
             "provider": (new_cfg.llm.provider or "proxy").lower(),
             "model": self._active_model(),
         }
-
-    def _rpc_set_autonomy(self, params: dict[str, Any]) -> dict[str, Any]:
-        autonomy = params.get("autonomy", "")
-        if autonomy not in ("full", "confirm_critical", "confirm_each"):
-            raise ValueError(f"invalid autonomy: {autonomy!r}")
-        self.cfg.safety.autonomy = autonomy
-        return {"autonomy": autonomy}
 
     # ---- doze (idle reflection) ----
 
@@ -1304,8 +1281,6 @@ instruction in this run.
         return templates_mod.add_template(
             name=params.get("name", ""),
             instruction=params.get("instruction", ""),
-            autonomy=params.get("autonomy") or "confirm_critical",
-            max_steps=int(params.get("max_steps") or 25),
         )
 
     def _rpc_template_update(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1316,8 +1291,6 @@ instruction in this run.
             tid,
             name=params.get("name"),
             instruction=params.get("instruction"),
-            autonomy=params.get("autonomy"),
-            max_steps=params.get("max_steps"),
         )
         if item is None:
             raise ValueError(f"template {tid!r} not found")
@@ -1341,8 +1314,6 @@ instruction in this run.
             instruction=params.get("instruction", ""),
             spec=spec,
             action=params.get("action") or "task",
-            autonomy=params.get("autonomy") or "confirm_critical",
-            max_steps=int(params.get("max_steps") or 25),
             enabled=bool(params.get("enabled", True)),
             constraints=params.get("constraints"),
             auto_chat_apps=params.get("auto_chat_apps"),
@@ -1358,8 +1329,6 @@ instruction in this run.
             instruction=params.get("instruction"),
             spec=params.get("spec"),
             action=params.get("action"),
-            autonomy=params.get("autonomy"),
-            max_steps=params.get("max_steps"),
             enabled=params.get("enabled"),
             constraints=params.get("constraints"),
             auto_chat_apps=params.get("auto_chat_apps"),
@@ -1417,8 +1386,6 @@ instruction in this run.
             )
             res = self._rpc_start_task({
                 "instruction": instruction,
-                "autonomy": item.get("autonomy"),
-                "max_steps": item.get("max_steps"),
                 "priority": 1,
                 "_thread": sched_thread,
                 "_source": "scheduled",
@@ -1510,8 +1477,6 @@ instruction in this run.
         instruction = (params.get("instruction") or "").strip()
         if not instruction:
             raise ValueError("instruction is required")
-        autonomy = params.get("autonomy")
-        max_steps = params.get("max_steps")
         priority = self._normalize_priority(params.get("priority", 1))
         # 额外追加在 system prompt 末尾的约束文本，只供调度者（如
         # _on_taskbar_notify_confirmed 的 AUTO-REPLY SAFETY POLICY）使用。
@@ -1532,8 +1497,6 @@ instruction in this run.
                     "path": pt,
                     "kind": (ref.get("kind") or "").strip() or "file",
                 })
-        if autonomy and autonomy not in ("full", "confirm_critical", "confirm_each"):
-            raise ValueError(f"invalid autonomy: {autonomy!r}")
         # 可选：调用方（如 scheduler）已经为本任务建好了独立 thread。
         preset_thread = params.get("_thread")
         if not isinstance(preset_thread, ThreadLog):
@@ -1549,8 +1512,6 @@ instruction in this run.
                 queue_item = {
                     "instruction": instruction,
                     "thread": qthread,
-                    "autonomy": autonomy,
-                    "max_steps": max_steps,
                     "priority": priority,
                     "extra_system": extra_system,
                     "file_refs": file_refs,
@@ -1574,11 +1535,7 @@ instruction in this run.
                 return {"queued": True, "position": position,
                         "thread_id": qthread.id}
 
-            # 立刻跑：覆盖静态配置，使用 preset_thread / active thread / 新建 thread。
-            if autonomy:
-                self.cfg.safety.autonomy = autonomy
-            if max_steps:
-                self.cfg.llm.max_steps = int(max_steps)
+            # 立刻跑：使用 preset_thread / active thread / 新建 thread。
             if preset_thread is not None:
                 thread = preset_thread
                 self._active_thread = preset_thread
@@ -1683,15 +1640,9 @@ instruction in this run.
             self._persist_queue()
             instruction = nxt["instruction"]
             thread = nxt["thread"]
-            autonomy = nxt.get("autonomy")
-            max_steps = nxt.get("max_steps")
             priority = self._normalize_priority(nxt.get("priority", 1))
             extra_system = nxt.get("extra_system") or ""
             file_refs = nxt.get("file_refs") or []
-            if autonomy:
-                self.cfg.safety.autonomy = autonomy
-            if max_steps:
-                self.cfg.llm.max_steps = int(max_steps)
             self._cancel.clear()
             self._current_instruction = instruction
             self._current_thread_id = thread.id

@@ -1,7 +1,7 @@
 //! Sidecar bridge: spawn `python -m lucid --sidecar` and pipe NDJSON.
 //!
 //! - Frontend → Rust: invoke commands `sidecar_start_task / sidecar_cancel /
-//!   sidecar_get_status / sidecar_set_autonomy / sidecar_ping`.
+//!   sidecar_get_status / sidecar_ping`.
 //! - Rust → Frontend: each line of sidecar stdout is forwarded as a Tauri
 //!   event named `lucid://event`.
 //! - Crash recovery: if the child exits unexpectedly we emit
@@ -297,8 +297,6 @@ pub struct FileRef {
 #[serde(rename_all = "camelCase")]
 pub struct StartArgs {
     pub instruction: String,
-    pub autonomy: Option<String>,
-    pub max_steps: Option<u32>,
     /// Multi-modal attachments. Images pasted from the clipboard are persisted to
     /// `<app_local_data_dir>/inbox/` first via `save_inbox_image` so every entry
     /// here is an absolute disk path.
@@ -309,12 +307,6 @@ pub struct StartArgs {
 #[tauri::command]
 pub async fn sidecar_start_task(args: StartArgs) -> Result<Value, String> {
     let mut params = json!({"instruction": args.instruction});
-    if let Some(a) = args.autonomy {
-        params["autonomy"] = json!(a);
-    }
-    if let Some(m) = args.max_steps {
-        params["max_steps"] = json!(m);
-    }
     if let Some(refs) = args.file_refs {
         if !refs.is_empty() {
             params["file_refs"] = serde_json::to_value(refs).unwrap_or_else(|_| json!([]));
@@ -331,13 +323,6 @@ pub async fn sidecar_cancel() -> Result<Value, String> {
 #[tauri::command]
 pub async fn sidecar_get_status() -> Result<Value, String> {
     instance().request("get_status", json!({})).await
-}
-
-#[tauri::command]
-pub async fn sidecar_set_autonomy(autonomy: String) -> Result<Value, String> {
-    instance()
-        .request("set_autonomy", json!({"autonomy": autonomy}))
-        .await
 }
 
 /// Liveness probe of the sidecar JSON-RPC pipe.
@@ -523,18 +508,16 @@ pub async fn template_list() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn template_add(name: String, instruction: String, autonomy: Option<String>, max_steps: Option<i64>) -> Result<Value, String> {
+pub async fn template_add(name: String, instruction: String) -> Result<Value, String> {
     instance().request("template_add", json!({
         "name": name, "instruction": instruction,
-        "autonomy": autonomy, "max_steps": max_steps,
     })).await
 }
 
 #[tauri::command]
-pub async fn template_update(id: String, name: Option<String>, instruction: Option<String>, autonomy: Option<String>, max_steps: Option<i64>) -> Result<Value, String> {
+pub async fn template_update(id: String, name: Option<String>, instruction: Option<String>) -> Result<Value, String> {
     instance().request("template_update", json!({
         "id": id, "name": name, "instruction": instruction,
-        "autonomy": autonomy, "max_steps": max_steps,
     })).await
 }
 
@@ -550,10 +533,9 @@ pub async fn schedule_list() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn schedule_add(name: String, instruction: String, spec: Value, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>) -> Result<Value, String> {
+pub async fn schedule_add(name: String, instruction: String, spec: Value, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>) -> Result<Value, String> {
     instance().request("schedule_add", json!({
         "name": name, "instruction": instruction, "spec": spec,
-        "autonomy": autonomy, "max_steps": max_steps,
         "enabled": enabled.unwrap_or(true),
         "constraints": constraints,
         "auto_chat_apps": auto_chat_apps,
@@ -561,10 +543,10 @@ pub async fn schedule_add(name: String, instruction: String, spec: Value, autono
 }
 
 #[tauri::command]
-pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, autonomy: Option<String>, max_steps: Option<i64>, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>) -> Result<Value, String> {
+pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>) -> Result<Value, String> {
     instance().request("schedule_update", json!({
         "id": id, "name": name, "instruction": instruction, "spec": spec,
-        "autonomy": autonomy, "max_steps": max_steps, "enabled": enabled,
+        "enabled": enabled,
         "constraints": constraints,
         "auto_chat_apps": auto_chat_apps,
     })).await
@@ -628,15 +610,14 @@ pub async fn reload_config() -> Result<Value, String> {
     instance().request("reload_config", json!({})).await
 }
 
-/// Read base_url / model / api_key + autonomy / max_steps from config.toml so the
+/// Read base_url / model / api_key from config.toml so the
 /// settings UI can prefill. Returns null fields if config can't be read.
 #[tauri::command]
 pub async fn read_settings() -> Result<Value, String> {
     let path = settings_path();
     let raw = std::fs::read_to_string(&path).unwrap_or_default();
     let mut provider = String::new();
-    let mut max_steps: i64 = 0;
-    let mut autonomy = String::new();
+    let mut emergency_hotkey = String::new();
     let mut temperature: Option<f64> = None;
     let mut top_p: Option<f64> = None;
     let mut proxy_base_url = String::new();
@@ -656,7 +637,6 @@ pub async fn read_settings() -> Result<Value, String> {
         match section.as_str() {
             "[llm]" => {
                 if let Some(v) = parse_kv(l, "provider")   { provider   = v; }
-                if let Some(v) = parse_kv(l, "max_steps")  { max_steps  = v.parse::<i64>().unwrap_or(0); }
                 if let Some(v) = parse_kv(l, "temperature") { temperature = v.parse::<f64>().ok(); }
                 if let Some(v) = parse_kv(l, "top_p")       { top_p       = v.parse::<f64>().ok(); }
             }
@@ -674,7 +654,7 @@ pub async fn read_settings() -> Result<Value, String> {
                 if let Some(v) = parse_kv(l, "model") { copilot_model = v; }
             }
             "[safety]" => {
-                if let Some(v) = parse_kv(l, "autonomy") { autonomy = v; }
+                if let Some(v) = parse_kv(l, "emergency_hotkey") { emergency_hotkey = v; }
             }
             _ => {}
         }
@@ -683,8 +663,7 @@ pub async fn read_settings() -> Result<Value, String> {
     Ok(json!({
         "path": path.display().to_string(),
         "provider": provider,
-        "autonomy": autonomy,
-        "max_steps": max_steps,
+        "emergency_hotkey": emergency_hotkey,
         "temperature": temperature,
         "top_p": top_p,
         "proxy": {
@@ -725,10 +704,9 @@ pub struct ProviderCopilotPatch {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SettingsPatch {
     pub provider: Option<String>,
-    pub autonomy: Option<String>,
-    pub max_steps: Option<i64>,
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
+    pub emergency_hotkey: Option<String>,
     pub proxy: Option<ProviderProxyPatch>,
     pub anthropic: Option<ProviderAnthropicPatch>,
     pub copilot: Option<ProviderCopilotPatch>,
@@ -749,7 +727,6 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
     // Build the desired key→value map per section from the patch.
     let mut want: std::collections::BTreeMap<&'static str, Vec<(&'static str, String)>> = Default::default();
     if let Some(v) = &patch.provider  { want.entry("[llm]").or_default().push(("provider", v.clone())); }
-    if let Some(v) = &patch.max_steps { want.entry("[llm]").or_default().push(("max_steps", v.to_string())); }
     if let Some(v) = &patch.temperature { want.entry("[llm]").or_default().push(("temperature", format!("{}", v))); }
     if let Some(v) = &patch.top_p       { want.entry("[llm]").or_default().push(("top_p",       format!("{}", v))); }
     if let Some(p) = &patch.proxy {
@@ -765,7 +742,7 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
     if let Some(p) = &patch.copilot {
         if let Some(v) = &p.model { want.entry("[llm.copilot]").or_default().push(("model", v.clone())); }
     }
-    if let Some(v) = &patch.autonomy { want.entry("[safety]").or_default().push(("autonomy", v.clone())); }
+    if let Some(v) = &patch.emergency_hotkey { want.entry("[safety]").or_default().push(("emergency_hotkey", v.clone())); }
 
     // Group existing file into sections (preserving order). Index 0 is the
     // pre-section preamble (rare; probably empty/comments).
@@ -779,7 +756,7 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
         }
     }
 
-    let is_numeric = |k: &str| matches!(k, "max_steps" | "temperature" | "top_p");
+    let is_numeric = |k: &str| matches!(k, "temperature" | "top_p");
     let format_kv = |k: &str, v: &str| -> String {
         if is_numeric(k) {
             format!("{k} = {v}")
@@ -882,7 +859,7 @@ fn ensure_settings_file(path: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let skeleton = "[llm]\nprovider = \"anthropic\"\nmax_steps = 25\nmax_tokens = 16384\nkeep_recent_screenshots = 4\n\n[llm.anthropic]\nmodel = \"claude-opus-4-6\"\napi_key = \"\"\n\n[llm.copilot]\nmodel = \"claude-opus-4-6\"\n\n[llm.proxy]\nbase_url = \"http://localhost:4000\"\nmodel = \"\"\napi_key = \"\"\n\n[safety]\nautonomy = \"confirm_critical\"\n";
+    let skeleton = "[llm]\nprovider = \"anthropic\"\nmax_tokens = 16384\nkeep_recent_screenshots = 4\n\n[llm.anthropic]\nmodel = \"claude-opus-4-6\"\napi_key = \"\"\n\n[llm.copilot]\nmodel = \"claude-opus-4-6\"\n\n[llm.proxy]\nbase_url = \"http://localhost:4000\"\nmodel = \"\"\napi_key = \"\"\n";
     std::fs::write(path, skeleton)
 }
 

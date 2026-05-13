@@ -274,7 +274,7 @@ SCHEDULE_LIST_SCHEMA: dict = {
         "name": "schedule_list",
         "description": (
             "List all scheduled tasks the user has registered. Each entry: id, name, instruction, spec "
-            "(kind=secondly/minutely/hourly/daily/weekly + every/minute/time/weekday/tz), autonomy, max_steps, enabled, optional constraints "
+            "(kind=secondly/minutely/hourly/daily/weekly + every/minute/time/weekday/tz), enabled, optional constraints "
             "(hours/weekdays/date_start_ms/date_end_ms), next_ms, last_run_ms. Use this before adding a new schedule "
             "to avoid duplicates, and before update/delete to find the target id."
         ),
@@ -326,8 +326,6 @@ SCHEDULE_ADD_SCHEMA: dict = {
                 "name":        {"type": "string", "description": "Short human-readable name (<=40 chars)."},
                 "instruction": {"type": "string", "description": "The task instruction the agent will receive when this fires."},
                 "spec":        _SPEC_PROP,
-                "autonomy":    {"type": "string", "enum": ["full", "confirm_critical", "confirm_each"], "description": "Default 'confirm_critical'."},
-                "max_steps":   {"type": "integer", "description": "Step budget per fire. Defaults to the global [llm].max_steps from config.toml."},
                 "enabled":     {"type": "boolean", "description": "Default true."},
                 "constraints": _CONSTRAINTS_PROP,
             },
@@ -351,8 +349,6 @@ SCHEDULE_UPDATE_SCHEMA: dict = {
                 "name":        {"type": "string"},
                 "instruction": {"type": "string"},
                 "spec":        _SPEC_PROP,
-                "autonomy":    {"type": "string", "enum": ["full", "confirm_critical", "confirm_each"]},
-                "max_steps":   {"type": "integer"},
                 "enabled":     {"type": "boolean"},
                 "constraints": _CONSTRAINTS_PROP,
             },
@@ -969,7 +965,6 @@ def _fmt_schedule(it: dict) -> str:
     if cons:
         parts.append(f"  constraints: {cons}")
     parts.append(f"  instruction: {(it.get('instruction') or '')[:120]}")
-    parts.append(f"  autonomy={it.get('autonomy')} max_steps={it.get('max_steps')}")
     nm = it.get("next_ms") or 0
     lm = it.get("last_run_ms") or 0
     if nm:
@@ -997,8 +992,6 @@ def _dispatch_schedule(fn_name: str, args: dict[str, Any], cfg: Config) -> ToolR
                 name=str(args.get("name") or ""),
                 instruction=str(args.get("instruction") or ""),
                 spec=spec,
-                autonomy=str(args.get("autonomy") or "confirm_critical"),
-                max_steps=int(args.get("max_steps") or cfg.llm.max_steps),
                 enabled=bool(args.get("enabled", True)),
                 constraints=args.get("constraints"),
             )
@@ -1009,7 +1002,7 @@ def _dispatch_schedule(fn_name: str, args: dict[str, Any], cfg: Config) -> ToolR
             if not sid:
                 return ToolResult(error="id required")
             fields: dict[str, Any] = {}
-            for k in ("name", "instruction", "spec", "autonomy", "max_steps", "enabled", "constraints"):
+            for k in ("name", "instruction", "spec", "enabled", "constraints"):
                 if k in args and args[k] is not None:
                     fields[k] = args[k]
             it = scheduler_mod.update_schedule(sid, **fields)

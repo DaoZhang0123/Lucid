@@ -160,6 +160,7 @@
 - [ ] **设置里加联系方式**: https://github.com/DaoZhang0123/ zhangdao@buaa.edu.cn https://x.com/zhangdao439566
 - [ ] **auto reply**: auto reply设定prompt
 - [ ] 安装位置在C:\Users\zhang\.lucid
+- [ ] 增加skill，并且要支持online search然后offline load，但是要在system prompt里指明这是网上下载的，如果违反安全原则则去掉
 
 ---
 

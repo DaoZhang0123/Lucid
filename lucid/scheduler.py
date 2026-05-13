@@ -300,7 +300,6 @@ def _allowed(constraints: dict[str, Any] | None, now: datetime) -> bool:
 
 
 def add_schedule(name: str, instruction: str, spec: dict[str, Any],
-                 autonomy: str = "confirm_critical", max_steps: int = 25,
                  enabled: bool = True,
                  constraints: dict[str, Any] | None = None,
                  action: str | None = None,
@@ -318,8 +317,6 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
         instruction = instruction or "__promote_tray_icons__"
     if not instruction:
         raise ValueError("instruction required")
-    if autonomy not in ("full", "confirm_critical", "confirm_each"):
-        raise ValueError(f"invalid autonomy: {autonomy!r}")
     _validate(spec)
     cons = _validate_constraints(constraints)
     items = _load()
@@ -342,8 +339,6 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
         "instruction": instruction,
         "action": schedule_action,
         "spec": spec,
-        "autonomy": autonomy,
-        "max_steps": int(max_steps),
         "enabled": bool(enabled),
         "created_ms": int(time.time() * 1000),
         "next_ms": int(_next_run(spec, datetime.now()).timestamp() * 1000),
@@ -357,7 +352,6 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
 
 
 def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
-                    autonomy: str = "confirm_critical", max_steps: int = 25,
                     enabled: bool = True,
                     constraints: dict[str, Any] | None = None,
                     action: str | None = None,
@@ -399,8 +393,6 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
             or (primary.get("instruction") or "").strip() != ins
             or (primary.get("spec") or {}) != spec
             or str(primary.get("action") or "task").strip().lower() != schedule_action
-            or (primary.get("autonomy") or "confirm_critical") != autonomy
-            or int(primary.get("max_steps") or 25) != int(max_steps)
             or bool(primary.get("enabled", True)) != bool(enabled)
             or (primary.get("constraints") or {}) != cons
             or seed_apps
@@ -412,8 +404,6 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
             instruction=instruction,
             spec=spec,
             action=schedule_action,
-            autonomy=autonomy,
-            max_steps=max_steps,
             enabled=enabled,
             constraints=cons,
         )
@@ -425,8 +415,6 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
         name=name,
         instruction=instruction,
         spec=spec,
-        autonomy=autonomy,
-        max_steps=max_steps,
         enabled=enabled,
         constraints=cons,
         action=schedule_action,
@@ -442,7 +430,7 @@ def update_schedule(sid: str, **fields: Any) -> dict[str, Any] | None:
                 _validate(fields["spec"])
                 it["spec"] = fields["spec"]
                 it["next_ms"] = int(_next_run(it["spec"], datetime.now()).timestamp() * 1000)
-            for k in ("name", "instruction", "autonomy", "max_steps", "enabled"):
+            for k in ("name", "instruction", "enabled"):
                 if k in fields and fields[k] is not None:
                     it[k] = fields[k]
             if "action" in fields and fields["action"] is not None:

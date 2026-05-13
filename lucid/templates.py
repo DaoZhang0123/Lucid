@@ -1,8 +1,7 @@
 """任务模板 templates.json。
 
 存放在 ``%LOCALAPPDATA%\\dev.lucid\\templates.json``。一个模板是一段可复用
-的 instruction + 默认自动度 + 默认步数。前端可以一键发送（仍然走正常的
-``start_task`` RPC）。
+的 instruction。前端可以一键发送（仍然走正常的 ``start_task`` RPC）。
 
 """
 from __future__ import annotations
@@ -51,21 +50,16 @@ def list_templates() -> list[dict[str, Any]]:
     return _load()
 
 
-def add_template(name: str, instruction: str, autonomy: str = "confirm_critical",
-                 max_steps: int = 25) -> dict[str, Any]:
+def add_template(name: str, instruction: str) -> dict[str, Any]:
     name = (name or "").strip() or "未命名模板"
     instruction = (instruction or "").strip()
     if not instruction:
         raise ValueError("instruction required")
-    if autonomy not in ("full", "confirm_critical", "confirm_each"):
-        raise ValueError(f"invalid autonomy: {autonomy!r}")
     items = _load()
     item = {
         "id": uuid.uuid4().hex[:12],
         "name": name,
         "instruction": instruction,
-        "autonomy": autonomy,
-        "max_steps": int(max_steps),
         "created_ms": int(time.time() * 1000),
     }
     items.append(item)
@@ -77,7 +71,7 @@ def update_template(tid: str, **fields: Any) -> dict[str, Any] | None:
     items = _load()
     for it in items:
         if it["id"] == tid:
-            for k in ("name", "instruction", "autonomy", "max_steps"):
+            for k in ("name", "instruction"):
                 if k in fields and fields[k] is not None:
                     it[k] = fields[k]
             it["updated_ms"] = int(time.time() * 1000)

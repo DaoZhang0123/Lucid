@@ -53,7 +53,6 @@ class LLMConfig:
     provider: str = "anthropic"
     model: str = "claude-opus-4-5"
     max_tokens: int = 16384
-    max_steps: int = 25
     enable_prompt_cache: bool = True
     # Sampling parameters. Sent to the provider on every request when not None;
     # leave None to use the provider's server-side default (usually
@@ -112,9 +111,7 @@ class ScreenshotConfig:
 
 @dataclass
 class SafetyConfig:
-    hitl_keywords: list[str] = field(default_factory=list)
     emergency_hotkey: str = "ctrl+alt+esc"
-    autonomy: str = "confirm_critical"
     # 行为层：在保存/打开对话框里检测到“在左侧 25% 区域点击”时，注入一条
     # “请用文件名框/地址栏 type 路径”的纠正提示，避免模型去左侧导航树逐层点。
     save_dialog_sidebar_guard: bool = True

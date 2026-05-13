@@ -29,10 +29,9 @@
   // copilot
   let copModel = $state("claude-opus-4-6");
 
-  let autonomy = $state<"full" | "confirm_critical" | "confirm_each">("confirm_critical");
-  let maxSteps = $state(25);
   let temperature = $state<number>(0.2);
   let topP = $state<number>(1.0);
+  let emergencyHotkey = $state("ctrl+alt+esc");
   let saving = $state(false);
   let savedAt = $state("");
   let error = $state("");
@@ -57,10 +56,9 @@
       const cfg = (await invoke("read_settings")) as {
         path: string;
         provider: string;
-        autonomy: string;
-        max_steps: number;
         temperature: number | null;
         top_p: number | null;
+        emergency_hotkey?: string;
         proxy: { base_url: string; model: string; api_key: string };
         anthropic: { api_key: string; model: string; base_url: string };
         copilot: { model: string };
@@ -76,12 +74,9 @@
       if (cfg.anthropic?.model) anthModel = cfg.anthropic.model;
       if (cfg.anthropic?.base_url) anthBaseUrl = cfg.anthropic.base_url;
       if (cfg.copilot?.model) copModel = cfg.copilot.model;
-      if (cfg.autonomy === "full" || cfg.autonomy === "confirm_critical" || cfg.autonomy === "confirm_each") {
-        autonomy = cfg.autonomy;
-      }
-      if (cfg.max_steps && cfg.max_steps > 0) maxSteps = cfg.max_steps;
       if (typeof cfg.temperature === "number") temperature = cfg.temperature;
       if (typeof cfg.top_p === "number") topP = cfg.top_p;
+      if (cfg.emergency_hotkey) emergencyHotkey = cfg.emergency_hotkey;
     } catch (e) {
       error = String(e);
     }
@@ -100,10 +95,9 @@
       await invoke("write_settings", {
         patch: {
           provider,
-          autonomy,
-          max_steps: maxSteps,
           temperature,
           top_p: topP,
+          emergency_hotkey: emergencyHotkey,
           proxy: { base_url: baseUrl, model, api_key: apiKey },
           anthropic: { api_key: anthApiKey, model: anthModel, base_url: anthBaseUrl },
           copilot: { model: copModel },
@@ -308,18 +302,6 @@
     </label>
     <p class="hint">{$_("settings.language_hint")}</p>
     <label>
-      {$_("settings.default_autonomy_label")}
-      <select bind:value={autonomy}>
-        <option value="full">full</option>
-        <option value="confirm_critical">confirm_critical</option>
-        <option value="confirm_each">confirm_each</option>
-      </select>
-    </label>
-    <label>
-      {$_("settings.max_steps_label")}
-      <input type="number" min="1" max="200" bind:value={maxSteps} />
-    </label>
-    <label>
       {$_("settings.temperature_label")}
       <input type="number" min="0" max="2" step="0.05" bind:value={temperature} />
     </label>
@@ -328,6 +310,11 @@
       <input type="number" min="0" max="1" step="0.05" bind:value={topP} />
     </label>
     <p class="hint">{$_("settings.sampling_hint")}</p>
+    <label>
+      {$_("settings.emergency_hotkey_label")}
+      <input type="text" bind:value={emergencyHotkey} placeholder="ctrl+alt+esc" />
+    </label>
+    <p class="hint">{$_("settings.emergency_hotkey_hint")}</p>
     <div class="row">
       <button onclick={save} disabled={saving}>{saving ? $_("settings.saving_button") : $_("settings.save_button")}</button>
       {#if savedAt}<span class="ok">{$_("settings.saved_at", { values: { at: savedAt } })}</span>{/if}

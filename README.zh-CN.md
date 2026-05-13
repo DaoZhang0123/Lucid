@@ -230,15 +230,15 @@ cd D:\Project\Lucid
 # 连通性烟雾测试（单轮，不动鼠键）
 .venv\Scripts\python.exe -m lucid --smoke-test "你是谁？一句话。"
 
-# 谨慎模式：每步 y/n
-.venv\Scripts\python.exe -m lucid --max-steps 4 --autonomy confirm_each `
+# 跑一个任务
+.venv\Scripts\python.exe -m lucid `
     "截一张全屏图，告诉我屏幕上有几个明显的窗口"
 
 # 换模型
 .venv\Scripts\python.exe -m lucid --model claude-sonnet-4.5 "打开记事本，输入 hello"
 
-# 全自动（只在虚拟机 / 干净桌面里跑）
-.venv\Scripts\python.exe -m lucid --autonomy full "打开记事本，输入 hello world，保存到桌面"
+# 只在虚拟机 / 干净桌面里跑这种可能影响现有文件的任务
+.venv\Scripts\python.exe -m lucid "打开记事本，输入 hello world，保存到桌面"
 ```
 
 如果出现 `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`，请在 `%LOCALAPPDATA%\dev.lucid\config.toml` 里设置 `[llm.proxy].api_key`，或导出 `LITELLM_MASTER_KEY` 环境变量。
@@ -255,11 +255,11 @@ cd D:\Project\Lucid
 
 | 段 | 控什么 |
 | --- | --- |
-| `[llm]` | provider、最大步数、max_tokens、prompt-cache、temperature/top-p、截图保留策略 |
+| `[llm]` | provider、max_tokens、prompt-cache、temperature/top-p、截图保留策略 |
 | `[llm.anthropic]` / `[llm.copilot]` / `[llm.proxy]` | 各 provider 的 model + 端点 + key |
 | `[logging]` | 每次运行日志根目录、文本/图片等级（`DEBUG/INFO/WARNING/ERROR/OFF`）、`png/jpg`、轮转 |
 | `[screenshot]` | 三级金字塔的频率、长边上限、每级保留张数、变化检测阈值 |
-| `[safety]` | HITL 关键字、急停热键（`ctrl+alt+esc`）、默认自动度、落点取证、保存对话框防护 |
+| `[safety]` | 急停热键（`ctrl+alt+esc`）、落点取证、保存对话框防护 |
 | `[input]` | `chinese_input = "clipboard"`（推荐）或 `unicode_sendinput`，动作间隔 |
 | `[visual_notify]` | 任务栏轮询频率、dHash 阈值、LLM 二次确认冷却、auto-chat 指令 |
 | `[doze]` | 打盹反思的各种上限 |

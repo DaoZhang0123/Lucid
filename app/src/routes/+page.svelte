@@ -20,8 +20,6 @@
   } from "$lib/chatStore.svelte";
 
   let instruction = $state("");
-  let autonomy = $state<"full" | "confirm_critical" | "confirm_each">("confirm_critical");
-  let maxSteps = $state(25);
   let scrollEl: HTMLDivElement | undefined = $state();
   let sidebarOpen = $state(true);
   let lightbox = $state<string | null>(null);
@@ -29,15 +27,6 @@
   type ChipRef = FileRef & { previewUrl?: string };
   let attachments = $state<ChipRef[]>([]);
   let dragActive = $state(false);
-  // 一次性同步：sidecar ready 事件里带了 config 的 max_steps（chat.totalSteps），
-  // 之后用户在输入框改的值不再被覆盖。
-  let _maxStepsSyncedFromSidecar = false;
-  $effect(() => {
-    if (!_maxStepsSyncedFromSidecar && chat.totalSteps > 0) {
-      maxSteps = chat.totalSteps;
-      _maxStepsSyncedFromSidecar = true;
-    }
-  });
 
   $effect(() => {
     void chat.items.length;
@@ -176,7 +165,7 @@
     instruction = "";
     const refs = attachments.map(({ name, path, kind }) => ({ name, path, kind }));
     attachments = [];
-    await startTask(text, autonomy, maxSteps, refs);
+    await startTask(text, refs);
   }
 
   async function newThread() {
@@ -186,14 +175,6 @@
 
   async function cancel() {
     await cancelTask();
-  }
-
-  async function setAutonomy() {
-    try {
-      await invoke("sidecar_set_autonomy", { autonomy });
-    } catch (e) {
-      chat.items = [...chat.items, { kind: "system", text: $_("footer.autonomy_switch_failed", { values: { err: String(e) } }) }];
-    }
   }
 
   async function onPickThread(id: string) {
@@ -471,22 +452,7 @@
             {/each}
           </div>
         {/if}
-        <div class="controls">
-          <label>
-            {$_("footer.autonomy_label")}
-            <select bind:value={autonomy} onchange={setAutonomy}>
-              <option value="full">{$_("footer.autonomy_full")}</option>
-              <option value="confirm_critical">{$_("footer.autonomy_confirm_critical")}</option>
-              <option value="confirm_each">{$_("footer.autonomy_confirm_each")}</option>
-            </select>
-          </label>
-          <label>
-            {$_("footer.max_steps_label")}
-            <input type="number" min="1" max="200" bind:value={maxSteps} />
-          </label>
-          <button class="cancel" onclick={cancel} disabled={!chat.running}>{$_("footer.cancel_button")}</button>
-        </div>
-        <form onsubmit={(e) => { e.preventDefault(); start(); }}>
+        <form onsubmit={(e) => { e.preventDefault(); chat.running ? cancel() : start(); }}>
           <button type="button" class="attach" title={$_("footer.attach_title")}
                   onclick={pickFiles} aria-label={$_("footer.attach_title")}>
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -504,16 +470,14 @@
             rows="2"
             bind:value={instruction}
             onpaste={onPaste}
-            onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); start(); } }}
+            onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chat.running ? cancel() : start(); } }}
           ></textarea>
-          <button type="submit" disabled={!instruction.trim() && attachments.length === 0}>{$_("footer.send_button")}</button>
+          {#if chat.running}
+            <button type="submit" class="stop">{$_("footer.stop_button")}</button>
+          {:else}
+            <button type="submit" disabled={!instruction.trim() && attachments.length === 0}>{$_("footer.send_button")}</button>
+          {/if}
         </form>
-        {#if chat.sidecarStderr.length}
-          <details class="stderr">
-            <summary>{$_("footer.stderr_summary", { values: { n: chat.sidecarStderr.length } })}</summary>
-            <pre>{chat.sidecarStderr.join("\n")}</pre>
-          </details>
-        {/if}
       </footer>
     </main>
   </div>
@@ -684,6 +648,8 @@
   textarea { flex: 1; padding: 0.5rem; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; resize: vertical; }
   form button { padding: 0 1.2rem; background: #2563eb; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
   form button:disabled { opacity: 0.5; cursor: not-allowed; }
+  form button.stop { background: #dc2626; }
+  form button.stop:hover { background: #b91c1c; }
   form button.attach { padding: 0 0.7rem; background: #fff; color: #475569;
                        border: 1px solid #cbd5e1; font-size: 1.1rem; line-height: 1;
                        display: inline-flex; align-items: center; justify-content: center; }
@@ -705,8 +671,6 @@
                   display: flex; align-items: center; justify-content: center; }
   .drop-overlay-inner { background: rgba(255,255,255,0.95); padding: 1rem 1.6rem; border-radius: 8px;
                         font-size: 1.1rem; color: #1e293b; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
-  .stderr { margin-top: 0.4rem; font-size: 0.75rem; color: #6b7280; }
-  .stderr pre { background: #f3f4f6; padding: 0.4rem; max-height: 8rem; overflow: auto; }
 
   .lightbox { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85);
               display: flex; align-items: center; justify-content: center;

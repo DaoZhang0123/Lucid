@@ -31,13 +31,6 @@ def main() -> int:
     parser.add_argument("-c", "--config", default=None, help="config.toml 路径")
     parser.add_argument("--model", default=None, help="覆盖代理模型 ID（如 claude-opus-4.6）")
     parser.add_argument("--base-url", default=None, help="覆盖代理 base_url")
-    parser.add_argument("--max-steps", type=int, default=None, help="覆盖最大步数")
-    parser.add_argument(
-        "--autonomy",
-        choices=["full", "confirm_critical", "confirm_each"],
-        default=None,
-        help="自动度档位",
-    )
     parser.add_argument(
         "--smoke-test",
         action="store_true",
@@ -55,10 +48,6 @@ def main() -> int:
         cfg.llm.proxy.model = args.model
     if args.base_url:
         cfg.llm.proxy.base_url = args.base_url
-    if args.max_steps:
-        cfg.llm.max_steps = args.max_steps
-    if args.autonomy:
-        cfg.safety.autonomy = args.autonomy
 
     # ------ sidecar 模式：stdio JSON-RPC ------
     if args.sidecar:
@@ -113,8 +102,7 @@ def main() -> int:
     _console.rule("[bold green]lucid")
     _console.print(f"[bold]任务[/bold]: {instruction}")
     _console.print(
-        f"[dim]代理: {cfg.llm.proxy.base_url}  ·  模型: {cfg.llm.proxy.model}  ·  "
-        f"自动度: {cfg.safety.autonomy}  ·  步数上限: {cfg.llm.max_steps}[/dim]"
+        f"[dim]代理: {cfg.llm.proxy.base_url}  ·  模型: {cfg.llm.proxy.model}[/dim]"
     )
 
     try:

@@ -231,15 +231,15 @@ cd D:\Project\Lucid
 # Test de connectivité (un seul tour, ne touche pas la souris/clavier)
 .venv\Scripts\python.exe -m lucid --smoke-test "Qui es-tu ? Une phrase."
 
-# Mode prudent : confirmation y/n à chaque étape
-.venv\Scripts\python.exe -m lucid --max-steps 4 --autonomy confirm_each `
+# Lancer une tâche
+.venv\Scripts\python.exe -m lucid `
     "Prends une capture plein écran et dis-moi combien de fenêtres sont visibles."
 
 # Changer de modèle
 .venv\Scripts\python.exe -m lucid --model claude-sonnet-4.5 "Ouvre Notepad et tape hello"
 
-# Autonomie totale (uniquement en VM / bureau jetable)
-..\.venv\Scripts\python.exe -m lucid --autonomy full "Ouvre Notepad, tape hello world, enregistre sur le Bureau"
+# À réserver à une VM / bureau jetable pour les actions destructrices
+..\.venv\Scripts\python.exe -m lucid "Ouvre Notepad, tape hello world, enregistre sur le Bureau"
 ```
 
 Si vous voyez `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`, renseignez `[llm.proxy].api_key` dans `%LOCALAPPDATA%\dev.lucid\config.toml` ou exportez `LITELLM_MASTER_KEY`.
@@ -256,11 +256,11 @@ Sections clés :
 
 | Section | Ce qu'elle contrôle |
 | --- | --- |
-| `[llm]` | provider, étapes max, max_tokens, prompt-cache, temperature/top-p, rétention des captures |
+| `[llm]` | provider, max_tokens, prompt-cache, temperature/top-p, rétention des captures |
 | `[llm.anthropic]` / `[llm.copilot]` / `[llm.proxy]` | model + endpoint + clé par provider |
 | `[logging]` | dossier de log par exécution, niveaux texte/image (`DEBUG/INFO/WARNING/ERROR/OFF`), `png/jpg`, rotation |
 | `[screenshot]` | intervalles des trois niveaux, redimensionnement, rétention par niveau, seuil de détection de changement |
-| `[safety]` | mots-clés HITL, raccourci d'arrêt d'urgence (`ctrl+alt+esc`), autonomie par défaut, vérif de clic, garde dialogues |
+| `[safety]` | raccourci d'arrêt d'urgence (`ctrl+alt+esc`), vérif de clic, garde dialogues |
 | `[input]` | `chinese_input = "clipboard"` (recommandé) ou `unicode_sendinput`, délai entre actions |
 | `[visual_notify]` | fréquence de polling, seuil dHash, cooldown LLM, instruction auto-chat |
 | `[doze]` | limites de la réflexion en veille |

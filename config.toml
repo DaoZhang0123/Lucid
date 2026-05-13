@@ -13,9 +13,6 @@
 #   proxy     — 走任意 OpenAI 兼容代理（LiteLLM、OpenClaw、自建网关…）
 provider = "copilot"
 
-# 单次任务最多 ReAct 步数（硬上限，防失控）
-max_steps = 50
-
 # 模型最长输出 token（Claude Opus 4.x 上限 32768；agent 场景中庸 16384 平衡延迟与不被截断）
 max_tokens = 16384
 
@@ -90,12 +87,8 @@ keep_recent_l3 = 1
 min_per_l2_app = 1
 
 [safety]
-# 危险动作触发 HITL 二次确认的关键字
-hitl_keywords = ["删除", "delete", "rm ", "format", "shutdown", "转账", "支付", "确认付款"]
-# 全局急停热键
+# 全局急停热键（在 /settings 页面也可改）
 emergency_hotkey = "ctrl+alt+esc"
-# 默认自动度档位：full | confirm_critical | confirm_each
-autonomy = "confirm_critical"
 # 保存/打开对话框中检测到"左侧导航树点击"时注入纠正提示（行为层兜底）。
 save_dialog_sidebar_guard = true
 
