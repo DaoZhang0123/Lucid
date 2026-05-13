@@ -256,18 +256,13 @@ instruction in this run.
     #     和监听任务（listener / 例如 visual_notify）重启后**不补跑**：定时任务
     #     的 next_ms 已经在 schedules.json 里推进过，下一次到点会自然 fire；
     #     visual_notify 是基于实时屏幕状态的，过期补跑没有意义。
-    #   - 文件路径：``%LOCALAPPDATA%\\dev.lucid\\queue.json``，与 schedules.json
+    #   - 文件路径：``~/.lucid/queue.json``，与 schedules.json
     #     同目录。每次 enqueue / dequeue 同步写一次，崩溃也至多丢最后一条。
     #   - thread_id 是稳定 ID（thread 目录已经在磁盘上），重启后用
     #     ``ThreadLog.open(thread_id)`` 重新挂上句柄即可，不会丢历史。
     @staticmethod
     def _queue_path() -> Path:
-        if os.name == "nt":
-            local_app = os.environ.get("LOCALAPPDATA")
-            if local_app:
-                return Path(local_app) / "dev.lucid" / "queue.json"
-        home = os.environ.get("HOME") or str(Path.home())
-        return Path(home) / ".lucid" / "queue.json"
+        return Path.home() / ".lucid" / "queue.json"
 
     def _persist_queue(self) -> None:
         try:

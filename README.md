@@ -75,7 +75,7 @@ Lucid ships as a Windows desktop app (`lucid.exe` engine + Tauri/WebView2 GUI). 
 - **Self-check** for monitors / DPI / Win+R alias / click-coordinate offset.
 
 ### Honest about itself
-- Per-run logs at `%LOCALAPPDATA%\dev.lucid\logs\threads\<thread>\` — `events.jsonl`, `messages.json`, every screenshot, full LLM context dumps.
+- Per-run logs at `~/.lucid/logs/threads/<thread>/` — `events.jsonl`, `messages.json`, every screenshot, full LLM context dumps.
 
 ---
 
@@ -133,7 +133,7 @@ Schedules of action `task` with a daily / weekly / interval trigger:
 
 > *"Take a fullscreen screenshot and tell me how many windows are visible."*
 
-> *"Read `C:\Users\me\AppData\Local\dev.lucid\config.toml` and tell me which LLM provider is active."* (Uses the `read_file` meta tool, no GUI clicks.)
+> *"Read `~/.lucid/config.toml` and tell me which LLM provider is active."* (Uses the `read_file` meta tool, no GUI clicks.)
 
 ---
 
@@ -157,7 +157,7 @@ Schedules of action `task` with a daily / weekly / interval trigger:
 └─────────────────────────────────────────────────────┘
 ```
 
-User data: `%LOCALAPPDATA%\dev.lucid\` (config, logs, schedules, memory, icons cache, Copilot token).
+User data: `~/.lucid/` (config, logs, schedules, memory, icons cache, Copilot token).
 
 ---
 
@@ -240,7 +240,7 @@ cd D:\Project\Lucid
 .venv\Scripts\python.exe -m lucid "Open Notepad, type hello world, save to Desktop"
 ```
 
-If you see `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`, set `[llm.proxy].api_key` in `%LOCALAPPDATA%\dev.lucid\config.toml` or export `LITELLM_MASTER_KEY`.
+If you see `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`, set `[llm.proxy].api_key` in `~/.lucid/config.toml` or export `LITELLM_MASTER_KEY`.
 
 `Ctrl+C` to abort. Slamming the mouse to the **top-left corner** triggers PyAutoGUI's fail-safe.
 
@@ -248,7 +248,7 @@ If you see `missing api_key (config .api_key or LITELLM_MASTER_KEY environment v
 
 ## Configuration
 
-Default template: [config.toml](config.toml). The **real** user config is at `%LOCALAPPDATA%\dev.lucid\config.toml` — edit that one (the bundled file is overwritten on upgrade).
+Default template: [config.toml](config.toml). The **real** user config is at `~/.lucid/config.toml` — edit that one (the bundled file is overwritten on upgrade).
 
 Key sections:
 

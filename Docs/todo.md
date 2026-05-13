@@ -38,7 +38,7 @@
 - [x] 窗口最小化到托盘而非任务栏（CloseRequested → hide + prevent_close）
 
 ### 1.2 Tauri ↔ Python 守护进程
-- [x] Python 侧：自写 stdio JSON-RPC 暴露 `ping / start_task / cancel / get_status / set_autonomy / shutdown`（NDJSON 帧、stdout 协议 / stderr 日志）
+- [x] Python 侧：自写 stdio JSON-RPC 暴露 `ping / start_task / cancel / get_status / shutdown`（NDJSON 帧、stdout 协议 / stderr 日志）
 - [x] 流式事件：`run_start / step_start / assistant_text / tool_call / tool_result / step_image / final / error / thread_changed` 通过 stdout 推到前端
 - [x] Thread 级 RPC：`thread_new / thread_list / thread_read / thread_set_active / thread_delete / thread_read_image`（按对话而非按任务汇总）
 - [x] 任务取消：`cancel_event` 在两步之间生效；CancelledError 收尾
@@ -150,7 +150,7 @@
   - 配置：`[rag] enabled / top_k=5 / backend / refresh_every_steps=10 / max_chars_per_entry=300`。
   - 收益：(1) 大幅减少每步发给 LLM 的 prompt 体积；(2) 给模型的 memory/tools 信噪比变高（不会被无关条目干扰）；(3) 为后面 Phase 3 的"用户多人 / 多角色记忆隔离"留接口。
 - [~] **打盹学习**：5分钟内没有任务的时候，启用打盹功能，从执行过任务的 `events.jsonl` 等文件提取需要的信息，比如 icon 信息、成功或失败的点（以防执行任务的时候没有记录下来）等，由大模型来学习，任务等级最低。打盹过的文档记录到 `doze_processed.json`，避免重复学习。
-  - **v0（已落地）**：[lucid/doze.py](lucid/doze.py) `DozeWorker` 后台 tick 线程，由 sidecar 在 `serve()` 启动时拉起；空闲条件 = 没有运行中 worker + 队列为空 + 距上次 user-driven RPC > `idle_threshold_sec`（默认 300s）。一次 pass 选一条**未处理**的最近 thread，把 `events.jsonl` 压缩成纯文本时间线 + 现有 tips/memory 摘要喂给 LLM，工具白名单仅 `learn_tip` / `remember` / `load_app_tips`（**不动鼠键，不发图**）。协作式取消：任意 user-driven RPC（`start_task` / `thread_new` / `cancel` / `set_autonomy`...）都会 `bump_activity()` 并打断当前 pass。新 RPC：`doze_status` / `doze_run_now` / `doze_clear_processed`；新事件：`doze_idle_start` / `doze_pass_done`。配置在 `[doze]`（默认 `enabled = false`，需 `/settings` 显式开启）。详见 [Docs/doze.md](doze.md)。
+  - **v0（已落地）**：[lucid/doze.py](lucid/doze.py) `DozeWorker` 后台 tick 线程，由 sidecar 在 `serve()` 启动时拉起；空闲条件 = 没有运行中 worker + 队列为空 + 距上次 user-driven RPC > `idle_threshold_sec`（默认 300s）。一次 pass 选一条**未处理**的最近 thread，把 `events.jsonl` 压缩成纯文本时间线 + 现有 tips/memory 摘要喂给 LLM，工具白名单仅 `learn_tip` / `remember` / `load_app_tips`（**不动鼠键，不发图**）。协作式取消：任意 user-driven RPC（`start_task` / `thread_new` / `cancel`...）都会 `bump_activity()` 并打断当前 pass。新 RPC：`doze_status` / `doze_run_now` / `doze_clear_processed`；新事件：`doze_idle_start` / `doze_pass_done`。配置在 `[doze]`（默认 `enabled = false`，需 `/settings` 显式开启）。详见 [Docs/doze.md](doze.md)。
   - **v1 / icon 通道（已落地）**：[lucid/icon_proposals.py](lucid/icon_proposals.py) 新模块（`<user data>/icon_proposals/{index.json, <id>.png}`）；[doze.py](lucid/doze.py) 系统提示新增 `propose_icon(image_filename, x, y, w, h, label, description?)` 工具白名单条目，并把 `step_image` 事件的文件名 / 宽高列入 user prompt 供模型挑选；`_dispatch_propose_icon` 负责安全校验文件名、用 PIL 裁剪图块并入队。Sidecar 增加 5 个 RPC：`doze_proposals_list` / `doze_proposal_read_png` / `doze_proposal_accept`(可改名/改描述，→ `icon_memory.add_icon`) / `doze_proposal_reject` / `doze_proposals_clear`，全部进入 `_NON_ACTIVITY_METHODS` 白名单不打断打盹。前端新增 [/doze 页](app/src/routes/doze/+page.svelte)（与 /memory /schedules 并排，header 加 `nav_doze` i18n），包含状态面板 / Run Now / Clear Processed / 提案卡片预览 + 接受/拒绝/全部清空。
   - **v1（计划）**：心跳——与打盹共享 `lucid/reflector.py`，差别仅在触发器（运行中每 N 步 vs 任务完成后 5 分钟）与上下文窗口。
 - [x] **初始化**: 有一些电脑上的配置，比如查看任务栏之类的，会影响到taskbar notify的功能，最好用一个任务来代替用户完成配置。任务等级可以弄成最低
@@ -159,7 +159,7 @@
 - [ ] **蟹钳鼠标**: Lucid移动鼠标的时候鼠标变成一个蟹钳，提醒用户这是由Lucid操纵的
 - [ ] **设置里加联系方式**: https://github.com/DaoZhang0123/ zhangdao@buaa.edu.cn https://x.com/zhangdao439566
 - [ ] **auto reply**: auto reply设定prompt
-- [ ] 安装位置在C:\Users\zhang\.lucid
+- [x] **安装位置在 ~/.lucid**（用户数据目录从 `%LOCALAPPDATA%\dev.lucid\` 迁到 `C:\Users\<name>\.lucid\`；Python 侧统一走 `Path.home() / ".lucid"`，Tauri 侧 `lucid_home()` 走 `USERPROFILE/.lucid`；config / inbox / logs / templates / schedules / memory / tools / copilot.json / queue.json / regions / launchers 等全部迁过去）
 - [ ] 增加skill，并且要支持online search然后offline load，但是要在system prompt里指明这是网上下载的，如果违反安全原则则去掉
 
 ---

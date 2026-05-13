@@ -44,14 +44,7 @@ from .llm_client import LLMClient
 # ---------------------------------------------------------------------------
 
 def _user_data_dir() -> Path:
-    if os.name == "nt":
-        local_app = os.environ.get("LOCALAPPDATA")
-        if local_app:
-            return Path(local_app) / "dev.lucid"
-    home = os.environ.get("HOME")
-    if home:
-        return Path(home) / ".lucid"
-    return Path.cwd()
+    return Path.home() / ".lucid"
 
 
 def _processed_path(cfg: Config) -> Path:

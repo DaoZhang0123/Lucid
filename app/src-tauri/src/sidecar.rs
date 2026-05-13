@@ -76,7 +76,7 @@ pub fn instance() -> Arc<Sidecar> {
 
 /// Resolve (and lazily seed) the user-writable config path. Priority:
 ///   1. `LUCID_CONFIG` env (explicit override).
-///   2. `<app_local_data_dir>/config.toml` (per-user, e.g. `%LOCALAPPDATA%\dev.lucid\config.toml`).
+///   2. `~/.lucid/config.toml` (per-user, e.g. `C:\Users\<name>\.lucid\config.toml`).
 ///      If missing, copy from the bundled default at `<resource_dir>/config.toml`.
 ///   3. Bundled default at `<resource_dir>/config.toml` (read-only fallback).
 ///   4. `<cwd>/config.toml` (dev mode).
@@ -84,8 +84,8 @@ pub fn ensure_user_config(app: &AppHandle) -> std::path::PathBuf {
     if let Ok(p) = std::env::var("LUCID_CONFIG") {
         return std::path::PathBuf::from(p);
     }
-    if let Ok(dir) = app.path().app_local_data_dir() {
-        let dir = strip_verbatim(dir);
+    {
+        let dir = lucid_home();
         let target = dir.join("config.toml");
         if !target.exists() {
             if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -111,11 +111,6 @@ pub fn ensure_user_config(app: &AppHandle) -> std::path::PathBuf {
         }
         return target;
     }
-    if let Ok(res_dir) = app.path().resource_dir() {
-        let p = res_dir.join("config.toml");
-        if p.exists() { return p; }
-    }
-    std::env::current_dir().unwrap_or_default().join("config.toml")
 }
 
 /// Strip Windows verbatim/UNC prefix `\\?\` (and `\\?\UNC\`) that Tauri's
@@ -133,6 +128,17 @@ fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
         }
     }
     p
+}
+
+/// User-writable data root: `~/.lucid` (e.g. `C:\Users\<name>\.lucid` on Windows).
+/// All per-user state — `config.toml`, `inbox/`, `logs/`, `templates.json`,
+/// `schedules.json`, `memory.md`, `tools.md`, `copilot.json`, etc. — lives here.
+fn lucid_home() -> std::path::PathBuf {
+    let base = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    base.join(".lucid")
 }
 
 /// How to invoke the python sidecar. Resolution priority:
@@ -298,7 +304,7 @@ pub struct FileRef {
 pub struct StartArgs {
     pub instruction: String,
     /// Multi-modal attachments. Images pasted from the clipboard are persisted to
-    /// `<app_local_data_dir>/inbox/` first via `save_inbox_image` so every entry
+    /// `~/.lucid/inbox/` first via `save_inbox_image` so every entry
     /// here is an absolute disk path.
     #[serde(default)]
     pub file_refs: Option<Vec<FileRef>>,
@@ -1009,17 +1015,12 @@ pub async fn read_attachment_b64(app: AppHandle, path: String) -> Result<String,
     let pb = std::path::PathBuf::from(&path);
     let canon = std::fs::canonicalize(&pb).map_err(|e| format!("canonicalize: {e}"))?;
     let canon = strip_verbatim(canon);
-    // Allow only paths under the inbox dir (or, in dev, the app's local data dir).
+    // Allow only paths under the inbox dir (or, in dev, the user data dir).
     let inbox = inbox_root(&app);
     let inbox_canon = std::fs::canonicalize(&inbox).unwrap_or(inbox.clone());
     let inbox_canon = strip_verbatim(inbox_canon);
-    let app_data = app
-        .path()
-        .app_local_data_dir()
-        .map(strip_verbatim)
-        .ok();
-    let allowed = canon.starts_with(&inbox_canon)
-        || app_data.as_ref().map(|d| canon.starts_with(d)).unwrap_or(false);
+    let app_data = lucid_home();
+    let allowed = canon.starts_with(&inbox_canon) || canon.starts_with(&app_data);
     if !allowed {
         return Err(format!(
             "refused: path not under inbox/app data ({})",
@@ -1113,24 +1114,21 @@ fn chrono_like_ts(ms: u128) -> String {
 }
 
 /// Inbox directory for ephemeral pasted images. Same parent as `config.toml`,
-/// e.g. `%LOCALAPPDATA%\dev.lucid\inbox\`.
-fn inbox_root(app: &AppHandle) -> std::path::PathBuf {
+/// e.g. `~/.lucid/inbox/`.
+fn inbox_root(_app: &AppHandle) -> std::path::PathBuf {
     if let Ok(cwd) = std::env::var("LUCID_CWD") {
         let p = std::path::PathBuf::from(cwd).join("inbox");
         return p;
     }
-    if let Ok(dir) = app.path().app_local_data_dir() {
-        return strip_verbatim(dir).join("inbox");
-    }
-    std::path::PathBuf::from("inbox")
+    lucid_home().join("inbox")
 }
 
 /// Resolve the logs directory the sidecar writes to.
 /// Priority:
 ///   1. `LUCID_LOGS_DIR` env (explicit override)
 ///   2. `<LUCID_CWD>/logs`
-///   3. `<app_local_data_dir>/logs` (default in installed builds)
-fn logs_root(app: &AppHandle) -> std::path::PathBuf {
+///   3. `~/.lucid/logs` (default in installed builds)
+fn logs_root(_app: &AppHandle) -> std::path::PathBuf {
     if let Ok(p) = std::env::var("LUCID_LOGS_DIR") {
         return std::path::PathBuf::from(p);
     }
@@ -1138,8 +1136,5 @@ fn logs_root(app: &AppHandle) -> std::path::PathBuf {
         let p = std::path::PathBuf::from(cwd).join("logs");
         if p.exists() { return p; }
     }
-    if let Ok(dir) = app.path().app_local_data_dir() {
-        return strip_verbatim(dir).join("logs");
-    }
-    std::path::PathBuf::from("logs")
+    lucid_home().join("logs")
 }

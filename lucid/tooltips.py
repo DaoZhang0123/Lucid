@@ -12,7 +12,7 @@
 * 模型用 ``learn_tip(text=..., kind=..., app=?)`` 写入；不传 ``app`` 默认入全局，
   传了就路由到 ``tips/<app>.md`` 并按需创建。
 
-文件首次缺失会用 seed 写入；与 ``memory.md`` 同放在 ``%LOCALAPPDATA%\\dev.lucid\\`` 下。
+文件首次缺失会用 seed 写入；与 ``memory.md`` 同放在 ``~/.lucid/`` 下。
 """
 from __future__ import annotations
 
@@ -67,14 +67,7 @@ def _app_seeds() -> dict[str, tuple[str, str]]:
 
 
 def _user_data_dir() -> Path:
-    if os.name == "nt":
-        local_app = os.environ.get("LOCALAPPDATA")
-        if local_app:
-            return Path(local_app) / "dev.lucid"
-    home = os.environ.get("HOME")
-    if home:
-        return Path(home) / ".lucid"
-    return Path.cwd()
+    return Path.home() / ".lucid"
 
 
 def tools_path(cfg: ToolsConfig) -> Path:

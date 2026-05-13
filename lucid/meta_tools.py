@@ -385,13 +385,13 @@ LOAD_LOCAL_IMAGES_SCHEMA: dict = {
             "**Two main use cases:**\n"
             "1. An old screenshot was replaced by a placeholder like "
             "`[old screenshot omitted ...; level=L2; file=step-005-post-active_window.png; "
-            "path=C:\\Users\\you\\AppData\\Local\\dev.lucid\\logs\\thread-...\\step-005-post-active_window.png]` "
+            "path=C:\\Users\\you\\.lucid\\logs\\thread-...\\step-005-post-active_window.png]` "
             "and you still need the visual content (e.g. you saw a webpage, switched to another App, and now need to "
             "transcribe the page text). Pass the **exact `path`** from the placeholder.\n"
             "2. The user attached an image via paste / drag-drop / 📎 (listed in the initial `[Attached files]` block as a path "
-            "under `\\dev.lucid\\inbox\\`). Pass that `path`.\n"
+            "under `~/.lucid/inbox/`). Pass that `path`.\n"
             "**Do NOT** invent paths or try to read arbitrary files — only paths emitted by the placeholder lines or the "
-            "`[Attached files]` block are valid (allowlisted to `dev.lucid\\logs` and `dev.lucid\\inbox`).\n"
+            "`[Attached files]` block are valid (allowlisted to `~/.lucid/logs` and `~/.lucid/inbox`).\n"
             "**Coordinate frame:** re-loaded images are for **reading content only** (text, prices, news headlines, etc.); "
             "the active App's input focus / window rect may have moved since then, so do not derive new click coordinates "
             "from a re-loaded image — take a fresh `screenshot(level='active_window')` for that."
@@ -1024,8 +1024,8 @@ def _dispatch_schedule(fn_name: str, args: dict[str, Any], cfg: Config) -> ToolR
 def _dispatch_load_local_images(args: dict[str, Any]) -> ToolResult:
     """Read a previously-saved screenshot or user-attached inbox image from
     disk and re-attach it to the next request. Validates that the path looks
-    like one of our log files (under ``%LOCALAPPDATA%\\dev.lucid\\logs``) or an
-    inbox attachment (under ``%LOCALAPPDATA%\\dev.lucid\\inbox``) so a model
+    like one of our log files (under ``~/.lucid/logs``) or an
+    inbox attachment (under ``~/.lucid/inbox``) so a model
     can't use this to exfiltrate arbitrary local files.
     """
     import os
@@ -1056,19 +1056,17 @@ def _dispatch_load_local_images(args: dict[str, Any]) -> ToolResult:
         return ToolResult(error=f"unsupported file type {p.suffix!r}; expected .png/.jpg")
 
     # Allowlist: must live under either
-    #   - %LOCALAPPDATA%\dev.lucid\logs   (screenshots taken by the agent)
-    #   - %LOCALAPPDATA%\dev.lucid\inbox  (clipboard pastes / drag-drop attachments
+    #   - ~/.lucid/logs   (screenshots taken by the agent)
+    #   - ~/.lucid/inbox  (clipboard pastes / drag-drop attachments
     #     forwarded from the desktop UI's `save_inbox_image` Tauri command)
     # so a model can't use this to exfiltrate arbitrary local files.
     allowed_roots: list[Path] = []
-    local_app = os.environ.get("LOCALAPPDATA")
-    if local_app:
-        base = Path(local_app) / "dev.lucid"
-        for sub in ("logs", "inbox"):
-            try:
-                allowed_roots.append((base / sub).resolve())
-            except Exception:
-                pass
+    base = Path.home() / ".lucid"
+    for sub in ("logs", "inbox"):
+        try:
+            allowed_roots.append((base / sub).resolve())
+        except Exception:
+            pass
     # LUCID_CWD dev override (matches Tauri sidecar.rs::inbox_root)
     cwd_override = os.environ.get("LUCID_CWD")
     if cwd_override:

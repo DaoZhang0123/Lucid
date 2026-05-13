@@ -1,6 +1,6 @@
 """任务模板 templates.json。
 
-存放在 ``%LOCALAPPDATA%\\dev.lucid\\templates.json``。一个模板是一段可复用
+存放在 ``~/.lucid/templates.json``。一个模板是一段可复用
 的 instruction。前端可以一键发送（仍然走正常的 ``start_task`` RPC）。
 
 """
@@ -17,14 +17,7 @@ _BASENAME = "templates.json"
 
 
 def _store_path() -> Path:
-    if os.name == "nt":
-        local_app = os.environ.get("LOCALAPPDATA")
-        if local_app:
-            return Path(local_app) / "dev.lucid" / _BASENAME
-    home = os.environ.get("HOME")
-    if home:
-        return Path(home) / ".lucid" / _BASENAME
-    return Path.cwd() / _BASENAME
+    return Path.home() / ".lucid" / _BASENAME
 
 
 def _load() -> list[dict[str, Any]]:

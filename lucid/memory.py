@@ -1,6 +1,6 @@
 """长期记忆 memory.md。
 
-设计：把 ``%LOCALAPPDATA%\\dev.lucid\\memory.md`` 当作一个**带时间戳条目的
+设计：把 ``~/.lucid/memory.md`` 当作一个**带时间戳条目的
 追加式 Markdown 文件**。每次任务起手时，把整份文件的正文塞到 system prompt
 末尾，让模型知道用户的偏好/常用路径/约束。
 
@@ -32,18 +32,11 @@ _ENTRY_RE = re.compile(r"^- \[", re.MULTILINE)
 
 
 def memory_path(cfg: MemoryConfig) -> Path:
-    """解析 memory.md 的绝对路径。相对路径落到 LOCALAPPDATA / HOME。"""
+    """解析 memory.md 的绝对路径。相对路径落到 ~/.lucid/。"""
     p = Path(cfg.path)
     if p.is_absolute():
         return p
-    if os.name == "nt":
-        local_app = os.environ.get("LOCALAPPDATA")
-        if local_app:
-            return Path(local_app) / "dev.lucid" / cfg.path
-    home = os.environ.get("HOME")
-    if home:
-        return Path(home) / ".lucid" / cfg.path
-    return Path.cwd() / cfg.path
+    return Path.home() / ".lucid" / cfg.path
 
 
 def read_memory(cfg: MemoryConfig) -> str:

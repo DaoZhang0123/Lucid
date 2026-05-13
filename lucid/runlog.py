@@ -1,6 +1,6 @@
 """Thread-scoped 日志：一个 thread 是一段对话上下文，可包含多次 start_task。
 
-目录结构（默认在 %LOCALAPPDATA%\\dev.lucid\\logs\\ 下）::
+目录结构（默认在 ~/.lucid/logs/ 下）::
 
     thread-20260430-235012-苏州天气/
         meta.json         # {id, title, created_ms, updated_ms, task_count}
@@ -44,17 +44,11 @@ def _slug(text: str, max_len: int = 32) -> str:
 
 
 def resolve_logs_root(cfg: LoggingConfig) -> Path:
-    """把 cfg.dir 解析成绝对路径（相对路径落到 LOCALAPPDATA / HOME）。"""
+    """把 cfg.dir 解析成绝对路径（相对路径落到 ~/.lucid/）。"""
     base = Path(cfg.dir)
     if base.is_absolute():
         return base
-    if os.name == "nt":
-        local_app = os.environ.get("LOCALAPPDATA")
-        if local_app:
-            return Path(local_app) / "dev.lucid" / cfg.dir
-    elif (home := os.environ.get("HOME")):
-        return Path(home) / ".lucid" / cfg.dir
-    return Path(__file__).resolve().parents[2] / cfg.dir
+    return Path.home() / ".lucid" / cfg.dir
 
 
 def resolve_threads_root(cfg: LoggingConfig) -> Path:

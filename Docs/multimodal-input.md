@@ -12,7 +12,7 @@
 
 | 类型 | 例子 | 落盘 | 模型看到什么 |
 | --- | --- | --- | --- |
-| **图片** | Win+Shift+S 剪贴板截图、`*.png/jpg/webp/gif/bmp` | `%LOCALAPPDATA%\dev.lucid\inbox\<uuid>.<ext>` | `[Attached image] 原名.png  (1.2 MB, 1920x1080)  →  C:\…\inbox\….png   使用 load_local_images(path=…) 查看` |
+| **图片** | Win+Shift+S 剪贴板截图、`*.png/jpg/webp/gif/bmp` | `~/.lucid/inbox/<uuid>.<ext>` | `[Attached image] 原名.png  (1.2 MB, 1920x1080)  →  C:\…\inbox\….png   使用 load_local_images(path=…) 查看` |
 | **文件 / 目录** | `report.pdf`、`data.csv`、任意文件夹 | 保持原路径（不复制） | `[Attached file] report.pdf  →  C:\…\report.pdf   需要时用 read_file / run_shell / launch_app 打开` |
 
 重要原因为什么**截图不再 inline 为 `image_url` 块**：
@@ -96,7 +96,6 @@ type FileRef = {
 ```ts
 await invoke("sidecar_start_task", {
   instruction,
-  autonomy, maxSteps,
   fileRefs: refs.map(r => ({ name: r.name, path: r.path, kind: r.kind })),
 });
 ```
@@ -166,7 +165,7 @@ if file_refs:
 | --- | --- | --- |
 | **拖拽** | Tauri 2 的 `getCurrentWebview().onDragDropEvent` 事件里的 `paths: string[]`（绝对路径） | 直接用，按后缀判 kind |
 | **📎 按钮** | `@tauri-apps/plugin-dialog` `open()` 返回绝对路径 / null | 同上 |
-| **粘贴截图** | `paste` 事件里 `clipboardData.items[i].getAsFile()` 拿到 PNG `Blob`，**无磁盘路径** | 调 Tauri 命令 `save_inbox_image(name, bytes)` 写入 `%LOCALAPPDATA%\dev.lucid\inbox\<uuid>.png`，返回绝对路径 |
+| **粘贴截图** | `paste` 事件里 `clipboardData.items[i].getAsFile()` 拿到 PNG `Blob`，**无磁盘路径** | 调 Tauri 命令 `save_inbox_image(name, bytes)` 写入 `~/.lucid/inbox/<uuid>.png`，返回绝对路径 |
 | 粘贴一个文件（Explorer 复制后 Ctrl+V） | `clipboardData.files[0]` 在 Tauri 下也有 path 属性 | 同拖拽 |
 
 > inbox 目录不自动清理（不是运行时进程，没有可靠的生命周期）。错过了就是错过了，用户可随时二选全删。

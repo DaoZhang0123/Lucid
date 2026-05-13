@@ -7,7 +7,7 @@ Two-step token model:
      and `https://github.com/login/device/code`.
    - User visits `verification_uri`, enters `user_code`.
    - We poll `https://github.com/login/oauth/access_token` until success.
-   - Saved to `state_file` (default `%LOCALAPPDATA%\\dev.lucid\\copilot.json`).
+   - Saved to `state_file` (default `~/.lucid/copilot.json`).
 
 2. **Copilot session token** (short-lived ~30 min, refreshed on demand)
    - `GET https://api.github.com/copilot_internal/v2/token` with the GitHub
@@ -206,10 +206,7 @@ def _derive_base_url(token: str) -> str:
 
 
 def _default_state_file() -> Path:
-    """`%LOCALAPPDATA%\\dev.lucid\\copilot.json` on Windows，其他平台用 ~/.lucid/copilot.json"""
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-        return Path(base) / "dev.lucid" / "copilot.json"
+    """`~/.lucid/copilot.json` (Windows: `C:\\Users\\<user>\\.lucid\\copilot.json`)."""
     return Path.home() / ".lucid" / "copilot.json"
 
 

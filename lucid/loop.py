@@ -665,7 +665,7 @@ class Agent:
             self._current_step = step + 1
             self._rule(f"[cyan]Step {step + 1}")
             log.info(f"--- step {step + 1} ---")
-            self._emit("step_start", step=step + 1, max_steps=hard_cap)
+            self._emit("step_start", step=step + 1, total_steps=hard_cap)
             recompressed, dropped = self.context_mgr.compress_old_images(
                 messages,
                 keep_per_level={
@@ -1026,7 +1026,7 @@ class Agent:
             if content:
                 messages.append({"role": "user", "content": content})
 
-        log.warning("max_steps reached")
-        log.close(status="max_steps")
-        self._emit("final", status="max_steps", text="")
+        log.warning("step_cap reached")
+        log.close(status="step_cap")
+        self._emit("final", status="step_cap", text="")
         return "(达到最大步数预算，任务可能未完成)"

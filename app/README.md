@@ -31,15 +31,6 @@ python -m lucid.selfcheck winr
 python -m lucid.selfcheck click
 ```
 
-## 5 example scenarios (Phase 1.6)
-
-```powershell
-python -m lucid.examples list
-python -m lucid.examples run notepad
-python -m lucid.examples run wechat --autonomy confirm_each
-python -m lucid.examples run all
-```
-
 ## Packaging (Phase 1.7)
 
 ```powershell

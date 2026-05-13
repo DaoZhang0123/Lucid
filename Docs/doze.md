@@ -41,7 +41,7 @@ tool_call / tool_result）、`context.log`（每次发往 LLM 的完整 messages
 
 "用户活动"定义为以下事件被触发时 `_last_activity_ms` 被刷：
 
-- `start_task` / `cancel` / `set_autonomy` 等 RPC
+- `start_task` / `cancel` 等 RPC
 - `thread_new` / `thread_set_active` / `thread_delete`
 - 任务自然完成（`task_close` 事件）
 - **不算**活动：`ping` / `get_status` / `thread_list` / `thread_read`（这些是 Tauri 前端

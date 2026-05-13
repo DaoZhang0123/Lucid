@@ -19,7 +19,7 @@ zh-CN). The skill itself is in English; only the *outputs* are Chinese.
 Exceptions (keep these in English even inside Chinese prose):
 
 - Status enums (`pass` / `fail` / `partial` / `timeout` / `error` / `no-data` /
-  `ok` / `max_steps` / `cancelled` / `api_error`) and `severity` /
+  `ok` / `step_cap` / `cancelled` / `api_error`) and `severity` /
   `category_of_fix` values (`prompt` / `tool` / `config` / `new-region` /
   `new-app-spec` / `bug-fix` / `low` / `medium` / `high`) — needed for
   downstream grep / clustering.
@@ -81,9 +81,9 @@ re-read events.jsonl just to recompute them:
 ```json
 { "id": "A1", "category": "cognitive", "instruction": "...",
   "thread_id": "thread-...",
-  "thread_dir": "C:\\Users\\...\\dev.lucid\\logs\\threads\\thread-...",
+  "thread_dir": "C:\\Users\\...\\.lucid\\logs\\threads\\thread-...",
   "queued_ms": ..., "ended_ms": ...,
-  "status": "ok|max_steps|error|api_error|cancelled",
+  "status": "ok|step_cap|error|api_error|cancelled",
   "final_text": "...",
   "expect_files": [   // optional; copied verbatim from queries.json
     { "path": "%USERPROFILE%\\Downloads\\Test\\lucid-e2e-B1.txt",
@@ -137,7 +137,7 @@ verdict =
                   (record the subagent's one-line reason)
   partial      if status == "ok" AND goal_met == "partial"
                   (informational — counted separately, not as pass)
-  timeout      if status == "max_steps"
+  timeout      if status == "step_cap"
   error        if status in ("error", "api_error", "cancelled")
   no-data      if status is null
 ```
@@ -345,7 +345,7 @@ Now combine the three layers per query:
 ```
 final_verdict =
   no-data      if status is null
-  timeout      if status == "max_steps"
+  timeout      if status == "step_cap"
   error        if status in ("error", "api_error", "cancelled")
   fail         if status == "ok" AND goal_met == "fail"
   partial      if status == "ok" AND goal_met == "partial"

@@ -138,12 +138,12 @@ function handleEvent(v: any) {
   } else if (k === "run_start") {
     chat.running = true;
     chat.currentStep = 0;
-    chat.totalSteps = v.max_steps ?? 0;
+    chat.totalSteps = v.total_steps ?? 0;
     if (v.thread_id) chat.runningThreadId = v.thread_id;
     push({ kind: "system", text: t("chat.run_started") });
   } else if (k === "step_start") {
     chat.currentStep = v.step;
-    chat.totalSteps = v.max_steps ?? chat.totalSteps;
+    chat.totalSteps = v.total_steps ?? chat.totalSteps;
   } else if (k === "assistant_text") {
     push({ kind: "assistant", step: v.step, text: v.text });
   } else if (k === "tool_call") {

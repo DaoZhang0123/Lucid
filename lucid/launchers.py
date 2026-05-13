@@ -55,14 +55,7 @@ def _default_launchers() -> dict[str, dict[str, Any]]:
 
 
 def _user_data_dir() -> Path:
-    if os.name == "nt":
-        local_app = os.environ.get("LOCALAPPDATA")
-        if local_app:
-            return Path(local_app) / "dev.lucid"
-    home = os.environ.get("HOME")
-    if home:
-        return Path(home) / ".lucid"
-    return Path.cwd()
+    return Path.home() / ".lucid"
 
 
 def launchers_path(cfg: LaunchersConfig) -> Path:

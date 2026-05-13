@@ -124,7 +124,7 @@
   /* Final-status pills. */
   :global(html[data-theme="dark"] .final-ok) { background: #064e3b !important; color: #6ee7b7 !important; }
   :global(html[data-theme="dark"] .final-cancelled) { background: #3f2d04 !important; color: #fde68a !important; }
-  :global(html[data-theme="dark"] .final-max_steps),
+  :global(html[data-theme="dark"] .final-step_cap),
   :global(html[data-theme="dark"] .final-error) { background: #4c1010 !important; color: #fca5a5 !important; }
 
   /* Form inputs. */

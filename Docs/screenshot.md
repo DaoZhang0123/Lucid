@@ -200,7 +200,7 @@ def _validate_click_in_foreground(sx, sy):
 
 ## 6. 落盘 / 调试可视化
 
-每张实际拍的图仍落 `%LOCALAPPDATA%\dev.lucid\logs\<thread>\step-NNN-*.png`，并在 `events.jsonl` 写 `step_image`。`_sanitize_for_log` 仍把 base64 → `[image: <文件名>]`。
+每张实际拍的图仍落 `~/.lucid/logs/<thread>/step-NNN-*.png`，并在 `events.jsonl` 写 `step_image`。`_sanitize_for_log` 仍把 base64 → `[image: <文件名>]`。
 
 > 起手不拍 L1 后，`step-000-init.png` 不再产生。第一张落盘图就是模型主动要的（或 launch_app 附的 L2）。
 
@@ -227,7 +227,7 @@ def _validate_click_in_foreground(sx, sy):
   └─ 拼 system + user("任务：…")  → 发首条请求
      （没有 first 截图，没有 atlas）
 
-──── 进入主循环 (step = 1..max_steps) ────
+──── 进入主循环 (step = 1..hard_cap) ────
 
 step N:
   ├─ [压] context_mgr.compress_old_images(messages)

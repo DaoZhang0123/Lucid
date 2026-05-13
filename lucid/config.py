@@ -37,7 +37,7 @@ class AnthropicConfig:
 class CopilotConfig:
     r"""GitHub Copilot 接入。OAuth device code 拿 GitHub token 后换
     Copilot 临时 token（~30 min），直接打 Copilot 的 chat completions 端点。
-    api_key / cached token 保存在 state_file（默认 %LOCALAPPDATA%\dev.lucid\copilot.json），
+    api_key / cached token 保存在 state_file（默认 ~/.lucid/copilot.json），
     不应写入 config.toml。这里只放公开选项。
     """
     model: str = "claude-opus-4-6"
@@ -154,7 +154,7 @@ class LoggingConfig:
 class MemoryConfig:
     """长期记忆 memory.md 的配置。"""
     enabled: bool = True
-    path: str = "memory.md"            # 相对路径会落到 LOCALAPPDATA/dev.lucid/
+    path: str = "memory.md"            # 相对路径会落到 ~/.lucid/
     max_entries: int = 200             # 超过则丢最早
     max_entry_chars: int = 500         # 单条最大字符数
     max_chars: int = 8000              # 注入 prompt 时的总裁剪上限

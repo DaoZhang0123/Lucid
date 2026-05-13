@@ -205,7 +205,7 @@
   // Thread ids look like `thread-20260508-110047-d381f6-⏰_每日新闻简介` or
   // `20260508-110047-d381f6` (no prefix). Surface the 6-hex random suffix
   // so the user can quickly correlate a sidebar row with files on disk
-  // (`%LOCALAPPDATA%\dev.lucid\logs\threads\thread-*-<hex>-*\`).
+  // (`~/.lucid/logs/threads/thread-*-<hex>-*\`).
   function extractHex(id?: string): string {
     if (!id) return "";
     const m = id.match(/-([0-9a-f]{6})(?:-|$)/);
@@ -635,7 +635,7 @@
   .final { font-weight: 600; align-self: center; padding: 0.3rem 0.6rem; border-radius: 6px; }
   .final-ok { background: #d1fae5; color: #065f46; }
   .final-cancelled { background: #fef3c7; color: #92400e; }
-  .final-max_steps, .final-error { background: #fee2e2; color: #991b1b; }
+  .final-step_cap, .final-error { background: #fee2e2; color: #991b1b; }
 
   footer { border-top: 1px solid #e5e7eb; padding: 0.6rem 1rem; background: #fff; }
   .controls { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.5rem; font-size: 0.85rem; }

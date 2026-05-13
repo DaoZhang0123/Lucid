@@ -94,14 +94,7 @@ def _now_in(tz) -> datetime:
 
 
 def _store_path() -> Path:
-    if os.name == "nt":
-        local_app = os.environ.get("LOCALAPPDATA")
-        if local_app:
-            return Path(local_app) / "dev.lucid" / _BASENAME
-    home = os.environ.get("HOME")
-    if home:
-        return Path(home) / ".lucid" / _BASENAME
-    return Path.cwd() / _BASENAME
+    return Path.home() / ".lucid" / _BASENAME
 
 
 # Auto-reply whitelist defaults injected on load() for legacy visual_notify

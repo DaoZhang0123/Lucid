@@ -75,7 +75,7 @@ Lucid est livré comme une appli de bureau Windows (`lucid.exe` comme moteur + G
 - **Auto-diagnostic** — moniteurs / DPI / alias Win+R / décalage des coordonnées de clic.
 
 ### Honnête sur lui-même
-- Logs par exécution dans `%LOCALAPPDATA%\dev.lucid\logs\threads\<thread>\` — `events.jsonl`, `messages.json`, toutes les captures, dump complet du contexte LLM.
+- Logs par exécution dans `~/.lucid/logs/threads/<thread>/` — `events.jsonl`, `messages.json`, toutes les captures, dump complet du contexte LLM.
 - Trois niveaux d'autonomie : `full` / `confirm_critical` / `confirm_each`. Liste de mots-clés HITL (`delete`, `format`, `transfer`, `confirm payment`, …) qui intercepte les actions dangereuses même en `full`.
 
 ---
@@ -134,7 +134,7 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 
 > *« Prends une capture plein écran et dis-moi combien de fenêtres sont visibles. »*
 
-> *« Lis `C:\Users\me\AppData\Local\dev.lucid\config.toml` et dis-moi quel provider LLM est actif. »* (Utilise le meta tool `read_file`, pas de clic.)
+> *« Lis `~/.lucid/config.toml` et dis-moi quel provider LLM est actif. »* (Utilise le meta tool `read_file`, pas de clic.)
 
 ---
 
@@ -159,7 +159,7 @@ Action `task` avec déclencheur quotidien / hebdo / interval :
 └─────────────────────────────────────────────────────┘
 ```
 
-Données utilisateur : `%LOCALAPPDATA%\dev.lucid\` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
+Données utilisateur : `~/.lucid/` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
 
 ---
 
@@ -242,7 +242,7 @@ cd D:\Project\Lucid
 ..\.venv\Scripts\python.exe -m lucid "Ouvre Notepad, tape hello world, enregistre sur le Bureau"
 ```
 
-Si vous voyez `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`, renseignez `[llm.proxy].api_key` dans `%LOCALAPPDATA%\dev.lucid\config.toml` ou exportez `LITELLM_MASTER_KEY`.
+Si vous voyez `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`, renseignez `[llm.proxy].api_key` dans `~/.lucid/config.toml` ou exportez `LITELLM_MASTER_KEY`.
 
 `Ctrl+C` pour interrompre. Lancer la souris dans le **coin haut-gauche** déclenche le fail-safe de PyAutoGUI.
 
@@ -250,7 +250,7 @@ Si vous voyez `missing api_key (config .api_key or LITELLM_MASTER_KEY environmen
 
 ## Configuration
 
-Modèle par défaut : [config.toml](config.toml). La **vraie** config utilisateur est à `%LOCALAPPDATA%\dev.lucid\config.toml` — c'est celle-là qu'il faut éditer (le fichier livré est écrasé à la mise à jour).
+Modèle par défaut : [config.toml](config.toml). La **vraie** config utilisateur est à `~/.lucid/config.toml` — c'est celle-là qu'il faut éditer (le fichier livré est écrasé à la mise à jour).
 
 Sections clés :
 
