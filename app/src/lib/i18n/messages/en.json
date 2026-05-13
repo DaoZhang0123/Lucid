@@ -104,7 +104,26 @@
     "selfcheck_winr_button": "Win+R alias",
     "selfcheck_click_button": "Click coordinate offset",
     "selfcheck_all_button": "All",
-    "selfcheck_running_hint": "Running… (winr / click will press real keys; please don't interact in the foreground)"
+    "selfcheck_running_hint": "Running… (winr / click will press real keys; please don't interact in the foreground)",
+    "voice_section_title": "Voice input (push-to-talk)",
+    "voice_enabled_label": "Enable voice input",
+    "voice_enabled_hint": "Hold the hotkey, speak, release. Audio is transcribed locally — nothing is sent to an LLM unless you confirm. Requires the `voice` extra (faster-whisper).",
+    "voice_engine_label": "Engine",
+    "voice_model_label": "Model",
+    "voice_language_label": "Language",
+    "voice_language_placeholder": "Empty = auto-detect; e.g. en, zh, fr",
+    "voice_hotkey_label": "Hotkey",
+    "voice_hold_threshold_label": "Long-press threshold (ms)",
+    "voice_hold_threshold_warning": "⚠ Threshold below 1000ms with Space as the hotkey will eat normal keystrokes. Pick a chord like ctrl+shift+v instead, or raise the threshold.",
+    "voice_stop_mode_label": "Stop mode",
+    "voice_start_feedback_label": "Start feedback",
+    "voice_mode_label": "Default mode",
+    "voice_mode_agent": "Agent (run as task)",
+    "voice_mode_dictation": "Dictation (insert into focused input)",
+    "voice_always_new_thread_label": "Always start a new thread for voice input",
+    "voice_max_seconds_label": "Maximum recording length (seconds)",
+    "voice_overlay_screen_label": "Overlay anchor screen",
+    "voice_hf_endpoint_label": "HuggingFace endpoint (for first model download)"
   },
   "common": {
     "back": "‹ Back"

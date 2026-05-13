@@ -3,6 +3,7 @@
   import { onDestroy, onMount } from "svelte";
   import { _, locale } from "svelte-i18n";
   import { SUPPORTED_LOCALES, LOCALE_LABELS, saveLocale, type SupportedLocale } from "$lib/i18n";
+  import { reloadVoiceConfig } from "$lib/voice";
 
   type Provider = "anthropic" | "copilot" | "proxy";
 
@@ -32,6 +33,24 @@
   let temperature = $state<number>(0.2);
   let topP = $state<number>(1.0);
   let emergencyHotkey = $state("ctrl+alt+esc");
+
+  // ---- voice ---------------------------------------------------------
+  let vEnabled = $state(false);
+  let vEngine = $state("faster-whisper");
+  let vModelSize = $state("distil-small.en");
+  let vLanguage = $state("");
+  let vHotkey = $state("Space");
+  let vHoldThresholdMs = $state(5000);
+  let vStopMode = $state("tap_again");
+  let vStartFeedback = $state("beep");
+  let vMode = $state("agent");
+  let vAlwaysNewThread = $state(false);
+  let vMaxSeconds = $state(30);
+  let vOverlayScreen = $state("cursor");
+  let vHfEndpoint = $state("");
+  let voiceSaving = $state(false);
+  let voiceSavedAt = $state("");
+  let voiceError = $state("");
   let saving = $state(false);
   let savedAt = $state("");
   let error = $state("");
@@ -62,6 +81,21 @@
         proxy: { base_url: string; model: string; api_key: string };
         anthropic: { api_key: string; model: string; base_url: string };
         copilot: { model: string };
+        voice?: {
+          enabled: boolean | null;
+          engine: string;
+          model_size: string;
+          language: string;
+          hotkey: string;
+          hold_threshold_ms: number | null;
+          stop_mode: string;
+          start_feedback: string;
+          mode: string;
+          always_new_thread: boolean | null;
+          max_seconds: number | null;
+          overlay_screen: string;
+          hf_endpoint: string;
+        };
       };
       path = cfg.path;
       if (cfg.provider === "anthropic" || cfg.provider === "copilot" || cfg.provider === "proxy") {
@@ -77,6 +111,23 @@
       if (typeof cfg.temperature === "number") temperature = cfg.temperature;
       if (typeof cfg.top_p === "number") topP = cfg.top_p;
       if (cfg.emergency_hotkey) emergencyHotkey = cfg.emergency_hotkey;
+      // voice
+      const v = cfg.voice;
+      if (v) {
+        if (typeof v.enabled === "boolean") vEnabled = v.enabled;
+        if (v.engine) vEngine = v.engine;
+        if (v.model_size) vModelSize = v.model_size;
+        if (typeof v.language === "string") vLanguage = v.language;
+        if (v.hotkey) vHotkey = v.hotkey;
+        if (typeof v.hold_threshold_ms === "number") vHoldThresholdMs = v.hold_threshold_ms;
+        if (v.stop_mode) vStopMode = v.stop_mode;
+        if (v.start_feedback) vStartFeedback = v.start_feedback;
+        if (v.mode) vMode = v.mode;
+        if (typeof v.always_new_thread === "boolean") vAlwaysNewThread = v.always_new_thread;
+        if (typeof v.max_seconds === "number") vMaxSeconds = v.max_seconds;
+        if (v.overlay_screen) vOverlayScreen = v.overlay_screen;
+        if (typeof v.hf_endpoint === "string") vHfEndpoint = v.hf_endpoint;
+      }
     } catch (e) {
       error = String(e);
     }
@@ -126,6 +177,41 @@
       pingMs = Math.round(performance.now() - t0);
     } catch (e) {
       pingErr = String(e);
+    }
+  }
+
+  async function saveVoice() {
+    voiceSaving = true;
+    voiceError = "";
+    voiceSavedAt = "";
+    try {
+      await invoke("write_settings", {
+        patch: {
+          voice: {
+            enabled: vEnabled,
+            engine: vEngine,
+            model_size: vModelSize,
+            language: vLanguage,
+            hotkey: vHotkey,
+            hold_threshold_ms: vHoldThresholdMs,
+            stop_mode: vStopMode,
+            start_feedback: vStartFeedback,
+            mode: vMode,
+            always_new_thread: vAlwaysNewThread,
+            max_seconds: vMaxSeconds,
+            overlay_screen: vOverlayScreen,
+            hf_endpoint: vHfEndpoint,
+          },
+        },
+      });
+      try { await invoke("reload_config"); } catch { /* ignore — applies on next launch */ }
+      // Re-register hotkey + push fresh cfg into the long-press controller.
+      try { await reloadVoiceConfig(); } catch (e) { console.warn("reloadVoiceConfig failed:", e); }
+      voiceSavedAt = new Date().toLocaleTimeString();
+    } catch (e) {
+      voiceError = String(e);
+    } finally {
+      voiceSaving = false;
     }
   }
 
@@ -321,6 +407,95 @@
       {#if error}<span class="err">{error}</span>{/if}
     </div>
     <p class="hint">{$_("settings.hot_reload_hint")}</p>
+  </section>
+
+  <section class="card">
+    <h2>{$_("settings.voice_section_title")}</h2>
+    <label class="check">
+      <input type="checkbox" bind:checked={vEnabled} />
+      {$_("settings.voice_enabled_label")}
+    </label>
+    <p class="hint">{$_("settings.voice_enabled_hint")}</p>
+
+    <label>
+      {$_("settings.voice_engine_label")}
+      <select bind:value={vEngine}>
+        <option value="faster-whisper">faster-whisper (CPU/GPU)</option>
+        <option value="sherpa-onnx">sherpa-onnx (experimental)</option>
+        <option value="vosk">vosk (experimental)</option>
+      </select>
+    </label>
+    <label>
+      {$_("settings.voice_model_label")}
+      <input type="text" bind:value={vModelSize} placeholder="distil-small.en | small | medium | large-v3" />
+    </label>
+    <label>
+      {$_("settings.voice_language_label")}
+      <input type="text" bind:value={vLanguage} placeholder={$_("settings.voice_language_placeholder")} />
+    </label>
+
+    <label>
+      {$_("settings.voice_hotkey_label")}
+      <input type="text" bind:value={vHotkey} placeholder="Space | ctrl+shift+v" />
+    </label>
+    <label>
+      {$_("settings.voice_hold_threshold_label")}
+      <input type="number" min="0" max="20000" step="100" bind:value={vHoldThresholdMs} />
+    </label>
+    {#if vHoldThresholdMs < 1000 && vHotkey.toLowerCase() === "space"}
+      <p class="err">{$_("settings.voice_hold_threshold_warning")}</p>
+    {/if}
+
+    <label>
+      {$_("settings.voice_stop_mode_label")}
+      <select bind:value={vStopMode}>
+        <option value="release">release</option>
+        <option value="tap_again">tap_again</option>
+        <option value="auto_silence">auto_silence</option>
+      </select>
+    </label>
+    <label>
+      {$_("settings.voice_start_feedback_label")}
+      <select bind:value={vStartFeedback}>
+        <option value="beep">beep</option>
+        <option value="vibrate-tray">vibrate-tray</option>
+        <option value="silent">silent</option>
+      </select>
+    </label>
+
+    <label>
+      {$_("settings.voice_mode_label")}
+      <select bind:value={vMode}>
+        <option value="agent">{$_("settings.voice_mode_agent")}</option>
+        <option value="dictation">{$_("settings.voice_mode_dictation")}</option>
+      </select>
+    </label>
+    <label class="check">
+      <input type="checkbox" bind:checked={vAlwaysNewThread} />
+      {$_("settings.voice_always_new_thread_label")}
+    </label>
+
+    <label>
+      {$_("settings.voice_max_seconds_label")}
+      <input type="number" min="3" max="120" step="1" bind:value={vMaxSeconds} />
+    </label>
+    <label>
+      {$_("settings.voice_overlay_screen_label")}
+      <select bind:value={vOverlayScreen}>
+        <option value="cursor">cursor</option>
+        <option value="primary">primary</option>
+      </select>
+    </label>
+    <label>
+      {$_("settings.voice_hf_endpoint_label")}
+      <input type="text" bind:value={vHfEndpoint} placeholder="https://hf-mirror.com" />
+    </label>
+
+    <div class="row">
+      <button onclick={saveVoice} disabled={voiceSaving}>{voiceSaving ? $_("settings.saving_button") : $_("settings.save_button")}</button>
+      {#if voiceSavedAt}<span class="ok">{$_("settings.saved_at", { values: { at: voiceSavedAt } })}</span>{/if}
+      {#if voiceError}<span class="err">{voiceError}</span>{/if}
+    </div>
   </section>
 
   <section class="card">

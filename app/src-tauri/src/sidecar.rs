@@ -633,6 +633,25 @@ pub async fn read_settings() -> Result<Value, String> {
     let mut anthropic_model = String::new();
     let mut anthropic_base_url = String::new();
     let mut copilot_model = String::new();
+    // ---- voice section ----
+    let mut v_enabled: Option<bool> = None;
+    let mut v_engine = String::new();
+    let mut v_model_size = String::new();
+    let mut v_language = String::new();
+    let mut v_compute_type = String::new();
+    let mut v_device = String::new();
+    let mut v_hotkey = String::new();
+    let mut v_hold_threshold_ms: Option<i64> = None;
+    let mut v_stop_mode = String::new();
+    let mut v_start_feedback = String::new();
+    let mut v_focus_aware: Option<bool> = None;
+    let mut v_mode = String::new();
+    let mut v_always_new_thread: Option<bool> = None;
+    let mut v_max_seconds: Option<i64> = None;
+    let mut v_overlay_screen = String::new();
+    let mut v_overlay_y_offset_px: Option<i64> = None;
+    let mut v_keep_audio: Option<bool> = None;
+    let mut v_hf_endpoint = String::new();
     let mut section = String::new();
     for line in raw.lines() {
         let l = line.trim();
@@ -662,6 +681,26 @@ pub async fn read_settings() -> Result<Value, String> {
             "[safety]" => {
                 if let Some(v) = parse_kv(l, "emergency_hotkey") { emergency_hotkey = v; }
             }
+            "[voice]" => {
+                if let Some(v) = parse_kv(l, "enabled")             { v_enabled = parse_bool(&v); }
+                if let Some(v) = parse_kv(l, "engine")              { v_engine = v; }
+                if let Some(v) = parse_kv(l, "model_size")          { v_model_size = v; }
+                if let Some(v) = parse_kv(l, "language")            { v_language = v; }
+                if let Some(v) = parse_kv(l, "compute_type")        { v_compute_type = v; }
+                if let Some(v) = parse_kv(l, "device")              { v_device = v; }
+                if let Some(v) = parse_kv(l, "hotkey")              { v_hotkey = v; }
+                if let Some(v) = parse_kv(l, "hold_threshold_ms")   { v_hold_threshold_ms = v.parse::<i64>().ok(); }
+                if let Some(v) = parse_kv(l, "stop_mode")           { v_stop_mode = v; }
+                if let Some(v) = parse_kv(l, "start_feedback")      { v_start_feedback = v; }
+                if let Some(v) = parse_kv(l, "focus_aware")         { v_focus_aware = parse_bool(&v); }
+                if let Some(v) = parse_kv(l, "mode")                { v_mode = v; }
+                if let Some(v) = parse_kv(l, "always_new_thread")   { v_always_new_thread = parse_bool(&v); }
+                if let Some(v) = parse_kv(l, "max_seconds")         { v_max_seconds = v.parse::<i64>().ok(); }
+                if let Some(v) = parse_kv(l, "overlay_screen")      { v_overlay_screen = v; }
+                if let Some(v) = parse_kv(l, "overlay_y_offset_px") { v_overlay_y_offset_px = v.parse::<i64>().ok(); }
+                if let Some(v) = parse_kv(l, "keep_audio")          { v_keep_audio = parse_bool(&v); }
+                if let Some(v) = parse_kv(l, "hf_endpoint")         { v_hf_endpoint = v; }
+            }
             _ => {}
         }
     }
@@ -684,6 +723,26 @@ pub async fn read_settings() -> Result<Value, String> {
         },
         "copilot": {
             "model": copilot_model,
+        },
+        "voice": {
+            "enabled": v_enabled,
+            "engine": v_engine,
+            "model_size": v_model_size,
+            "language": v_language,
+            "compute_type": v_compute_type,
+            "device": v_device,
+            "hotkey": v_hotkey,
+            "hold_threshold_ms": v_hold_threshold_ms,
+            "stop_mode": v_stop_mode,
+            "start_feedback": v_start_feedback,
+            "focus_aware": v_focus_aware,
+            "mode": v_mode,
+            "always_new_thread": v_always_new_thread,
+            "max_seconds": v_max_seconds,
+            "overlay_screen": v_overlay_screen,
+            "overlay_y_offset_px": v_overlay_y_offset_px,
+            "keep_audio": v_keep_audio,
+            "hf_endpoint": v_hf_endpoint,
         },
     }))
 }
@@ -708,6 +767,28 @@ pub struct ProviderCopilotPatch {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+pub struct VoicePatch {
+    pub enabled: Option<bool>,
+    pub engine: Option<String>,
+    pub model_size: Option<String>,
+    pub language: Option<String>,
+    pub compute_type: Option<String>,
+    pub device: Option<String>,
+    pub hotkey: Option<String>,
+    pub hold_threshold_ms: Option<i64>,
+    pub stop_mode: Option<String>,
+    pub start_feedback: Option<String>,
+    pub focus_aware: Option<bool>,
+    pub mode: Option<String>,
+    pub always_new_thread: Option<bool>,
+    pub max_seconds: Option<i64>,
+    pub overlay_screen: Option<String>,
+    pub overlay_y_offset_px: Option<i64>,
+    pub keep_audio: Option<bool>,
+    pub hf_endpoint: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SettingsPatch {
     pub provider: Option<String>,
     pub temperature: Option<f64>,
@@ -716,6 +797,7 @@ pub struct SettingsPatch {
     pub proxy: Option<ProviderProxyPatch>,
     pub anthropic: Option<ProviderAnthropicPatch>,
     pub copilot: Option<ProviderCopilotPatch>,
+    pub voice: Option<VoicePatch>,
 }
 
 /// Apply a partial patch to config.toml in-place using simple line rewriting
@@ -749,6 +831,26 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
         if let Some(v) = &p.model { want.entry("[llm.copilot]").or_default().push(("model", v.clone())); }
     }
     if let Some(v) = &patch.emergency_hotkey { want.entry("[safety]").or_default().push(("emergency_hotkey", v.clone())); }
+    if let Some(p) = &patch.voice {
+        if let Some(v) = &p.enabled            { want.entry("[voice]").or_default().push(("enabled",            if *v {"true".into()} else {"false".into()})); }
+        if let Some(v) = &p.engine             { want.entry("[voice]").or_default().push(("engine",             v.clone())); }
+        if let Some(v) = &p.model_size         { want.entry("[voice]").or_default().push(("model_size",         v.clone())); }
+        if let Some(v) = &p.language           { want.entry("[voice]").or_default().push(("language",           v.clone())); }
+        if let Some(v) = &p.compute_type       { want.entry("[voice]").or_default().push(("compute_type",       v.clone())); }
+        if let Some(v) = &p.device             { want.entry("[voice]").or_default().push(("device",             v.clone())); }
+        if let Some(v) = &p.hotkey             { want.entry("[voice]").or_default().push(("hotkey",             v.clone())); }
+        if let Some(v) = &p.hold_threshold_ms  { want.entry("[voice]").or_default().push(("hold_threshold_ms",  format!("{}", v))); }
+        if let Some(v) = &p.stop_mode          { want.entry("[voice]").or_default().push(("stop_mode",          v.clone())); }
+        if let Some(v) = &p.start_feedback     { want.entry("[voice]").or_default().push(("start_feedback",     v.clone())); }
+        if let Some(v) = &p.focus_aware        { want.entry("[voice]").or_default().push(("focus_aware",        if *v {"true".into()} else {"false".into()})); }
+        if let Some(v) = &p.mode               { want.entry("[voice]").or_default().push(("mode",               v.clone())); }
+        if let Some(v) = &p.always_new_thread  { want.entry("[voice]").or_default().push(("always_new_thread",  if *v {"true".into()} else {"false".into()})); }
+        if let Some(v) = &p.max_seconds        { want.entry("[voice]").or_default().push(("max_seconds",        format!("{}", v))); }
+        if let Some(v) = &p.overlay_screen     { want.entry("[voice]").or_default().push(("overlay_screen",     v.clone())); }
+        if let Some(v) = &p.overlay_y_offset_px{ want.entry("[voice]").or_default().push(("overlay_y_offset_px",format!("{}", v))); }
+        if let Some(v) = &p.keep_audio         { want.entry("[voice]").or_default().push(("keep_audio",         if *v {"true".into()} else {"false".into()})); }
+        if let Some(v) = &p.hf_endpoint        { want.entry("[voice]").or_default().push(("hf_endpoint",        v.clone())); }
+    }
 
     // Group existing file into sections (preserving order). Index 0 is the
     // pre-section preamble (rare; probably empty/comments).
@@ -762,7 +864,11 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
         }
     }
 
-    let is_numeric = |k: &str| matches!(k, "temperature" | "top_p");
+    let is_numeric = |k: &str| matches!(
+        k,
+        "temperature" | "top_p" | "hold_threshold_ms" | "max_seconds" | "overlay_y_offset_px"
+        | "enabled" | "focus_aware" | "always_new_thread" | "keep_audio"
+    );
     let format_kv = |k: &str, v: &str| -> String {
         if is_numeric(k) {
             format!("{k} = {v}")
@@ -879,6 +985,16 @@ fn parse_kv(line: &str, key: &str) -> Option<String> {
         return Some(stripped.to_string());
     }
     Some(v.to_string())
+}
+
+/// Parse a TOML-ish boolean literal. Returns None for any unknown value so
+/// we don't silently coerce bad config.
+fn parse_bool(v: &str) -> Option<bool> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "1" | "on" => Some(true),
+        "false" | "no" | "0" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 #[allow(dead_code)]

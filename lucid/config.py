@@ -350,6 +350,40 @@ class DozeConfig:
 
 
 @dataclass
+class VoiceConfig:
+    """Voice input (push-to-talk) — local ASR + overlay window. See ``Docs/voice-input.md``."""
+    enabled: bool = False
+    # ---- engine ----
+    engine: str = "faster-whisper"   # faster-whisper | sherpa-onnx | vosk
+    model_size: str = "small"        # tiny | base | small | medium | large-v3 | distil-small.en | distil-large-v3
+    language: str = "auto"           # ISO 639-1 or "auto"
+    compute_type: str = "int8"       # int8 | int8_float16 | float16 | float32
+    device: str = "cpu"              # cpu | cuda
+    cpu_threads: int = 0             # 0 = let CTranslate2 pick (== os.cpu_count)
+    vad_filter: bool = True
+    beam_size: int = 5
+    max_seconds: int = 30            # recording hard cap (frontend enforces)
+    # ---- trigger (a11y-first single-key long-press) ----
+    hotkey: str = "Space"            # any single key or combo
+    hold_threshold_ms: int = 5000    # 0 = classic PTT (record on press)
+    stop_mode: str = "tap_again"     # release | tap_again | auto_silence
+    start_feedback: str = "beep"     # beep | vibrate-tray | silent
+    focus_aware: bool = True         # don't steal Space when an editable is focused
+    # ---- text routing ----
+    mode: str = "agent"              # agent (text → LLM as user msg) | dictation (insert into input box)
+    always_new_thread: bool = False  # agent mode: force new thread per utterance
+    # ---- overlay window ----
+    overlay_position: str = "top-center"  # only top-center supported for now
+    overlay_y_offset_px: int = 8
+    overlay_screen: str = "cursor"   # cursor | primary | active-window
+    # ---- misc ----
+    keep_audio: bool = False         # keep ~/.lucid/voice/recording-*.webm for debugging
+    hf_endpoint: str = ""            # e.g. https://hf-mirror.com for users in CN
+    # ---- model lifecycle ----
+    idle_unload_sec: int = 1800      # drop model from RAM after this many seconds idle
+
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     screenshot: ScreenshotConfig = field(default_factory=ScreenshotConfig)
@@ -366,6 +400,7 @@ class Config:
     shell: ShellConfig = field(default_factory=ShellConfig)
     visual_notify: VisualNotifyConfig = field(default_factory=VisualNotifyConfig)
     doze: DozeConfig = field(default_factory=DozeConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
 
 
 def _apply(dc: Any, raw: dict[str, Any] | None) -> Any:
@@ -420,4 +455,5 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.shell, raw.get("shell"))
     _apply(cfg.visual_notify, raw.get("visual_notify"))
     _apply(cfg.doze, raw.get("doze"))
+    _apply(cfg.voice, raw.get("voice"))
     return cfg

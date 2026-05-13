@@ -865,6 +865,7 @@ instruction in this run.
         "templates_list", "schedule_list",
         "launchers_list", "regions_list", "doze_status", "doze_outputs",
         "installed_apps_list",
+        "voice_status", "voice_config",
     })
 
     def _sidecar_busy(self) -> bool:
@@ -999,6 +1000,85 @@ instruction in this run.
     def _rpc_doze_delete_output(self, params: dict[str, Any]) -> dict[str, Any]:
         oid = (params.get("id") or "").strip()
         return self._doze.delete_output(oid)
+
+    # ---- voice (push-to-talk ASR) ----
+
+    def _voice_transcriber(self):  # type: ignore[no-untyped-def]
+        """Singleton, lazy-built. Re-built when [voice].engine/model changes."""
+        from . import voice as voice_mod
+        cur = getattr(self, "_voice_tr", None)
+        sig = (
+            (self.cfg.voice.engine or "").lower(),
+            (self.cfg.voice.model_size or "").lower(),
+            (self.cfg.voice.compute_type or "").lower(),
+            (self.cfg.voice.device or "").lower(),
+        )
+        if cur is None or getattr(self, "_voice_tr_sig", None) != sig:
+            if cur is not None:
+                try: cur.unload()
+                except Exception: pass
+            self._voice_tr = voice_mod.build_transcriber(self.cfg.voice)
+            self._voice_tr_sig = sig
+        return self._voice_tr
+
+    def _rpc_voice_config(self, _params: dict[str, Any]) -> dict[str, Any]:
+        v = self.cfg.voice
+        return {
+            "enabled": v.enabled,
+            "engine": v.engine,
+            "model_size": v.model_size,
+            "language": v.language,
+            "compute_type": v.compute_type,
+            "device": v.device,
+            "vad_filter": v.vad_filter,
+            "beam_size": v.beam_size,
+            "max_seconds": v.max_seconds,
+            "hotkey": v.hotkey,
+            "hold_threshold_ms": v.hold_threshold_ms,
+            "stop_mode": v.stop_mode,
+            "start_feedback": v.start_feedback,
+            "focus_aware": v.focus_aware,
+            "mode": v.mode,
+            "always_new_thread": v.always_new_thread,
+            "overlay_position": v.overlay_position,
+            "overlay_y_offset_px": v.overlay_y_offset_px,
+            "overlay_screen": v.overlay_screen,
+            "keep_audio": v.keep_audio,
+            "hf_endpoint": v.hf_endpoint,
+        }
+
+    def _rpc_voice_status(self, _params: dict[str, Any]) -> dict[str, Any]:
+        if not self.cfg.voice.enabled:
+            return {"enabled": False}
+        try:
+            tr = self._voice_transcriber()
+            st = tr.status()
+            st["enabled"] = True
+            return st
+        except Exception as e:
+            return {"enabled": True, "error": f"{type(e).__name__}: {e}"}
+
+    def _rpc_voice_unload(self, _params: dict[str, Any]) -> dict[str, Any]:
+        cur = getattr(self, "_voice_tr", None)
+        if cur is not None:
+            try: cur.unload()
+            except Exception: pass
+        return {"unloaded": True}
+
+    def _rpc_transcribe_audio(self, params: dict[str, Any]) -> dict[str, Any]:
+        if not self.cfg.voice.enabled:
+            raise ValueError("voice disabled (set [voice].enabled=true in config)")
+        b64 = (params.get("audio_b64") or params.get("b64") or "").strip()
+        if not b64:
+            raise ValueError("audio_b64 is required")
+        mime = (params.get("mime") or params.get("mime_type") or "audio/webm").strip()
+        try:
+            raw = base64.b64decode(b64, validate=False)
+        except Exception as e:
+            raise ValueError(f"bad base64: {e}")
+        tr = self._voice_transcriber()
+        result = tr.transcribe(raw, mime)
+        return result.to_dict()
 
     # ---- thread management ----
 

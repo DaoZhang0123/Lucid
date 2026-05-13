@@ -104,7 +104,26 @@
     "selfcheck_winr_button": "Win+R 别名",
     "selfcheck_click_button": "点击坐标偏差",
     "selfcheck_all_button": "全部",
-    "selfcheck_running_hint": "正在运行…（winr / click 会真按键，请别在前台干别的）"
+    "selfcheck_running_hint": "正在运行…（winr / click 会真按键，请别在前台干别的）",
+    "voice_section_title": "语音输入（按住说话）",
+    "voice_enabled_label": "启用语音输入",
+    "voice_enabled_hint": "按住快捷键说话，松开发送。本地转写，不到 LLM 那一步不会发送任何内容。需要 `voice` 可选依赖（faster-whisper）。",
+    "voice_engine_label": "引擎",
+    "voice_model_label": "模型",
+    "voice_language_label": "语言",
+    "voice_language_placeholder": "留空 = 自动识别；如 en、zh、fr",
+    "voice_hotkey_label": "快捷键",
+    "voice_hold_threshold_label": "长按阈值（毫秒）",
+    "voice_hold_threshold_warning": "⚠ 用 Space 做快捷键时阈值低于 1000ms 会吃掉正常空格。请改用 ctrl+shift+v 之类的组合，或者把阈值调高。",
+    "voice_stop_mode_label": "停止方式",
+    "voice_start_feedback_label": "开始提示",
+    "voice_mode_label": "默认模式",
+    "voice_mode_agent": "Agent（作为任务执行）",
+    "voice_mode_dictation": "听写（插入到当前输入框）",
+    "voice_always_new_thread_label": "语音输入总是新开线程",
+    "voice_max_seconds_label": "最长录音时长（秒）",
+    "voice_overlay_screen_label": "悬浮窗所在屏幕",
+    "voice_hf_endpoint_label": "HuggingFace 镜像（首次下载模型用）"
   },
   "common": {
     "back": "‹ 返回"

@@ -1,6 +1,7 @@
 // lucid Tauri shell entry. See `sidecar.rs` for the bridge to the Python
 // agent process.
 mod sidecar;
+mod voice;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -69,6 +70,11 @@ pub fn run() {
                                 serde_json::json!({"kind":"emergency_stop"}),
                             );
                         });
+                    } else {
+                        // Anything else might be the voice PTT shortcut — let
+                        // voice.rs decide whether to forward the press/release
+                        // to the frontend (matches against its current binding).
+                        voice::forward_hotkey_event(app, shortcut, event.state());
                     }
                 })
                 .build(),
@@ -130,6 +136,16 @@ pub fn run() {
             sidecar::doze_delete_output,
             sidecar::installed_apps_list,
             set_caption_color,
+            voice::sidecar_transcribe,
+            voice::voice_status,
+            voice::voice_unload,
+            voice::voice_config,
+            voice::voice_overlay_show,
+            voice::voice_overlay_hide,
+            voice::voice_overlay_set_state,
+            voice::voice_overlay_set_passthrough,
+            voice::voice_register_hotkey,
+            voice::voice_unregister_hotkey,
         ])
         .setup(move |app| {
             // ---------- system tray ----------

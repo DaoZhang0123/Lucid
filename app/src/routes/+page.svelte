@@ -18,6 +18,7 @@
     refreshThreadList,
     type FileRef,
   } from "$lib/chatStore.svelte";
+  import { setDictationSink } from "$lib/voice";
 
   let instruction = $state("");
   let scrollEl: HTMLDivElement | undefined = $state();
@@ -37,6 +38,15 @@
 
   onMount(() => {
     void ensureChatListeners();
+    // Voice dictation sink: when voice.ts gets a result in dictation mode,
+    // append the text into the input box (with a leading space if needed).
+    setDictationSink((text) => {
+      const sep = instruction && !/\s$/.test(instruction) ? " " : "";
+      instruction = instruction + sep + text;
+    });
+  });
+  onDestroy(() => {
+    setDictationSink(null);
   });
 
   // ---------------- Attachments: paste / drag-drop / 📎 button ----------------

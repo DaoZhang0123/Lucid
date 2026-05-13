@@ -148,3 +148,63 @@ max_tips_digest_lines = 30
 max_memory_digest_lines = 30
 max_tokens = 1500
 prompt_version = 1
+
+
+[voice]
+# 语音输入（Push-to-Talk）。详见 Docs/voice-input.md。
+# 默认关；用户在 /settings → Voice 显式开启。开启后首次按下快捷键
+# 才会下载模型（首次 ~150MB，后续走 ~/.lucid/voice/models/ 缓存）。
+enabled = false
+
+# ---- ASR 引擎 ----
+# faster-whisper（推荐，MIT，CPU INT8 已经够快）/ sherpa-onnx / vosk
+engine = "faster-whisper"
+# tiny | base | small | medium | large-v3 | distil-small.en | distil-large-v3
+# distil-small.en 仅英文 ~166MB；small 多语 ~466MB（INT8）
+model_size = "small"
+# ISO 639-1 ("en"/"zh"/"fr"…) 或 "auto" 让 Whisper 自检
+language = "auto"
+# int8 / int8_float16 / float16 / float32（CPU 用 int8 即可）
+compute_type = "int8"
+# cpu | cuda（cuda 需要用户自己装 CUDA 12 + cuDNN 9）
+device = "cpu"
+# 0 = 让 CTranslate2 自动用 os.cpu_count()
+cpu_threads = 0
+# Silero VAD 切静音段，避免 Whisper 在沉默处幻听
+vad_filter = true
+beam_size = 5
+# 录音硬上限（秒）。前端到点强制停。
+max_seconds = 30
+
+# ---- 触发（a11y 优先：默认单键长按）----
+# 任意单键或组合，默认单键 Space。设置页提供"录键"按钮捕获新键。
+hotkey = "Space"
+# 长按多少毫秒进入录音；0 = 经典 PTT（按下即录）。<1000 容易误触发，设置页会警告。
+hold_threshold_ms = 5000
+# release（松开即停）/ tap_again（再点一下停，残障友好默认）/ auto_silence（VAD 1.5s 自动停）
+stop_mode = "tap_again"
+# beep（听觉提示）/ vibrate-tray（托盘抖动，纯视觉）/ silent
+start_feedback = "beep"
+# 焦点感知：输入框聚焦时不抢 Space，让原生空格行为生效
+focus_aware = true
+
+# ---- 文本去向 ----
+# agent（默认，转录后送主 LLM 当 user message，可发"关掉当前 thread"等控制类指令）
+# dictation（纯听写：插入到当前输入框，由用户人工按回车确认）
+mode = "agent"
+# agent 模式：true=每次起新 thread；false=续到当前 thread
+always_new_thread = false
+
+# ---- 悬浮窗（屏顶居中）----
+overlay_position = "top-center"
+overlay_y_offset_px = 8
+# cursor（鼠标所在屏，默认）/ primary（主屏）/ active-window（前台窗口所在屏）
+overlay_screen = "cursor"
+
+# ---- 杂项 ----
+# 是否保留 ~/.lucid/voice/recording-*.webm 供调试
+keep_audio = false
+# HuggingFace 镜像。国内可填 https://hf-mirror.com 加速首次模型下载
+hf_endpoint = ""
+# 模型空闲多少秒后从内存释放，下次用再重新加载（冷启动 ~3s）
+idle_unload_sec = 1800

@@ -4,6 +4,8 @@
   import { setupTheme } from "$lib/theme";
   import ConfirmModal from "$lib/ConfirmModal.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { onMount } from "svelte";
+  import { initVoice } from "$lib/voice";
 
   // Bootstrap i18n once at the root layout. Locale lookup currently falls back
   // to navigator -> "en". A user-selectable locale (saved to config.toml [ui])
@@ -18,6 +20,14 @@
   function winMin() { appWindow.minimize(); }
   function winMax() { appWindow.toggleMaximize(); }
   function winClose() { appWindow.close(); }
+
+  // Voice (push-to-talk) — only init for the main window. The voice-overlay
+  // window has its own layout so this layout doesn't run there.
+  onMount(() => {
+    if (appWindow.label === "main") {
+      void initVoice();
+    }
+  });
 </script>
 
 {#if $isLoading}

@@ -104,7 +104,26 @@
     "selfcheck_winr_button": "Alias Win+R",
     "selfcheck_click_button": "Décalage de clic",
     "selfcheck_all_button": "Tous",
-    "selfcheck_running_hint": "Exécution… (winr / click pressent de vraies touches ; n'interagissez pas au premier plan)"
+    "selfcheck_running_hint": "Exécution… (winr / click pressent de vraies touches ; n'interagissez pas au premier plan)",
+    "voice_section_title": "Entrée vocale (push-to-talk)",
+    "voice_enabled_label": "Activer l'entrée vocale",
+    "voice_enabled_hint": "Maintenez la touche, parlez, relâchez. La transcription est locale — rien n'est envoyé à un LLM sans confirmation. Nécessite l'extra `voice` (faster-whisper).",
+    "voice_engine_label": "Moteur",
+    "voice_model_label": "Modèle",
+    "voice_language_label": "Langue",
+    "voice_language_placeholder": "Vide = détection automatique ; ex. en, zh, fr",
+    "voice_hotkey_label": "Raccourci",
+    "voice_hold_threshold_label": "Seuil d'appui long (ms)",
+    "voice_hold_threshold_warning": "⚠ Avec Espace comme raccourci, un seuil < 1000 ms avalera les frappes normales. Préférez un combo type ctrl+shift+v, ou augmentez le seuil.",
+    "voice_stop_mode_label": "Mode d'arrêt",
+    "voice_start_feedback_label": "Retour de démarrage",
+    "voice_mode_label": "Mode par défaut",
+    "voice_mode_agent": "Agent (exécuter comme tâche)",
+    "voice_mode_dictation": "Dictée (insérer dans le champ actif)",
+    "voice_always_new_thread_label": "Toujours créer un nouveau fil pour la voix",
+    "voice_max_seconds_label": "Durée maximale d'enregistrement (secondes)",
+    "voice_overlay_screen_label": "Écran d'ancrage de l'overlay",
+    "voice_hf_endpoint_label": "Endpoint HuggingFace (premier téléchargement de modèle)"
   },
   "common": {
     "back": "‹ Retour"
