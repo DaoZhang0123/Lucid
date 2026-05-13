@@ -265,7 +265,10 @@ instruction in this run.
         _writeln({"event": "ready", "model": self._active_model(),
                   "provider": (self.cfg.llm.provider or "proxy").lower(),
                   "autonomy": self.cfg.safety.autonomy,
-                  "max_steps": self.cfg.llm.max_steps})
+                  "max_steps": self.cfg.llm.max_steps,
+                  # 队列不持久化，重启后一定是空。显式带上让前端有权
+                  # 威 reset上轮会话留下的 ghost “排队中” 状态。
+                  "queue": self._queue_snapshot()})
         self._scheduler.start()
         self._doze.start()
         # 注册（幂等）每日全量扫描已安装应用图标的内部任务。

@@ -14,7 +14,8 @@ ReAct 主循环（``loop.py``）只需调用 :func:`build_meta_tool_schemas` 拿
 """
 from __future__ import annotations
 
-from typing import Any
+import threading
+from typing import Any, Callable
 
 from .config import Config
 from .tools import ToolResult
@@ -23,6 +24,37 @@ from . import tooltips as tooltips_mod
 from . import launchers as launchers_mod
 from . import regions as regions_mod
 from . import scheduler as scheduler_mod
+
+
+def _run_with_timeout(fn: Callable[[], Any], timeout_s: float) -> tuple[bool, Any]:
+    """Run ``fn`` on a daemon worker thread; return ``(True, result)`` if it
+    finished within ``timeout_s``, else ``(False, None)``. The worker is left
+    to finish in the background so we never wedge the sidecar's main thread —
+    even if the underlying Win32 call (e.g. ``AttachThreadInput`` /
+    ``SetForegroundWindow``) is permanently stuck.
+
+    See iteration-plan 20260512-144219 §"K9 wedge": a synchronous
+    ``launch_app(powershell)`` hung the sidecar indefinitely and cascaded
+    into 10 downstream `harness_error` rows when subsequent ``start_task``
+    RPCs all timed out. This wrapper guarantees liveness by returning to
+    the dispatch loop after at most ``timeout_s`` seconds.
+    """
+    result_box: dict[str, Any] = {}
+
+    def _runner() -> None:
+        try:
+            result_box["value"] = fn()
+        except Exception as exc:  # pragma: no cover — defensive
+            result_box["error"] = exc
+
+    t = threading.Thread(target=_runner, daemon=True, name="meta_tool_watchdog")
+    t.start()
+    t.join(timeout=max(0.5, timeout_s))
+    if t.is_alive():
+        return False, None
+    if "error" in result_box:
+        raise result_box["error"]
+    return True, result_box.get("value")
 
 
 REMEMBER_SCHEMA: dict = {
@@ -708,7 +740,23 @@ def dispatch_meta_tool(
             return ToolResult(error="name required")
 
         page = (args.get("page") or "").strip() or None
-        result = launchers_mod.launch_app(cfg.launchers, name, page=page)
+        # Watchdog: launch_app calls into Win32 (EnumWindows, AttachThreadInput,
+        # SetForegroundWindow, Popen with shell=True). Any of these can
+        # synchronously block in pathological cases (foreground thread frozen,
+        # console subsystem slow). Cap the whole thing at 25s so the sidecar
+        # always returns to the loop.
+        ok_done, result = _run_with_timeout(
+            lambda: launchers_mod.launch_app(cfg.launchers, name, page=page),
+            timeout_s=25.0,
+        )
+        if not ok_done:
+            return ToolResult(error=(
+                f"launch_app({name!r}) timed out after 25s — the underlying "
+                "Win32 call (process spawn / window enum / foreground attach) "
+                "did not return. The launch may still complete in the background; "
+                "take a screenshot in your next step to verify, or try a "
+                "different launch method (e.g. run_shell with `start <exe>`)."
+            ))
         # On success, also append the app's tips body so the model gets it for free.
         out_lines = [f"launch_app: {result.get('message', '')}"]
         for k in ("ok", "method", "slug", "hwnd", "pid", "window_title"):
@@ -737,25 +785,49 @@ def dispatch_meta_tool(
                 out_lines.append(tips_body)
 
         # ---- R2: visual capture (region resolution + L2 crop) ----
+        # Wrap the whole capture block in a watchdog: `sensor.capture_region`
+        # calls into mss / Win32 BitBlt against a window that may still be
+        # mid-spawn, and we've seen it hang the entire dispatch with no
+        # tool_result emitted (see E2E run 20260512-182234 K9, where the
+        # 25s watchdog on `launch_app` itself returned fine but the
+        # post-launch L2 capture wedged the worker for 11+ min). On timeout
+        # we skip the L2 attach and return text-only.
         image_png: bytes | None = None
         attached_l2 = None
         if result.get("ok") and sensor is not None:
             hwnd = result.get("hwnd") or 0
             method = (result.get("method") or "").lower()
             slug = result.get("slug") or name
-            try:
-                rect = _resolve_launch_region(
+
+            def _capture_l2():
+                rect_local = _resolve_launch_region(
                     cfg=cfg,
                     hwnd=int(hwnd) if hwnd else 0,
                     method=method,
                 )
-            except Exception as e:
+                if rect_local is None:
+                    return None
+                rx, ry, rw, rh = rect_local
+                l2 = sensor.capture_region(rx, ry, rw, rh)
+                return rect_local, l2
+
+            cap_done, cap_value = _run_with_timeout(_capture_l2, timeout_s=10.0)
+            if not cap_done:
+                out_lines.append(
+                    "  L2 capture timed out after 10s (window may still be "
+                    "spawning); skipping L2 attachment. Take a screenshot in "
+                    "your next step to verify the launch."
+                )
                 rect = None
-                out_lines.append(f"  region resolution failed: {type(e).__name__}: {e}")
-            if rect is not None:
+            elif cap_value is None:
+                rect = None
+                out_lines.append(
+                    f"  no region resolved (hwnd={hwnd} method={method}); skipping L2 attachment"
+                )
+            else:
+                rect, l2 = cap_value
                 rx, ry, rw, rh = rect
                 try:
-                    l2 = sensor.capture_region(rx, ry, rw, rh)
                     image_png = l2.png_bytes()
                     attached_l2 = l2
                     out_lines.append("")
@@ -776,12 +848,8 @@ def dispatch_meta_tool(
                 except Exception as e:
                     image_png = None
                     out_lines.append(
-                        f"  L2 capture of region ({rx},{ry},{rw}x{rh}) failed: {type(e).__name__}: {e}"
+                        f"  L2 png encode failed: {type(e).__name__}: {e}"
                     )
-            else:
-                out_lines.append(
-                    f"  no region resolved (hwnd={hwnd} method={method}); skipping L2 attachment"
-                )
 
         return ToolResult(
             output="\n".join(out_lines),

@@ -65,6 +65,10 @@ class LLMConfig:
     # 发往模型的对话历史里最多保留多少张截图（含起始图）。
     # 超出后旧图被替换成一段占位文字，避免 413 Request Entity Too Large。
     keep_recent_screenshots: int = 0
+    # 单次 chat() 调用的应用层 wall-clock 兜底。SDK 自己的 timeout 在连接 hang
+    # 或 chunked 上游静默时不一定真触发，daemon 线程到点视为 connection-style
+    # 错误进入下一轮退避重试。设大于 _CHAT_TIMEOUT_SEC (90s) 即可。
+    chat_wall_timeout_sec: float = 180.0
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
     copilot: CopilotConfig = field(default_factory=CopilotConfig)

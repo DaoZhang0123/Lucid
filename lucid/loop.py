@@ -66,7 +66,7 @@ class Agent:
         self.sensor.set_root_config(cfg)
         self.driver = InputDriver(cfg.input)
         self.tool = ComputerTool(self.sensor, self.driver, cfg.screenshot)
-        self.safety = SafetyLayer(cfg.safety)
+        self.safety = SafetyLayer(cfg.safety, event_sink=self._emit)
         self.event_sink = event_sink
         self.cancel_event = cancel_event
         self.thread_log = thread_log
@@ -477,31 +477,59 @@ class Agent:
         SDK 默认 max_retries=2，但 multimodal 请求走代理 / Copilot 上游抽风时仍然容易报
         ``APIConnectionError``。上层看到的体验就是“任务到一半突然 connection error”。这里再重
         试 2 轮，退避 1.5s/3s；401/403/4xx 不重试。任一轮成功即返回。
+
+        额外的 wall-clock watchdog：SDK 自己的 ``timeout=`` 在 httpx 连接挂住 /
+        chunked 上游不写时不一定真触发（见 run 20260512-182234 O2 wedge：worker
+        卡在 step 13 之后 11 分钟无任何事件）。这里用 daemon 线程包一层硬超时
+        ``_CHAT_WALL_TIMEOUT_S``（默认 ``_CHAT_TIMEOUT_SEC * 2``），到点视为
+        connection-style 错误进入下一轮 backoff，永远不让 chat 调用挂死主 worker。
         """
         # 在发送前记一笔完整 context（图片用文件名代替）便于 debug
         self._dump_context(messages, tools, self._current_step)
         backoff = [1.5, 3.0]
         last_exc: Exception | None = None
+        wall_timeout = float(getattr(self.cfg.llm, "chat_wall_timeout_sec", 180.0))
         for attempt in range(len(backoff) + 1):
-            try:
-                return self.client.chat(
-                    messages=messages,
-                    tools=tools,
-                    max_tokens=self.cfg.llm.max_tokens,
-                    temperature=self.cfg.llm.temperature,
-                    top_p=self.cfg.llm.top_p,
+            result_box: dict[str, Any] = {}
+
+            def _runner() -> None:
+                try:
+                    result_box["value"] = self.client.chat(
+                        messages=messages,
+                        tools=tools,
+                        max_tokens=self.cfg.llm.max_tokens,
+                        temperature=self.cfg.llm.temperature,
+                        top_p=self.cfg.llm.top_p,
+                    )
+                except BaseException as exc:  # noqa: BLE001 — re-raised on main
+                    result_box["error"] = exc
+
+            t = threading.Thread(
+                target=_runner, daemon=True, name="llm_chat_watchdog"
+            )
+            t.start()
+            t.join(timeout=wall_timeout)
+            if t.is_alive():
+                # 线程留给 GC，不能 join 死等。视为连接超时进入退避重试。
+                last_exc = TimeoutError(
+                    f"llm chat wall-clock timeout after {wall_timeout:.0f}s"
                 )
-            except APIConnectionError as e:
-                last_exc = e
-                kind = "connection"
-            except APIStatusError as e:
-                # 重试 5xx，以及 499（nginx/网关层 "Client Closed Request"，
-                # 通常是网关空闲超时或瞬时断流，不是真的 4xx 业务错误）。
-                status = getattr(e, "status_code", 0) or 0
-                if status < 500 and status != 499:
-                    raise
-                last_exc = e
-                kind = f"http{status}"
+                kind = "wall-timeout"
+            elif "error" in result_box:
+                exc = result_box["error"]
+                if isinstance(exc, APIConnectionError):
+                    last_exc = exc
+                    kind = "connection"
+                elif isinstance(exc, APIStatusError):
+                    status = getattr(exc, "status_code", 0) or 0
+                    if status < 500 and status != 499:
+                        raise exc
+                    last_exc = exc
+                    kind = f"http{status}"
+                else:
+                    raise exc
+            else:
+                return result_box["value"]
             if attempt >= len(backoff):
                 break
             wait = backoff[attempt]

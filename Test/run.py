@@ -264,6 +264,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="cancel the CURRENT task if its events.jsonl has "
                              "not been updated for this many seconds (queue "
                              "keeps going)")
+    parser.add_argument("--cancel-grace", type=int, default=45,
+                        help="after sending `cancel` to a wedged task, wait "
+                             "this many seconds for the worker to yield. If "
+                             "events.jsonl still does not grow, kill+restart "
+                             "the sidecar and advance to the next query.")
     parser.add_argument("--queue-idle-cap", type=int, default=10 * 60,
                         help="(deprecated, ignored — only one task is in "
                              "flight at a time now; per-task-cap is what "
@@ -293,6 +298,34 @@ def main(argv: list[str] | None = None) -> int:
 
     client = SidecarClient(stderr_log)
     client.start()
+
+    def _restart_sidecar(reason: str) -> tuple[SidecarClient, bool]:
+        """Kill the (presumed wedged) sidecar and start a fresh one.
+
+        Returns (new_client, ready). Caller is responsible for storing the
+        new client and bailing out if ready is False.
+        """
+        _log(f"restarting sidecar ({reason})")
+        try:
+            if client.proc is not None and client.proc.poll() is None:
+                client.proc.kill()
+                try:
+                    client.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+        except Exception as kexc:
+            _log(f"sidecar kill failed: {kexc}")
+        fresh = SidecarClient(stderr_log)
+        try:
+            fresh.start()
+            if not fresh.ready.wait(timeout=45):
+                _log("fresh sidecar did not emit `ready` within 45s")
+                return fresh, False
+            _log("fresh sidecar ready; resuming")
+            return fresh, True
+        except Exception as sexc:
+            _log(f"sidecar restart failed: {sexc}")
+            return fresh, False
     try:
         if not client.ready.wait(timeout=45):
             raise SystemExit("sidecar did not emit `ready` within 45s")
@@ -399,25 +432,8 @@ def main(argv: list[str] | None = None) -> int:
                 # suite can still run. Each restart is reported in the
                 # manifest via the harness_error rows above.
                 _log(f"{tag} sidecar appears wedged; restarting it for next query")
-                try:
-                    if client.proc is not None and client.proc.poll() is None:
-                        client.proc.kill()
-                        try:
-                            client.proc.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            pass
-                except Exception as kexc:
-                    _log(f"{tag} sidecar kill failed: {kexc}")
-                client = SidecarClient(stderr_log)
-                try:
-                    client.start()
-                    if not client.ready.wait(timeout=45):
-                        _log(f"{tag} fresh sidecar did not emit `ready` within 45s; aborting run")
-                        aborted_reason = "sidecar_restart_failed"
-                        break
-                    _log(f"{tag} fresh sidecar ready; resuming")
-                except Exception as sexc:
-                    _log(f"{tag} sidecar restart failed: {sexc}; aborting run")
+                client, ok = _restart_sidecar("start_task RPC failed")
+                if not ok:
                     aborted_reason = "sidecar_restart_failed"
                     break
                 continue
@@ -444,6 +460,7 @@ def main(argv: list[str] | None = None) -> int:
             cur_mtime = _events_mtime(tdir)
             cur_mtime_seen_at = time.time()
             cancelled = False
+            cancelled_at = 0.0
             last_log = time.time()
             while True:
                 if time.time() > global_deadline:
@@ -521,7 +538,36 @@ def main(argv: list[str] | None = None) -> int:
                     except Exception as exc:
                         _log(f"{tag} cancel RPC failed: {exc}")
                     cancelled = True
+                    cancelled_at = now
                     cur_mtime_seen_at = now
+
+                # Cancel-grace escalation: if cancel was already sent and the
+                # worker still hasn't yielded (no new events) within
+                # `cancel_grace_s`, the worker is wedged inside a blocking
+                # syscall (e.g. pyautogui hung on a focus-stealing modal,
+                # LLM SDK ignoring its timeout, or a UIA call deadlocked).
+                # Soft-cancel won't reach it — escalate to a hard sidecar
+                # restart so the rest of the suite can proceed. The current
+                # query is recorded as harness_error.
+                if (
+                    cancelled
+                    and now - cancelled_at > args.cancel_grace
+                    and now - cur_mtime_seen_at > args.cancel_grace
+                ):
+                    _log(
+                        f"{tag} cancel-grace ({args.cancel_grace}s) elapsed "
+                        f"with no progress; killing sidecar and advancing"
+                    )
+                    entry["status"] = "harness_error"
+                    entry["final_text"] = (
+                        f"worker wedged after cancel; sidecar restarted "
+                        f"after {int(now - cancelled_at)}s grace"
+                    )
+                    write_manifest(manifest)
+                    client, ok = _restart_sidecar("cancel ignored")
+                    if not ok:
+                        aborted_reason = "sidecar_restart_failed"
+                    break
 
                 time.sleep(args.poll_interval)
 

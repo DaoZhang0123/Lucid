@@ -20,6 +20,7 @@ TIPS = """\
   Don't burn a step on this if a `%USERPROFILE%`-based path will do.
 - [seed · sort-by-date] To find the **latest** file in a folder: View tab → Sort by → Date modified → Descending (or click the "Date modified" column header twice). Or just use `Sort-Object LastWriteTime -Descending | Select -First 1` from PowerShell on the same folder.
 - [seed · select] Ctrl+A select all, F2 rename, Delete moves to recycle bin, Shift+Delete permanent delete (avoid unless asked).
+- [seed · count-via-shell] **"How many files/subfolders in <path>" → ground-truth via PowerShell, do NOT eyeball the icon grid.** Visual counting at small icons is unreliable (workspace fold / hidden-files toggles / virtualised scrolling all skew the visible count). When the task is UI-verbed as "open File Explorer, navigate to <path>, tell me how many …", the navigation is the UI part; the count itself is data: `run_shell powershell -c "(Get-ChildItem -LiteralPath '<P>' -Directory | Measure-Object).Count"` for subfolders, `-File` for files, drop both flags for everything. Override the shell number only if the user explicitly says "as the UI displays".
 """
 
 LAUNCHER = {

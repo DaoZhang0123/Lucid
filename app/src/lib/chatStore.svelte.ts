@@ -77,6 +77,15 @@ function handleEvent(v: any) {
   if (k === "ready") {
     chat.sidecarReady = true;
     if (typeof v.max_steps === "number" && v.max_steps > 0) chat.totalSteps = v.max_steps;
+    // 新 sidecar 的内存队列必然是空（队列不持久化）。如果旧前端 state
+    // 里还挂着上次会话的 ghost "排队中" 标记，必须现在清掉，否则侧边栏
+    // 会显示永远不会被 dequeue 的假任务。如果 sidecar 后续在 ready 里
+    // 带了 queue 快照就以快照为准。
+    chat.queuedThreadIds = Array.isArray(v.queue)
+      ? v.queue.map((it: any) => it.thread_id).filter(Boolean)
+      : [];
+    chat.runningThreadId = null;
+    chat.running = false;
     push({ kind: "system", text: `sidecar ready · provider=${v.provider ?? "?"} · model=${v.model} · autonomy=${v.autonomy} · max_steps=${v.max_steps}` });
     void refreshThreadList();
   } else if (k === "thread_changed") {
@@ -207,6 +216,10 @@ export async function ensureChatListeners(): Promise<void> {
     } else if (v.kind === "exit") {
       chat.sidecarReady = false;
       chat.running = false;
+      // sidecar 死了 → 内存队列同时蒸发。立刻清掉前端的 ghost “排队中”
+      // 状态，避免侧边栏永久挂着不会被 dequeue 的假任务。
+      chat.queuedThreadIds = [];
+      chat.runningThreadId = null;
       push({ kind: "system", text: `sidecar 已退出（code=${v.code}），1 秒后自动重启` });
     } else if (v.kind === "spawn_error") {
       push({ kind: "system", text: `sidecar 启动失败：${v.message}` });

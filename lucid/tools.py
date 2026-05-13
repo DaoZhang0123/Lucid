@@ -10,6 +10,7 @@ https://docs.claude.com/en/docs/build-with-claude/computer-use
 from __future__ import annotations
 
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -179,10 +180,47 @@ class ComputerTool:
 
     # ----- 派发 -----
     def dispatch(self, action: str, params: dict[str, Any]) -> ToolResult:
-        try:
-            return self._dispatch(action, params)
-        except Exception as e:  # 防御性兜底
-            return ToolResult(error=f"{type(e).__name__}: {e}")
+        # Wall-clock watchdog around every computer-tool action. Win32 input
+        # APIs (pyautogui → SendInput / AttachThreadInput, UIA accessors) can
+        # block indefinitely when a modal steals focus, an app's UI thread
+        # hangs, or the system enters a Ctrl-Alt-Del / secure-desktop state.
+        # See run 20260512-182234 O2: a `key Delete` issued after closing a
+        # save-prompt dialog produced no further events for 11+ minutes and
+        # wedged the entire sidecar. The watchdog returns a `ToolResult`
+        # error to the agent loop after `timeout_s` instead of hanging,
+        # letting the LLM recover (try screenshot, alt approach, etc.).
+        result_box: dict[str, Any] = {}
+
+        def _runner() -> None:
+            try:
+                result_box["value"] = self._dispatch(action, params)
+            except BaseException as exc:  # noqa: BLE001 — re-raised on main
+                result_box["error"] = exc
+
+        # Generous: long type_text + per-char delay can legitimately take a
+        # while; everything else should be sub-second. 20s catches a wedge
+        # quickly without false-positiving on slow IME / multi-line typing.
+        timeout_s = 20.0 if action == "type" else 15.0
+        t = threading.Thread(
+            target=_runner, daemon=True, name=f"computer_tool_{action}"
+        )
+        t.start()
+        t.join(timeout=timeout_s)
+        if t.is_alive():
+            return ToolResult(
+                error=(
+                    f"action={action!r} timed out after {timeout_s:.0f}s — "
+                    f"the input layer is wedged (focus-stealing modal, hung "
+                    f"UI thread, or secure-desktop). Try `action=screenshot` "
+                    f"to see current state."
+                )
+            )
+        if "error" in result_box:
+            exc = result_box["error"]
+            return ToolResult(error=f"{type(exc).__name__}: {exc}")
+        return result_box.get("value") or ToolResult(
+            error=f"action={action!r} returned no result"
+        )
 
     # ----- R4: coordinate bounds hard-check -----
     _COORD_ACTIONS = {
