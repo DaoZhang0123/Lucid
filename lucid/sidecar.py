@@ -247,7 +247,126 @@ instruction in this run.
                 idx = i
                 break
         self._queue.insert(idx, item)
+        self._persist_queue()
         return idx + 1
+
+    # ------------------------------------------------------------------
+    # 队列持久化
+    # ------------------------------------------------------------------
+    # 设计取舍：
+    #   - 只持久化 ``source == "manual"`` 的人工任务。定时任务（scheduled）
+    #     和监听任务（listener / 例如 visual_notify）重启后**不补跑**：定时任务
+    #     的 next_ms 已经在 schedules.json 里推进过，下一次到点会自然 fire；
+    #     visual_notify 是基于实时屏幕状态的，过期补跑没有意义。
+    #   - 文件路径：``%LOCALAPPDATA%\\dev.lucid\\queue.json``，与 schedules.json
+    #     同目录。每次 enqueue / dequeue 同步写一次，崩溃也至多丢最后一条。
+    #   - thread_id 是稳定 ID（thread 目录已经在磁盘上），重启后用
+    #     ``ThreadLog.open(thread_id)`` 重新挂上句柄即可，不会丢历史。
+    @staticmethod
+    def _queue_path() -> Path:
+        if os.name == "nt":
+            local_app = os.environ.get("LOCALAPPDATA")
+            if local_app:
+                return Path(local_app) / "dev.lucid" / "queue.json"
+        home = os.environ.get("HOME") or str(Path.home())
+        return Path(home) / ".lucid" / "queue.json"
+
+    def _persist_queue(self) -> None:
+        try:
+            payload: list[dict[str, Any]] = []
+            for it in self._queue:
+                if str(it.get("source") or "manual") != "manual":
+                    continue
+                thread = it.get("thread")
+                tid = getattr(thread, "id", None) if thread is not None else None
+                if not tid:
+                    continue
+                payload.append({
+                    "thread_id": tid,
+                    "instruction": it.get("instruction") or "",
+                    "autonomy": it.get("autonomy"),
+                    "max_steps": it.get("max_steps"),
+                    "priority": int(it.get("priority", 1)),
+                    "extra_system": it.get("extra_system") or "",
+                    "file_refs": it.get("file_refs") or [],
+                    "queued_ms": int(it.get("queued_ms") or 0),
+                    "seq": int(it.get("seq") or 0),
+                })
+            p = self._queue_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(".json.tmp")
+            tmp.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(tmp, p)
+        except Exception as exc:  # 永远不让持久化失败拖垮主循环
+            self._append_startup_log(
+                f"queue persist failed: {type(exc).__name__}: {exc}"
+            )
+
+    def _restore_queue(self) -> None:
+        """Read ``queue.json`` and re-enqueue any manual tasks that survived
+        the previous shutdown / crash. Each thread_id must still resolve to a
+        real thread directory — silently skip stale entries."""
+        p = self._queue_path()
+        if not p.is_file():
+            return
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as exc:
+            self._append_startup_log(
+                f"queue restore: read failed: {type(exc).__name__}: {exc}"
+            )
+            return
+        if not isinstance(data, list) or not data:
+            return
+        # Sort by stored seq so original FIFO order is preserved (the
+        # _enqueue priority-sort below will respect insertion order within
+        # the same priority).
+        data.sort(key=lambda x: (int(x.get("priority", 1)), int(x.get("seq", 0) or 0)))
+        restored = 0
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            tid = entry.get("thread_id")
+            if not tid:
+                continue
+            try:
+                thread = ThreadLog.open(self.cfg.logging, tid)
+            except FileNotFoundError:
+                continue  # thread dir was deleted while sidecar was down
+            except Exception as exc:
+                self._append_startup_log(
+                    f"queue restore: open thread {tid} failed: {type(exc).__name__}: {exc}"
+                )
+                continue
+            file_refs = entry.get("file_refs") or []
+            queue_item = {
+                "instruction": entry.get("instruction") or "",
+                "thread": thread,
+                "autonomy": entry.get("autonomy"),
+                "max_steps": entry.get("max_steps"),
+                "priority": int(entry.get("priority", 1)),
+                "extra_system": entry.get("extra_system") or "",
+                "file_refs": file_refs if isinstance(file_refs, list) else [],
+                "queued_ms": int(entry.get("queued_ms") or 0),
+                "source": "manual",
+            }
+            with self._lock:
+                position = self._enqueue(queue_item)
+            _writeln({"event": "task_queued",
+                      "thread_id": thread.id,
+                      "title": thread.title,
+                      "instruction": queue_item["instruction"],
+                      "priority": queue_item["priority"],
+                      "position": position,
+                      "restored": True,
+                      "queue": self._queue_snapshot()})
+            restored += 1
+        if restored:
+            self._append_startup_log(f"queue restore: re-enqueued {restored} manual task(s)")
+            _writeln({"event": "queue_restored", "count": restored})
 
     # ------------------------------------------------------------------
     # 主循环
@@ -302,6 +421,14 @@ instruction in this run.
                       "message": f"{type(exc).__name__}: {exc}"})
         if getattr(self.cfg, "visual_notify", None) and self.cfg.visual_notify.enabled:
             self._start_taskbar_monitor()
+        # 重启后补跳：上一会话没跑完的人工任务从 queue.json 重新入队。
+        # 定时 / 监听类任务根据设计不补跳（見 _persist_queue 注释）。
+        try:
+            self._restore_queue()
+        except Exception as exc:
+            self._append_startup_log(
+                f"queue restore failed: {type(exc).__name__}: {exc}"
+            )
         for raw in sys.stdin:
             raw = raw.strip()
             if not raw:
@@ -739,6 +866,7 @@ instruction in this run.
                 "extra_system": extra_system,
                 "_from_visual_notify": True,  # metadata for dedup tracking
                 "_thread": vn_thread,
+                "_source": "listener",
             })
             _writeln({"event": "taskbar_auto_chat_enqueued",
                       "apps": apps, "result": res})
@@ -1293,6 +1421,7 @@ instruction in this run.
                 "max_steps": item.get("max_steps"),
                 "priority": 1,
                 "_thread": sched_thread,
+                "_source": "scheduled",
             })
             if res.get("queued"):
                 _writeln({"event": "schedule_queued", "id": item.get("id"),
@@ -1426,6 +1555,9 @@ instruction in this run.
                     "extra_system": extra_system,
                     "file_refs": file_refs,
                     "queued_ms": int(time.time() * 1000),
+                    # 默认 manual，调用方可覆盖为 scheduled / listener / internal
+                    # 以告诉持久化层跳过此条 (只 manual 入 queue.json)。
+                    "source": (params.get("_source") or "manual"),
                 }
                 # Preserve metadata fields (starting with _) for tracking & deduplication
                 for key, val in params.items():
@@ -1488,6 +1620,7 @@ instruction in this run.
                 new_q.append(it)
             self._queue = new_q
         if removed:
+            self._persist_queue()
             _writeln({"event": "queue_changed", "queue": self._queue_snapshot()})
         return {"removed": removed}
 
@@ -1543,9 +1676,11 @@ instruction in this run.
             return
         with self._lock:
             if not self._queue:
+                self._persist_queue()
                 _writeln({"event": "queue_changed", "queue": []})
                 return
             nxt = self._queue.pop(0)
+            self._persist_queue()
             instruction = nxt["instruction"]
             thread = nxt["thread"]
             autonomy = nxt.get("autonomy")
