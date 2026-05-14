@@ -37,7 +37,7 @@
   // ---- voice ---------------------------------------------------------
   let vEnabled = $state(false);
   let vEngine = $state("faster-whisper");
-  let vModelSize = $state("distil-small.en");
+  let vModelSize = $state("tiny");
   let vLanguage = $state("");
   let vHotkey = $state("Space");
   let vHoldThresholdMs = $state(5000);
@@ -51,6 +51,33 @@
   let voiceSaving = $state(false);
   let voiceSavedAt = $state("");
   let voiceError = $state("");
+  // model download/cache state
+  let vModelLocation = $state(""); // "" | "user" | "bundled"
+  let vModelDownloading = $state(false);
+  let vModelDownloadResult = $state(""); // success message
+  let vModelDownloadError = $state("");
+  let vModelPickerOpen = $state(false);
+  let vModelPickerChoice = $state("small");
+
+  // Catalogue used by the "Download model" picker. Sizes are approximate
+  // on-disk size of the INT8 quantised faster-whisper variants from
+  // Systran/faster-whisper-* on HuggingFace.
+  const VOICE_MODEL_OPTIONS: Array<{
+    id: string;
+    sizeMb: number;
+    multilingual: boolean;
+    accuracy: "low" | "medium" | "high" | "very-high";
+  }> = [
+    { id: "tiny",             sizeMb: 75,   multilingual: true,  accuracy: "low" },
+    { id: "tiny.en",          sizeMb: 75,   multilingual: false, accuracy: "low" },
+    { id: "base",             sizeMb: 145,  multilingual: true,  accuracy: "medium" },
+    { id: "base.en",          sizeMb: 145,  multilingual: false, accuracy: "medium" },
+    { id: "small",            sizeMb: 488,  multilingual: true,  accuracy: "high" },
+    { id: "distil-small.en",  sizeMb: 166,  multilingual: false, accuracy: "high" },
+    { id: "medium",           sizeMb: 1500, multilingual: true,  accuracy: "high" },
+    { id: "distil-large-v3",  sizeMb: 800,  multilingual: false, accuracy: "very-high" },
+    { id: "large-v3",         sizeMb: 3000, multilingual: true,  accuracy: "very-high" },
+  ];
   let saving = $state(false);
   let savedAt = $state("");
   let error = $state("");
@@ -135,6 +162,7 @@
       error = String(e);
     }
     await refreshCopilotStatus();
+    void refreshModelStatus();
   });
 
   onDestroy(() => {
@@ -199,11 +227,62 @@
       // Re-register hotkey + push fresh cfg into the long-press controller.
       try { await reloadVoiceConfig(); } catch (e) { console.warn("reloadVoiceConfig failed:", e); }
       voiceSavedAt = new Date().toLocaleTimeString();
+      // Refresh model location after save (model_size may have changed).
+      void refreshModelStatus();
     } catch (e) {
       voiceError = String(e);
     } finally {
       voiceSaving = false;
     }
+  }
+
+  async function refreshModelStatus() {
+    try {
+      const r = (await invoke("voice_model_status", { args: { modelSize: vModelSize } })) as { location: string };
+      vModelLocation = r?.location ?? "";
+    } catch (e) {
+      console.warn("voice_model_status failed:", e);
+      vModelLocation = "";
+    }
+  }
+
+  async function downloadModel(size?: string) {
+    const target = (size || vModelPickerChoice || vModelSize || "small").trim();
+    vModelDownloading = true;
+    vModelDownloadError = "";
+    vModelDownloadResult = "";
+    vModelPickerOpen = false;
+    try {
+      const r = (await invoke("voice_download_model", {
+        args: { modelSize: target, hfEndpoint: vHfEndpoint || null },
+      })) as { ok: boolean; size_mb?: number; error?: string };
+      if (r?.ok) {
+        vModelDownloadResult = $_("settings.voice_model_download_done", {
+          values: { size: target, mb: r.size_mb ?? 0 },
+        });
+        // After a successful download, switch the active model to what the
+        // user just downloaded — that's almost always what they want.
+        vModelSize = target;
+        await refreshModelStatus();
+      } else {
+        vModelDownloadError = r?.error || "unknown error";
+      }
+    } catch (e) {
+      vModelDownloadError = String(e);
+    } finally {
+      vModelDownloading = false;
+    }
+  }
+
+  function openModelPicker() {
+    // Default the picker to the first option that's not the currently active
+    // model (since "download what I'm already using" is rarely the goal).
+    const cur = (vModelSize || "tiny").trim();
+    const first = VOICE_MODEL_OPTIONS.find(o => o.id !== cur);
+    vModelPickerChoice = (first?.id) || "small";
+    vModelDownloadResult = "";
+    vModelDownloadError = "";
+    vModelPickerOpen = true;
   }
 
   // --- GitHub Copilot OAuth ---
@@ -420,8 +499,27 @@
           </label>
           <label>
             {$_("settings.voice_model_label")}
-            <input type="text" bind:value={vModelSize} placeholder="distil-small.en | small | medium | large-v3" />
+            <input type="text" bind:value={vModelSize} placeholder="tiny | small | medium | large-v3" oninput={() => { vModelDownloadResult = ""; vModelDownloadError = ""; void refreshModelStatus(); }} />
           </label>
+          <div class="row">
+            <button type="button" onclick={openModelPicker} disabled={vModelDownloading}>
+              {vModelDownloading ? $_("settings.voice_model_downloading") : $_("settings.voice_model_download_button")}
+            </button>
+            {#if vModelLocation === "bundled"}
+              <span class="hint">{$_("settings.voice_model_loc_bundled")}</span>
+            {:else if vModelLocation === "user"}
+              <span class="ok">{$_("settings.voice_model_loc_user")}</span>
+            {:else}
+              <span class="hint">{$_("settings.voice_model_loc_missing")}</span>
+            {/if}
+          </div>
+          {#if vModelDownloadResult}
+            <p class="ok">{vModelDownloadResult}</p>
+          {/if}
+          {#if vModelDownloadError}
+            <p class="err">{vModelDownloadError}</p>
+          {/if}
+          <p class="hint">{$_("settings.voice_model_download_hint")}</p>
           <label>
             {$_("settings.voice_language_label")}
             <input type="text" bind:value={vLanguage} placeholder={$_("settings.voice_language_placeholder")} />
@@ -431,11 +529,14 @@
             {$_("settings.voice_hotkey_label")}
             <input type="text" bind:value={vHotkey} placeholder="Space | ctrl+shift+v" />
           </label>
+          {#if vHotkey.trim().toLowerCase() === "space" || vHotkey.trim().toLowerCase() === "spacebar"}
+            <p class="hint">{$_("settings.voice_hotkey_space_hint")}</p>
+          {/if}
           <label>
             {$_("settings.voice_hold_threshold_label")}
             <input type="number" min="0" max="20000" step="100" bind:value={vHoldThresholdMs} />
           </label>
-          {#if vHoldThresholdMs < 1000 && vHotkey.toLowerCase() === "space"}
+          {#if vHoldThresholdMs < 300 && vHotkey.toLowerCase() === "space"}
             <p class="err">{$_("settings.voice_hold_threshold_warning")}</p>
           {/if}
 
@@ -483,6 +584,7 @@
             {$_("settings.voice_hf_endpoint_label")}
             <input type="text" bind:value={vHfEndpoint} placeholder="https://hf-mirror.com" />
           </label>
+          <p class="hint">{$_("settings.voice_hf_endpoint_hint")}</p>
 
           <div class="row">
             <button onclick={saveVoice} disabled={voiceSaving}>{voiceSaving ? $_("settings.saving_button") : $_("settings.save_button")}</button>
@@ -518,6 +620,42 @@
   </div>
 </main>
 
+{#if vModelPickerOpen}
+  <div class="modal-backdrop" onclick={() => (vModelPickerOpen = false)} role="presentation">
+    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="model-picker-title">
+      <h3 id="model-picker-title">{$_("settings.voice_model_picker_title")}</h3>
+      <p class="hint">{$_("settings.voice_model_picker_subtitle")}</p>
+      <div class="model-list">
+        {#each VOICE_MODEL_OPTIONS as opt (opt.id)}
+          {@const sizeStr = opt.sizeMb >= 1000 ? `${(opt.sizeMb/1000).toFixed(1)} GB` : `${opt.sizeMb} MB`}
+          <label class="model-opt" class:active={vModelPickerChoice === opt.id}>
+            <input type="radio" name="model-pick" value={opt.id} bind:group={vModelPickerChoice} />
+            <div class="model-opt-body">
+              <div class="model-opt-head">
+                <span class="model-opt-name">{opt.id}</span>
+                <span class="model-opt-size">{sizeStr}</span>
+              </div>
+              <div class="model-opt-meta">
+                <span class="badge {opt.accuracy}">{$_("settings.voice_model_accuracy_" + opt.accuracy)}</span>
+                <span class="badge {opt.multilingual ? 'multi' : 'mono'}">
+                  {opt.multilingual ? $_("settings.voice_model_multilingual") : $_("settings.voice_model_english_only")}
+                </span>
+              </div>
+            </div>
+          </label>
+        {/each}
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" onclick={() => (vModelPickerOpen = false)}>
+          {$_("settings.cancel_button")}
+        </button>
+        <button type="button" onclick={() => downloadModel(vModelPickerChoice)}>
+          {$_("settings.voice_model_picker_confirm")}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 <style>
   main {
     max-width: 56rem;
@@ -642,4 +780,67 @@
     border-radius: 3px;
     font-family: Consolas, monospace;
   }
+
+  /* ----- model picker modal ----- */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000;
+    padding: 24px;
+    backdrop-filter: blur(2px);
+  }
+  .modal {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px 22px 16px;
+    width: 100%;
+    max-width: 520px;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  }
+  .modal h3 { margin: 0 0 6px; font-size: 16px; }
+  .modal .hint { margin: 0 0 14px; }
+  .model-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .model-opt {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .model-opt:hover { background: #f8fafc; }
+  .model-opt.active { border-color: #2563eb; background: #eff6ff; }
+  .model-opt > input[type="radio"] {
+    width: auto; margin: 4px 0 0; padding: 0;
+    border: 0;
+    flex: 0 0 auto;
+  }
+  .model-opt-body { flex: 1; min-width: 0; }
+  .model-opt-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .model-opt-name { font-weight: 600; font-family: Consolas, monospace; }
+  .model-opt-size { font-size: 12px; color: #64748b; font-variant-numeric: tabular-nums; }
+  .model-opt-meta { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: #475569;
+  }
+  .badge.low        { background: #fef3c7; color: #92400e; }
+  .badge.medium     { background: #dbeafe; color: #1d4ed8; }
+  .badge.high       { background: #dcfce7; color: #166534; }
+  .badge.very-high  { background: #ede9fe; color: #6d28d9; }
+  .badge.multi      { background: #ecfeff; color: #0e7490; }
+  .badge.mono       { background: #f1f5f9; color: #475569; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .modal-actions button.secondary {
+    background: transparent;
+    color: #475569;
+    border: 1px solid #cbd5e1;
+  }
+  .modal-actions button.secondary:hover { background: #f1f5f9; }
 </style>

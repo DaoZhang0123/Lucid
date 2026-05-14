@@ -45,6 +45,151 @@ def models_dir() -> Path:
     return d
 
 
+# Map faster-whisper short name → HuggingFace repo id, used both for our
+# bundled-model lookup and for explicit downloads from the Settings page.
+_FW_REPO = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "tiny.en": "Systran/faster-whisper-tiny.en",
+    "base": "Systran/faster-whisper-base",
+    "base.en": "Systran/faster-whisper-base.en",
+    "small": "Systran/faster-whisper-small",
+    "small.en": "Systran/faster-whisper-small.en",
+    "medium": "Systran/faster-whisper-medium",
+    "medium.en": "Systran/faster-whisper-medium.en",
+    "large-v1": "Systran/faster-whisper-large-v1",
+    "large-v2": "Systran/faster-whisper-large-v2",
+    "large-v3": "Systran/faster-whisper-large-v3",
+    "distil-small.en": "Systran/faster-distil-whisper-small.en",
+    "distil-medium.en": "Systran/faster-distil-whisper-medium.en",
+    "distil-large-v2": "Systran/faster-distil-whisper-large-v2",
+    "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
+}
+
+
+def _hf_cache_subdir(model_size: str) -> str:
+    """HF on-disk layout: ``models--{owner}--{name}``."""
+    repo = _FW_REPO.get(model_size, model_size)
+    return "models--" + repo.replace("/", "--")
+
+
+def _bundled_voice_models_root() -> Optional[Path]:
+    """Return the in-bundle voice_models dir if PyInstaller bundled one."""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if not meipass:
+        return None
+    p = Path(meipass) / "lucid" / "voice_models"
+    return p if p.is_dir() else None
+
+
+def _seed_user_cache_from_bundle() -> list[str]:
+    """Copy any pre-bundled HF model directories from the PyInstaller bundle
+    into ``~/.lucid/voice/models/`` so users can see/manage them like any
+    other downloaded model.
+
+    Idempotent: only copies model dirs that don't already exist in the user
+    cache. Returns the list of model subdir names that were freshly copied.
+    """
+    bundled = _bundled_voice_models_root()
+    if bundled is None:
+        return []
+    user_root = models_dir()
+    copied: list[str] = []
+    import shutil
+    # Each top-level entry in the bundled root is either CACHEDIR.TAG or a
+    # `models--<owner>--<name>` directory.
+    for entry in bundled.iterdir():
+        if not entry.is_dir() or not entry.name.startswith("models--"):
+            continue
+        dst = user_root / entry.name
+        if dst.exists():
+            continue
+        try:
+            shutil.copytree(entry, dst)
+            copied.append(entry.name)
+        except Exception:  # noqa: BLE001 — non-fatal; load() falls back to bundled
+            pass
+    return copied
+
+
+def model_is_cached(model_size: str) -> bool:
+    """True iff the requested model is in the user cache or the bundle."""
+    sub = _hf_cache_subdir(model_size)
+    if (models_dir() / sub).is_dir():
+        return True
+    bundled = _bundled_voice_models_root()
+    if bundled and (bundled / sub).is_dir():
+        return True
+    return False
+
+
+def model_cache_location(model_size: str) -> str:
+    """Return ``"user"`` or ``""`` (not present).
+
+    Note: bundled models are seeded into the user dir on startup (see
+    ``_seed_user_cache_from_bundle``), so by the time the UI asks they live
+    under ``~/.lucid/voice/models/`` like any other model.
+    """
+    sub = _hf_cache_subdir(model_size)
+    if (models_dir() / sub).is_dir():
+        return "user"
+    bundled = _bundled_voice_models_root()
+    if bundled and (bundled / sub).is_dir():
+        # Race: not yet seeded (sidecar started but didn't run seeding yet).
+        return "bundled"
+    return ""
+
+
+def download_voice_model(model_size: str, hf_endpoint: str = "") -> dict[str, Any]:
+    """Pre-download a faster-whisper model into the user cache.
+
+    Triggered from the Settings page so the first PTT keypress is fast (no
+    surprise network stall). Honours ``hf_endpoint`` (e.g. https://hf-mirror.com)
+    for users behind blocked HuggingFace.
+
+    Returns ``{ok, size_mb, location, error?}``.
+    """
+    size = (model_size or "tiny").strip()
+    repo = _FW_REPO.get(size)
+    if not repo:
+        return {"ok": False, "error": f"unknown model size: {size}"}
+    if hf_endpoint:
+        os.environ["HF_ENDPOINT"] = hf_endpoint
+        os.environ["HF_HUB_ENDPOINT"] = hf_endpoint
+    try:
+        # Use snapshot_download directly so we can target our cache root.
+        from huggingface_hub import snapshot_download  # type: ignore[import-not-found]
+    except ImportError as e:
+        return {"ok": False, "error": f"huggingface_hub not installed: {e}"}
+    try:
+        local_path = snapshot_download(
+            repo_id=repo,
+            cache_dir=str(models_dir()),
+            local_files_only=False,
+        )
+    except Exception as e:  # noqa: BLE001 — surface whatever HF threw at the UI
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    # Compute on-disk size of the snapshot dir (resolved symlinks count once).
+    total = 0
+    seen: set[Path] = set()
+    for p in Path(local_path).rglob("*"):
+        try:
+            real = p.resolve()
+        except OSError:
+            real = p
+        if real in seen or not real.is_file():
+            continue
+        seen.add(real)
+        try:
+            total += real.stat().st_size
+        except OSError:
+            pass
+    return {
+        "ok": True,
+        "size_mb": round(total / 1024 / 1024, 1),
+        "location": str(Path(local_path)),
+    }
+
+
 # --- result type ---
 
 @dataclass
@@ -135,6 +280,14 @@ class FasterWhisperTranscriber(Transcriber):
         return (self.cfg.model_size or "small").strip()
 
     def _load(self) -> None:
+        # IMPORTANT: set HF_ENDPOINT *before* importing faster_whisper —
+        # huggingface_hub caches `endpoint` as a module-level constant at
+        # import time, so a later assignment is silently ignored. Also use
+        # plain `=` (not setdefault) so a user-configured mirror always wins
+        # over an inherited shell env var.
+        if self.cfg.hf_endpoint:
+            os.environ["HF_ENDPOINT"] = self.cfg.hf_endpoint
+            os.environ["HF_HUB_ENDPOINT"] = self.cfg.hf_endpoint
         try:
             from faster_whisper import WhisperModel  # type: ignore[import-not-found]
         except ImportError as e:
@@ -143,12 +296,20 @@ class FasterWhisperTranscriber(Transcriber):
                 "(adds ~80MB; CTranslate2 + tokenizers + av) or change "
                 "[voice].engine to a backend you have installed."
             ) from e
-        # Optional HF mirror for users behind the great firewall.
-        if self.cfg.hf_endpoint:
-            os.environ.setdefault("HF_ENDPOINT", self.cfg.hf_endpoint)
-        # Cache models inside ~/.lucid/voice/models/<size>/.
-        # faster-whisper passes this through to huggingface_hub.snapshot_download.
+        # Seed any bundled models (e.g. tiny shipped with the installer) into
+        # ~/.lucid/voice/models/ so users see them in one place. No-op if the
+        # user already has them.
+        _seed_user_cache_from_bundle()
+        # Resolve where to look. After seeding we expect the user cache to
+        # have everything; fall back to the in-bundle path only if the seed
+        # failed (e.g. user wiped the model dir between seeding and load).
+        size = self._model_id()
+        sub = _hf_cache_subdir(size)
         cache_root = str(models_dir())
+        if not (Path(cache_root) / sub).is_dir():
+            bundled_root = _bundled_voice_models_root()
+            if bundled_root and (bundled_root / sub).is_dir():
+                cache_root = str(bundled_root)
         self._loading = True
         self._load_started_ts = time.time()
         try:

@@ -147,8 +147,9 @@ enabled = false
 # faster-whisper（推荐，MIT，CPU INT8 已经够快）/ sherpa-onnx / vosk
 engine = "faster-whisper"
 # tiny | base | small | medium | large-v3 | distil-small.en | distil-large-v3
-# distil-small.en 仅英文 ~166MB；small 多语 ~466MB（INT8）
-model_size = "small"
+# tiny ~75MB（多语，安装包内置，开箱即用）；small ~466MB；distil-small.en 仅英文 ~166MB
+# 在 Settings → Voice input 里点 "Download model" 可以预下载更大模型，避免首次按 Space 时卡顿
+model_size = "tiny"
 # ISO 639-1 ("en"/"zh"/"fr"…) 或 "auto" 让 Whisper 自检
 language = "auto"
 # int8 / int8_float16 / float16 / float32（CPU 用 int8 即可）

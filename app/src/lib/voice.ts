@@ -155,7 +155,10 @@ async function loadConfigAndApply(): Promise<void> {
   if (next.enabled) {
     if (!wasEnabled || wasHotkey !== next.hotkey) {
       try {
-        await invoke("voice_register_hotkey", { hotkey: next.hotkey });
+        await invoke("voice_register_hotkey", {
+          hotkey: next.hotkey,
+          holdThresholdMs: next.hold_threshold_ms,
+        });
       } catch (e) {
         console.warn(`failed to register voice hotkey "${next.hotkey}":`, e);
       }
@@ -175,6 +178,12 @@ async function unregisterHotkey(): Promise<void> {
 
 function focusedOnEditable(): boolean {
   if (!cfg?.focus_aware) return false;
+  // Bare-Space hotkey on Windows uses an OS-level keyboard hook that already
+  // distinguishes tap (passthrough) from hold (PTT). When `pressed` fires, the
+  // user definitely held long enough for the grace window to elapse, so we
+  // must NOT short-circuit on focus — that would silently drop their PTT.
+  const hk = (cfg.hotkey || "").trim().toLowerCase();
+  if (hk === "space" || hk === "spacebar") return false;
   const el = document.activeElement;
   if (!el) return false;
   const tag = el.tagName;

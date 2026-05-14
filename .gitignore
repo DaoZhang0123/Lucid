@@ -22,3 +22,5 @@ logs/
 # report.md, subagent-prompts/, iteration-plan.md, screenshots, etc.)
 Test/runs/
 Docs/Competitor/
+# Pre-fetched voice models (downloaded by packaging/fetch_voice_model.py)
+packaging/build_assets/

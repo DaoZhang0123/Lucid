@@ -158,6 +158,35 @@ pub async fn voice_unload() -> Result<Value, String> {
     sidecar::instance().request("voice_unload", json!({})).await
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelArgs {
+    pub model_size: String,
+    #[serde(default)]
+    pub hf_endpoint: Option<String>,
+}
+
+/// Where the requested Whisper model is cached. `location` is "user", "bundled", or "".
+#[tauri::command]
+pub async fn voice_model_status(args: ModelArgs) -> Result<Value, String> {
+    let mut p = json!({"model_size": args.model_size});
+    if let Some(e) = &args.hf_endpoint {
+        p["hf_endpoint"] = json!(e);
+    }
+    sidecar::instance().request("voice_model_status", p).await
+}
+
+/// Pre-download a Whisper model into the user cache. Blocking; can take a
+/// while for `small` (~488MB) or larger over a slow link.
+#[tauri::command]
+pub async fn voice_download_model(args: ModelArgs) -> Result<Value, String> {
+    let mut p = json!({"model_size": args.model_size});
+    if let Some(e) = &args.hf_endpoint {
+        p["hf_endpoint"] = json!(e);
+    }
+    sidecar::instance().request("voice_download_model", p).await
+}
+
 #[tauri::command]
 pub async fn voice_config() -> Result<Value, String> {
     sidecar::instance().request("voice_config", json!({})).await
@@ -192,7 +221,7 @@ pub async fn voice_overlay_show(app: AppHandle, args: OverlayShowArgs) -> Result
             WebviewUrl::App(url_path.into()),
         )
         .title("Lucid Voice")
-        .inner_size(360.0, 72.0)
+        .inner_size(420.0, 96.0)
         .always_on_top(true)
         .decorations(false)
         .skip_taskbar(true)
@@ -219,7 +248,7 @@ pub async fn voice_overlay_show(app: AppHandle, args: OverlayShowArgs) -> Result
         let mw = mon.size().width as f64; // physical pixels
         let mx = mon.position().x as f64;
         let my = mon.position().y as f64;
-        let logical_w = 360.0_f64;
+        let logical_w = 420.0_f64;
         let physical_w = logical_w * scale;
         let x = mx + (mw - physical_w) / 2.0;
         let y_off = args.y_offset_px.unwrap_or(8) as f64 * scale;
@@ -227,9 +256,13 @@ pub async fn voice_overlay_show(app: AppHandle, args: OverlayShowArgs) -> Result
         let _ = win.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
     }
 
-    // Click-through by default; the overlay enables interaction only when the
-    // user hovers an interactive control (the JS toggles this back).
-    let _ = win.set_ignore_cursor_events(true);
+    // Interactive by default — the overlay needs to receive clicks for its
+    // controls (cancel button, mode toggle) and for drag-to-reposition. The
+    // window is small (420x96) so blocking clicks under it for a few seconds
+    // is fine. Per-element click-through is impossible at the OS level; the
+    // old per-button passthrough toggle silently never worked anyway because
+    // mouseenter doesn't fire on a fully-passthrough window.
+    let _ = win.set_ignore_cursor_events(false);
     let _ = win.show();
     // Don't focus — must not steal focus from whatever the user is doing.
     Ok(())
@@ -266,17 +299,48 @@ pub async fn voice_overlay_set_passthrough(app: AppHandle, passthrough: bool) ->
 /// (Re)register the voice PTT global shortcut. Pressed / Released events are
 /// forwarded to the frontend on `lucid://voice` so the long-press timer +
 /// MediaRecorder live in JS.
+///
+/// Special case: when `hotkey == "Space"` (no modifiers) on Windows, we use a
+/// low-level `WH_KEYBOARD_LL` hook instead of `tauri-plugin-global-shortcut`
+/// so short taps fall through to the focused app (see `space_hook.rs`). For
+/// any other binding (`Ctrl+Space`, `F12`, …) we keep using the cross-platform
+/// global-shortcut path.
 #[tauri::command]
-pub fn voice_register_hotkey(app: AppHandle, hotkey: String) -> Result<(), String> {
-    let new_sc = parse_shortcut(&hotkey)?;
-    let plugin = app.global_shortcut();
-    // Drop the previous binding first so we don't accumulate handlers.
+pub fn voice_register_hotkey(
+    app: AppHandle,
+    hotkey: String,
+    hold_threshold_ms: Option<i64>,
+) -> Result<(), String> {
+    // Drop any existing global-shortcut binding first.
     {
+        let plugin = app.global_shortcut();
         let mut guard = CURRENT_HOTKEY.lock().map_err(|e| e.to_string())?;
         if let Some(prev) = guard.take() {
             let _ = plugin.unregister(prev);
         }
     }
+
+    let trimmed = hotkey.trim();
+    let is_bare_space = trimmed.eq_ignore_ascii_case("space")
+        || trimmed.eq_ignore_ascii_case("spacebar");
+
+    #[cfg(windows)]
+    {
+        if is_bare_space {
+            let threshold = hold_threshold_ms.unwrap_or(5000);
+            crate::space_hook::install(app.clone(), threshold);
+            return Ok(());
+        }
+        // Falling through to global-shortcut → make sure the hook isn't lingering.
+        crate::space_hook::uninstall();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = is_bare_space; // unused on non-Windows
+    }
+
+    let new_sc = parse_shortcut(trimmed)?;
+    let plugin = app.global_shortcut();
     plugin.register(new_sc).map_err(|e| format!("register {hotkey}: {e}"))?;
     *CURRENT_HOTKEY.lock().map_err(|e| e.to_string())? = Some(new_sc);
     Ok(())
@@ -284,6 +348,8 @@ pub fn voice_register_hotkey(app: AppHandle, hotkey: String) -> Result<(), Strin
 
 #[tauri::command]
 pub fn voice_unregister_hotkey(app: AppHandle) -> Result<(), String> {
+    #[cfg(windows)]
+    crate::space_hook::uninstall();
     let plugin = app.global_shortcut();
     let mut guard = CURRENT_HOTKEY.lock().map_err(|e| e.to_string())?;
     if let Some(prev) = guard.take() {

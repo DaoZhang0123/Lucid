@@ -355,7 +355,7 @@ class VoiceConfig:
     enabled: bool = False
     # ---- engine ----
     engine: str = "faster-whisper"   # faster-whisper | sherpa-onnx | vosk
-    model_size: str = "small"        # tiny | base | small | medium | large-v3 | distil-small.en | distil-large-v3
+    model_size: str = "tiny"         # tiny | base | small | medium | large-v3 | distil-small.en | distil-large-v3
     language: str = "auto"           # ISO 639-1 or "auto"
     compute_type: str = "int8"       # int8 | int8_float16 | float16 | float32
     device: str = "cpu"              # cpu | cuda

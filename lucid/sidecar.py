@@ -886,6 +886,7 @@ instruction in this run.
         "launchers_list", "regions_list", "doze_status", "doze_outputs",
         "installed_apps_list",
         "voice_status", "voice_config",
+        "voice_model_status",
     })
 
     def _sidecar_busy(self) -> bool:
@@ -1084,6 +1085,31 @@ instruction in this run.
             try: cur.unload()
             except Exception: pass
         return {"unloaded": True}
+
+    def _rpc_voice_model_status(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Where a given Whisper model is cached: 'user', 'bundled', or ''."""
+        from . import voice as voice_mod
+        # Make sure any pre-bundled models have been seeded into the user
+        # cache so the answer is stable across calls.
+        voice_mod._seed_user_cache_from_bundle()
+        size = (params.get("model_size") or self.cfg.voice.model_size or "tiny").strip()
+        return {
+            "model_size": size,
+            "location": voice_mod.model_cache_location(size),
+            "cached": voice_mod.model_is_cached(size),
+        }
+
+    def _rpc_voice_download_model(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Pre-download a Whisper model into the user cache.
+
+        Blocks until done. Honours the configured ``hf_endpoint`` (or the
+        per-call override in ``params['hf_endpoint']``) for users behind a
+        blocked HuggingFace.
+        """
+        from . import voice as voice_mod
+        size = (params.get("model_size") or self.cfg.voice.model_size or "tiny").strip()
+        endpoint = (params.get("hf_endpoint") or self.cfg.voice.hf_endpoint or "").strip()
+        return voice_mod.download_voice_model(size, endpoint)
 
     def _rpc_transcribe_audio(self, params: dict[str, Any]) -> dict[str, Any]:
         if not self.cfg.voice.enabled:
