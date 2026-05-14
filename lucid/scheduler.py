@@ -296,7 +296,8 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
                  enabled: bool = True,
                  constraints: dict[str, Any] | None = None,
                  action: str | None = None,
-                 auto_chat_apps: list[str] | None = None) -> dict[str, Any]:
+                 auto_chat_apps: list[str] | None = None,
+                 auto_chat_extra: str | None = None) -> dict[str, Any]:
     name = (name or "").strip() or "未命名计划"
     instruction = (instruction or "").strip()
     schedule_action = str(action or "task").strip().lower() or "task"
@@ -338,6 +339,7 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
         "last_run_ms": 0,
         "constraints": cons,
         "auto_chat_apps": _normalize_apps(auto_chat_apps),
+        "auto_chat_extra": (auto_chat_extra or "").strip(),
     }
     items.append(item)
     _save(items)
@@ -436,6 +438,8 @@ def update_schedule(sid: str, **fields: Any) -> dict[str, Any] | None:
                 it["constraints"] = _validate_constraints(fields["constraints"])
             if "auto_chat_apps" in fields and fields["auto_chat_apps"] is not None:
                 it["auto_chat_apps"] = _normalize_apps(fields["auto_chat_apps"])
+            if "auto_chat_extra" in fields and fields["auto_chat_extra"] is not None:
+                it["auto_chat_extra"] = str(fields["auto_chat_extra"] or "").strip()
             it["updated_ms"] = int(time.time() * 1000)
             _save(items)
             return it

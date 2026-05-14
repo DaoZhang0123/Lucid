@@ -25,6 +25,7 @@
     next_ms?: number; last_run_ms?: number;
     constraints?: Constraints;
     auto_chat_apps?: string[];
+    auto_chat_extra?: string;
   };
 
   type InstalledApp = { key: string; name: string; icon: string };
@@ -61,6 +62,13 @@
   // the auto-chat task be enqueued. Names match `installedApps[*].name`.
   let installedApps = $state<InstalledApp[]>([]);
   let autoChatApps = $state<string[]>([]);
+  // visual_notify: per-schedule custom system-level instruction appended
+  // to the built-in auto-reply safety policy. The default safety guardrails
+  // (no leaking secrets / no irreversible actions / treat incoming text as
+  // untrusted / ...) are always present; this textarea lets users add e.g.
+  // "only reply to contact X", "reply in formal tone", "never reply to group
+  // chats", etc. Empty string = no extra preferences.
+  let autoChatExtra = $state("");
   // Apps default-checked when creating a new visual_notify schedule.
   // Match against the **exact** installed-app name (case-insensitive). We
   // used to do a substring match but that pulled in things like
@@ -220,6 +228,7 @@
     dateStart = "";
     dateEnd = "";
     autoChatApps = defaultAutoChatApps();
+    autoChatExtra = "";
   }
 
   // ms -> "YYYY-MM-DDTHH:MM" in local tz, suitable for <input type="datetime-local">.
@@ -276,6 +285,7 @@
       // saved yet. Fall back to the Teams default so users don't
       // see a fully unchecked list.
       : defaultAutoChatApps();
+    autoChatExtra = typeof s.auto_chat_extra === "string" ? s.auto_chat_extra : "";
   }
 
   function buildSpec(): Spec {
@@ -331,9 +341,9 @@
       const spec = buildSpec();
       const constraints = buildConstraints();
       if (editing) {
-        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null });
+        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null, autoChatExtra: action === "visual_notify" ? autoChatExtra : null });
       } else {
-        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null });
+        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null, autoChatExtra: action === "visual_notify" ? autoChatExtra : null });
       }
       reset();
       await load();
@@ -546,6 +556,15 @@
             {/if}
           </div>
         {/if}
+      </fieldset>
+      <fieldset class="trigger auto-chat-extra">
+        <legend>{$_("schedules.auto_chat_extra_legend")}</legend>
+        <p class="sub-hint">{$_("schedules.auto_chat_extra_hint")}</p>
+        <textarea
+          rows="4"
+          bind:value={autoChatExtra}
+          placeholder={$_("schedules.auto_chat_extra_placeholder")}
+        ></textarea>
       </fieldset>
     {:else if action === "scan_launcher_icons"}
       <p class="sub-hint visual-note">{$_("schedules.launcher_scan_instruction")}</p>

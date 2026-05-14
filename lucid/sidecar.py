@@ -194,6 +194,10 @@ instruction in this run.
         # tick_once() fires; consumed by the LLM-confirm prompt and by the
         # taskbar_notify_confirmed enqueue gate). Empty = no filter (legacy).
         self._visual_notify_filter_apps: list[str] = []
+        # Per-tick user-defined extra prompt (e.g. "only reply to contact X").
+        # Appended to the safety policy in extra_system when enqueueing the
+        # auto-chat task. Empty = no extra preferences.
+        self._visual_notify_extra_prompt: str = ""
         self._doze = DozeWorker(
             self.cfg,
             llm_factory=lambda: _build_llm_client(self.cfg, None),
@@ -806,6 +810,20 @@ instruction in this run.
         # user instruction —— 既避免每条 thread 都背着 ~70 行策略文本污染历史，
         # 也让模型把它作为「不可被 user 覆盖的硬约束」来对待。
         extra_system = self._AUTO_CHAT_GUARDRAILS
+        # 把这条 schedule 上挂的用户自定义 prompt 接在安全策略后面，作为同一份
+        # extra_system 的一部分（仍然是 system 级，比 user instruction 优先级高）。
+        # 常见用法：限定联系人 / 限定群 / 限定话题 / 指定语气等。
+        try:
+            user_extra = str(getattr(self, "_visual_notify_extra_prompt", "") or "").strip()
+        except Exception:
+            user_extra = ""
+        if user_extra:
+            extra_system = (
+                extra_system.rstrip()
+                + "\n\n[USER-DEFINED AUTO-REPLY PREFERENCES — applied on top of the safety policy above]\n"
+                + user_extra
+                + "\n"
+            )
 
         # Per-schedule auto-reply whitelist (set in _on_schedule_fire right
         # before tick_once). If non-empty AND the LLM-confirmed apps don't
@@ -1392,6 +1410,7 @@ instruction in this run.
             enabled=bool(params.get("enabled", True)),
             constraints=params.get("constraints"),
             auto_chat_apps=params.get("auto_chat_apps"),
+            auto_chat_extra=params.get("auto_chat_extra"),
         )
 
     def _rpc_schedule_update(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1407,6 +1426,7 @@ instruction in this run.
             enabled=params.get("enabled"),
             constraints=params.get("constraints"),
             auto_chat_apps=params.get("auto_chat_apps"),
+            auto_chat_extra=params.get("auto_chat_extra"),
         )
         if item is None:
             raise ValueError(f"schedule {sid!r} not found")
@@ -1434,6 +1454,13 @@ instruction in this run.
                     self._visual_notify_filter_apps = list(item.get("auto_chat_apps") or [])
                 except Exception:
                     self._visual_notify_filter_apps = []
+                # Per-schedule custom prompt appended to the auto-reply safety
+                # policy (extra_system). Lets users add e.g. "only reply to
+                # contact X" without losing the default safety guardrails.
+                try:
+                    self._visual_notify_extra_prompt = str(item.get("auto_chat_extra") or "").strip()
+                except Exception:
+                    self._visual_notify_extra_prompt = ""
                 if self._taskbar_monitor is not None:
                     self._taskbar_monitor.tick_once()
                 _writeln({"event": "visual_notify_tick", "id": item.get("id"),

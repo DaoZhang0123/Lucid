@@ -539,22 +539,24 @@ pub async fn schedule_list() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn schedule_add(name: String, instruction: String, spec: Value, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>) -> Result<Value, String> {
+pub async fn schedule_add(name: String, instruction: String, spec: Value, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>, auto_chat_extra: Option<String>) -> Result<Value, String> {
     instance().request("schedule_add", json!({
         "name": name, "instruction": instruction, "spec": spec,
         "enabled": enabled.unwrap_or(true),
         "constraints": constraints,
         "auto_chat_apps": auto_chat_apps,
+        "auto_chat_extra": auto_chat_extra,
     })).await
 }
 
 #[tauri::command]
-pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>) -> Result<Value, String> {
+pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>, auto_chat_extra: Option<String>) -> Result<Value, String> {
     instance().request("schedule_update", json!({
         "id": id, "name": name, "instruction": instruction, "spec": spec,
         "enabled": enabled,
         "constraints": constraints,
         "auto_chat_apps": auto_chat_apps,
+        "auto_chat_extra": auto_chat_extra,
     })).await
 }
 
