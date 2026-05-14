@@ -269,7 +269,7 @@
 </div>
 
 <style>
-  .page { max-width: 64rem; margin: 0 auto; padding: 1rem 1.5rem;
+  .page { max-width: 64rem; margin: 0; padding: 1rem 1.5rem;
           font: 14px -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
   header { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 0.5rem; }
   .back { color: #2563eb; text-decoration: none; font-size: 0.9rem; }

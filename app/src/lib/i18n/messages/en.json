@@ -40,7 +40,9 @@
     "image_loading": "loading…",
     "image_alt": "step {step}",
     "lightbox_alt": "screenshot",
-    "run_started": "Task started"
+    "run_started": "Task started",
+    "clamp_show_more": "Show more",
+    "clamp_show_less": "Show less"
   },
   "footer": {
     "new_thread_title": "New conversation (clears current chat; cancels active run first)",
@@ -57,7 +59,7 @@
     "back_to_chat": "← Back to chat",
     "history_link": "History",
     "heading": "Settings",
-    "llm_section_title": "LLM provider",
+    "llm_section_title": "Large Language Model",
     "config_path_label": "Config file:",
     "config_path_unloaded": "(not loaded)",
     "provider_label": "Provider",
@@ -87,6 +89,7 @@
     "copilot_login_busy": "Please wait…",
     "copilot_login_failed_default": "Login failed",
     "general_section_title": "General",
+    "sampling_section_title": "Sampling",
     "language_hint": "Switch UI language. Saved per-user, takes effect immediately.",
     "temperature_label": "Temperature",
     "top_p_label": "Top-p",
@@ -105,7 +108,7 @@
     "selfcheck_click_button": "Click coordinate offset",
     "selfcheck_all_button": "All",
     "selfcheck_running_hint": "Running… (winr / click will press real keys; please don't interact in the foreground)",
-    "voice_section_title": "Voice input (push-to-talk)",
+    "voice_section_title": "Voice input",
     "voice_enabled_label": "Enable voice input",
     "voice_enabled_hint": "Hold the hotkey, speak, release. Audio is transcribed locally — nothing is sent to an LLM unless you confirm. Requires the `voice` extra (faster-whisper).",
     "voice_engine_label": "Engine",
@@ -123,7 +126,13 @@
     "voice_always_new_thread_label": "Always start a new thread for voice input",
     "voice_max_seconds_label": "Maximum recording length (seconds)",
     "voice_overlay_screen_label": "Overlay anchor screen",
-    "voice_hf_endpoint_label": "HuggingFace endpoint (for first model download)"
+    "voice_hf_endpoint_label": "HuggingFace endpoint (for first model download)",
+    "about_section_title": "About / Contact",
+    "about_intro": "If you find Lucid useful, please star the project on GitHub or reach out to the author with feedback, ideas, or just to say hi.",
+    "about_star_button": "Star on GitHub",
+    "about_follow_button": "Follow author",
+    "about_email_label": "Email",
+    "about_x_label": "X (Twitter)"
   },
   "common": {
     "back": "‹ Back"

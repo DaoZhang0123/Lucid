@@ -7,10 +7,9 @@
 # 三个 LLM 后端任选其一，靠 [llm].provider 切换。
 
 [llm]
-# provider: anthropic | copilot | proxy
+# provider: anthropic | copilot
 #   anthropic — 直接调 Anthropic 原生 Messages API，需要 ANTHROPIC_API_KEY
 #   copilot   — 走 GitHub Copilot OAuth（设置页里登录），免费额度充足
-#   proxy     — 走任意 OpenAI 兼容代理（LiteLLM、OpenClaw、自建网关…）
 provider = "copilot"
 
 # 模型最长输出 token（Claude Opus 4.x 上限 32768；agent 场景中庸 16384 平衡延迟与不被截断）
@@ -41,18 +40,6 @@ anthropic_version = "2023-06-01"
 model = "claude-opus-4.6"
 # 留空走默认路径 ~/.lucid/copilot.json
 state_file = ""
-
-# === provider = "proxy" 时使用 ===
-# 主 ReAct 循环 与 --smoke-test 都走这里。可选两个本地后端：
-#   1) litellm-ghc-proxy-lite —— base_url=http://localhost:4000, model=github_copilot/...
-#   2) OpenClaw gateway      —— base_url=http://127.0.0.1:18789, model="openclaw"
-#      OpenClaw 把 model 字段当作 agent 选择，必须填 "openclaw"；
-#      具体 backend 模型靠 HTTP header `x-openclaw-model` 选。
-[llm.proxy]
-base_url = "http://localhost:4000"
-model = "github_copilot/claude-opus-4-6"
-# 留空则从环境变量 LITELLM_MASTER_KEY 读取
-api_key = ""
 
 [logging]
 # 是否把每次运行的主要信息与截图持久化到本地

@@ -40,7 +40,9 @@
     "image_loading": "加载中…",
     "image_alt": "第{step}步",
     "lightbox_alt": "截图",
-    "run_started": "开始任务"
+    "run_started": "开始任务",
+    "clamp_show_more": "展开",
+    "clamp_show_less": "收起"
   },
   "footer": {
     "new_thread_title": "新建对话（清空当前聊天，运行中会先取消）",
@@ -57,7 +59,7 @@
     "back_to_chat": "← 返回聊天",
     "history_link": "历史回放",
     "heading": "设置",
-    "llm_section_title": "LLM 提供方",
+    "llm_section_title": "大语言模型",
     "config_path_label": "配置文件:",
     "config_path_unloaded": "(未加载)",
     "provider_label": "Provider",
@@ -87,6 +89,7 @@
     "copilot_login_busy": "请稍候…",
     "copilot_login_failed_default": "登录失败",
     "general_section_title": "通用",
+    "sampling_section_title": "采样参数",
     "language_hint": "切换界面语言。按用户保存，立即生效。",
     "temperature_label": "Temperature（温度）",
     "top_p_label": "Top-p（核采样）",
@@ -105,7 +108,7 @@
     "selfcheck_click_button": "点击坐标偏差",
     "selfcheck_all_button": "全部",
     "selfcheck_running_hint": "正在运行…（winr / click 会真按键，请别在前台干别的）",
-    "voice_section_title": "语音输入（按住说话）",
+    "voice_section_title": "语音输入",
     "voice_enabled_label": "启用语音输入",
     "voice_enabled_hint": "按住快捷键说话，松开发送。本地转写，不到 LLM 那一步不会发送任何内容。需要 `voice` 可选依赖（faster-whisper）。",
     "voice_engine_label": "引擎",
@@ -123,7 +126,13 @@
     "voice_always_new_thread_label": "语音输入总是新开线程",
     "voice_max_seconds_label": "最长录音时长（秒）",
     "voice_overlay_screen_label": "悬浮窗所在屏幕",
-    "voice_hf_endpoint_label": "HuggingFace 镜像（首次下载模型用）"
+    "voice_hf_endpoint_label": "HuggingFace 镜像（首次下载模型用）",
+    "about_section_title": "关于 / 联系作者",
+    "about_intro": "如果觉得 Lucid 还不错，欢迎给项目点个 star，或者直接联系作者反馈问题、合作或聊聊。",
+    "about_star_button": "在 GitHub 上 Star",
+    "about_follow_button": "关注作者",
+    "about_email_label": "邮箱",
+    "about_x_label": "X (Twitter)"
   },
   "common": {
     "back": "‹ 返回"

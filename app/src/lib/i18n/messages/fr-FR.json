@@ -40,7 +40,9 @@
     "image_loading": "chargement…",
     "image_alt": "étape {step}",
     "lightbox_alt": "capture d'écran",
-    "run_started": "Tâche démarrée"
+    "run_started": "Tâche démarrée",
+    "clamp_show_more": "Afficher plus",
+    "clamp_show_less": "Réduire"
   },
   "footer": {
     "new_thread_title": "Nouvelle conversation (efface le chat actuel ; annule l'exécution active)",
@@ -57,7 +59,7 @@
     "back_to_chat": "← Retour au chat",
     "history_link": "Historique",
     "heading": "Paramètres",
-    "llm_section_title": "Fournisseur LLM",
+    "llm_section_title": "Grand modèle de langage",
     "config_path_label": "Fichier de config :",
     "config_path_unloaded": "(non chargé)",
     "provider_label": "Fournisseur",
@@ -87,6 +89,7 @@
     "copilot_login_busy": "Veuillez patienter…",
     "copilot_login_failed_default": "Échec de la connexion",
     "general_section_title": "Général",
+    "sampling_section_title": "Échantillonnage",
     "language_hint": "Changer la langue de l'interface. Sauvegardé par utilisateur, effet immédiat.",
     "temperature_label": "Température",
     "top_p_label": "Top-p",
@@ -105,7 +108,7 @@
     "selfcheck_click_button": "Décalage de clic",
     "selfcheck_all_button": "Tous",
     "selfcheck_running_hint": "Exécution… (winr / click pressent de vraies touches ; n'interagissez pas au premier plan)",
-    "voice_section_title": "Entrée vocale (push-to-talk)",
+    "voice_section_title": "Entrée vocale",
     "voice_enabled_label": "Activer l'entrée vocale",
     "voice_enabled_hint": "Maintenez la touche, parlez, relâchez. La transcription est locale — rien n'est envoyé à un LLM sans confirmation. Nécessite l'extra `voice` (faster-whisper).",
     "voice_engine_label": "Moteur",
@@ -123,7 +126,13 @@
     "voice_always_new_thread_label": "Toujours créer un nouveau fil pour la voix",
     "voice_max_seconds_label": "Durée maximale d'enregistrement (secondes)",
     "voice_overlay_screen_label": "Écran d'ancrage de l'overlay",
-    "voice_hf_endpoint_label": "Endpoint HuggingFace (premier téléchargement de modèle)"
+    "voice_hf_endpoint_label": "Endpoint HuggingFace (premier téléchargement de modèle)",
+    "about_section_title": "À propos / Contact",
+    "about_intro": "Si Lucid vous plaît, mettez une étoile au projet sur GitHub ou contactez l'auteur pour vos retours, idées ou simplement pour discuter.",
+    "about_star_button": "Mettre une étoile sur GitHub",
+    "about_follow_button": "Suivre l'auteur",
+    "about_email_label": "E-mail",
+    "about_x_label": "X (Twitter)"
   },
   "common": {
     "back": "‹ Retour"

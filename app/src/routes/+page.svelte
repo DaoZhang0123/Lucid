@@ -19,6 +19,7 @@
     type FileRef,
   } from "$lib/chatStore.svelte";
   import { setDictationSink } from "$lib/voice";
+  import ClampText from "$lib/ClampText.svelte";
 
   let instruction = $state("");
   let scrollEl: HTMLDivElement | undefined = $state();
@@ -438,17 +439,17 @@
           {#if it.kind === "user"}
             <div class="bubble user"><div class="role">{$_("chat.role_user")}</div><div class="text">{it.text}</div></div>
           {:else if it.kind === "assistant"}
-            <div class="bubble assistant"><div class="role">{$_("chat.role_assistant", { values: { step: it.step ?? $_("chat.step_unknown") } })}</div><div class="text">{it.text}</div></div>
+            <div class="bubble assistant"><div class="role">{$_("chat.role_assistant", { values: { step: it.step ?? $_("chat.step_unknown") } })}</div><div class="text"><ClampText text={it.text} lines={3} /></div></div>
           {:else if it.kind === "tool"}
             <div class="tool">
               <span class="badge">step {it.step}</span>
               <span class="action">{it.action}</span>
-              <span class="args">{fmtArgs(it.args)}</span>
+              <span class="args"><ClampText text={fmtArgs(it.args)} lines={3} /></span>
               {#if it.result}
                 {#if it.result.ok}
-                  <span class="ok">✓ {it.result.output ?? ""}</span>
+                  <span class="ok">✓ <ClampText text={it.result.output ?? ""} lines={3} /></span>
                 {:else}
-                  <span class="err">✗ {it.result.error ?? ""}</span>
+                  <span class="err">✗ <ClampText text={it.result.error ?? ""} lines={3} /></span>
                 {/if}
               {:else}
                 <span class="pending">…</span>

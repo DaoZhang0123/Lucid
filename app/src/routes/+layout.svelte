@@ -191,6 +191,22 @@
   :global(html[data-theme="dark"] .usercode) { background: #0b1220 !important; color: #e5e7eb !important; border-color: #475569 !important; }
   :global(html[data-theme="dark"] .path) { color: #94a3b8 !important; }
 
+  /* settings: left tab-nav sidebar */
+  :global(html[data-theme="dark"] .tabs) { background: #1f2937 !important; border-color: #334155 !important; }
+  :global(html[data-theme="dark"] .tab) { color: #cbd5e1 !important; }
+  :global(html[data-theme="dark"] .tab:hover) { background: #334155 !important; }
+  :global(html[data-theme="dark"] .tab.active) { background: #2563eb !important; color: #fff !important; }
+
+  /* settings: about-tab — ghost button + contact links */
+  :global(html[data-theme="dark"] .btn-link-ghost) { background: #1f2937 !important; color: #93c5fd !important; border-color: #334155 !important; }
+  :global(html[data-theme="dark"] .btn-link-ghost:hover) { background: #334155 !important; }
+  :global(html[data-theme="dark"] .contact-label) { color: #94a3b8 !important; }
+  :global(html[data-theme="dark"] .contact a) { color: #93c5fd !important; }
+
+  /* chat: ClampText "Show more / less" toggle */
+  :global(html[data-theme="dark"] .clamp-toggle) { color: #93c5fd !important; }
+  :global(html[data-theme="dark"] .clamp-toggle:hover) { color: #bfdbfe !important; }
+
   /* schedules list rows + ghost buttons + tags */
   :global(html[data-theme="dark"] .row) { background: #1f2937 !important; border-color: #334155 !important; color: #e5e7eb !important; }
   :global(html[data-theme="dark"] .actions button.ghost),

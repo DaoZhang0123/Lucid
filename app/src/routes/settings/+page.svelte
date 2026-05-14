@@ -55,11 +55,9 @@
   let savedAt = $state("");
   let error = $state("");
 
-  let pingMs = $state<number | null>(null);
-  let pingErr = $state("");
-
-  let selfcheckOut = $state<unknown>(null);
-  let selfcheckRunning = $state(false);
+  // Active tab in the left sidebar nav.
+  type Tab = "general" | "llm" | "voice" | "about";
+  let activeTab = $state<Tab>("general");
 
   // GitHub Copilot OAuth state
   type CopStatus = { logged_in: boolean; github_user?: string | null; copilot_expires_at?: number | null; state_file?: string };
@@ -98,8 +96,13 @@
         };
       };
       path = cfg.path;
-      if (cfg.provider === "anthropic" || cfg.provider === "copilot" || cfg.provider === "proxy") {
+      if (cfg.provider === "anthropic" || cfg.provider === "copilot") {
         provider = cfg.provider;
+      } else if (cfg.provider === "proxy") {
+        // Proxy provider has been removed from the settings UI; map any
+        // legacy stored value to anthropic so the form has a valid selection.
+        // The on-disk value stays untouched until the user explicitly saves.
+        provider = "anthropic";
       }
       if (cfg.proxy?.base_url) baseUrl = cfg.proxy.base_url;
       if (cfg.proxy?.model) model = cfg.proxy.model;
@@ -168,18 +171,6 @@
     }
   }
 
-  async function ping() {
-    pingErr = "";
-    pingMs = null;
-    const t0 = performance.now();
-    try {
-      await invoke("sidecar_ping");
-      pingMs = Math.round(performance.now() - t0);
-    } catch (e) {
-      pingErr = String(e);
-    }
-  }
-
   async function saveVoice() {
     voiceSaving = true;
     voiceError = "";
@@ -212,18 +203,6 @@
       voiceError = String(e);
     } finally {
       voiceSaving = false;
-    }
-  }
-
-  async function runSelfcheck(what: "monitors" | "winr" | "click" | "all") {
-    selfcheckRunning = true;
-    selfcheckOut = null;
-    try {
-      selfcheckOut = await invoke("run_selfcheck", { what });
-    } catch (e) {
-      selfcheckOut = { error: String(e) };
-    } finally {
-      selfcheckRunning = false;
     }
   }
 
@@ -309,241 +288,302 @@
     <h1>{$_("settings.heading")}</h1>
   </header>
 
-  <section class="card">
-    <h2>{$_("settings.llm_section_title")}</h2>
-    <p class="path">{$_("settings.config_path_label")} <code>{path || $_("settings.config_path_unloaded")}</code></p>
-    <label>
-      {$_("settings.provider_label")}
-      <select bind:value={provider}>
-        <option value="anthropic">{$_("settings.provider_anthropic")}</option>
-        <option value="copilot">{$_("settings.provider_copilot")}</option>
-        <option value="proxy">{$_("settings.provider_proxy")}</option>
-      </select>
-    </label>
+  <div class="layout">
+    <nav class="tabs" aria-label="Settings sections">
+      <button class="tab" class:active={activeTab === "general"} onclick={() => (activeTab = "general")}>
+        {$_("settings.general_section_title")}
+      </button>
+      <button class="tab" class:active={activeTab === "llm"} onclick={() => (activeTab = "llm")}>
+        {$_("settings.llm_section_title")}
+      </button>
+      <button class="tab" class:active={activeTab === "voice"} onclick={() => (activeTab = "voice")}>
+        {$_("settings.voice_section_title")}
+      </button>
+      <button class="tab" class:active={activeTab === "about"} onclick={() => (activeTab = "about")}>
+        {$_("settings.about_section_title")}
+      </button>
+    </nav>
 
-    {#if provider === "proxy"}
-      <h3>{$_("settings.proxy_section_title")}</h3>
-      <label>
-        base_url
-        <input type="text" bind:value={baseUrl} placeholder={$_("settings.proxy_base_url_placeholder")} />
-      </label>
-      <label>
-        model
-        <input type="text" bind:value={model} placeholder={$_("settings.proxy_model_placeholder")} />
-      </label>
-      <label>
-        api_key
-        <input type="password" bind:value={apiKey} placeholder={$_("settings.proxy_api_key_placeholder")} />
-      </label>
-    {:else if provider === "anthropic"}
-      <h3>{$_("settings.anthropic_section_title")}</h3>
-      <label>
-        api_key
-        <input type="password" bind:value={anthApiKey} placeholder={$_("settings.anthropic_api_key_placeholder")} />
-      </label>
-      <label>
-        model
-        <input type="text" bind:value={anthModel} placeholder={$_("settings.anthropic_model_placeholder")} />
-      </label>
-      <label>
-        base_url
-        <input type="text" bind:value={anthBaseUrl} placeholder={$_("settings.anthropic_base_url_placeholder")} />
-      </label>
-    {:else if provider === "copilot"}
-      <h3>{$_("settings.copilot_section_title")}</h3>
-      <label>
-        model
-        <input type="text" bind:value={copModel} placeholder={$_("settings.copilot_model_placeholder")} />
-      </label>
-      <div class="copilot-status">
-        {#if copStatus.logged_in}
-          <p class="ok">{$_("settings.copilot_logged_in_as")} <b>{copStatus.github_user || $_("settings.copilot_user_unknown")}</b></p>
-          {#if copStatus.copilot_expires_at}
-            <p class="hint">{$_("settings.copilot_token_expires")} {fmtExpiry(copStatus.copilot_expires_at)}</p>
+    <div class="panel">
+      {#if activeTab === "general"}
+        <section class="card">
+          <h2>{$_("settings.general_section_title")}</h2>
+          <p class="path">{$_("settings.config_path_label")} <code>{path || $_("settings.config_path_unloaded")}</code></p>
+          <label>
+            {$_("lang.picker_label")}
+            <select bind:value={uiLocale} onchange={onLocaleChange}>
+              {#each SUPPORTED_LOCALES as code (code)}
+                <option value={code}>{LOCALE_LABELS[code as SupportedLocale]}</option>
+              {/each}
+            </select>
+          </label>
+          <p class="hint">{$_("settings.language_hint")}</p>
+          <label>
+            {$_("settings.emergency_hotkey_label")}
+            <input type="text" bind:value={emergencyHotkey} placeholder="ctrl+alt+esc" />
+          </label>
+          <p class="hint">{$_("settings.emergency_hotkey_hint")}</p>
+          <div class="row">
+            <button onclick={save} disabled={saving}>{saving ? $_("settings.saving_button") : $_("settings.save_button")}</button>
+            {#if savedAt}<span class="ok">{$_("settings.saved_at", { values: { at: savedAt } })}</span>{/if}
+            {#if error}<span class="err">{error}</span>{/if}
+          </div>
+          <p class="hint">{$_("settings.hot_reload_hint")}</p>
+        </section>
+      {:else if activeTab === "llm"}
+        <section class="card">
+          <h2>{$_("settings.llm_section_title")}</h2>
+          <label>
+            {$_("settings.provider_label")}
+            <select bind:value={provider}>
+              <option value="anthropic">{$_("settings.provider_anthropic")}</option>
+              <option value="copilot">{$_("settings.provider_copilot")}</option>
+            </select>
+          </label>
+
+          {#if provider === "anthropic"}
+            <h3>{$_("settings.anthropic_section_title")}</h3>
+            <label>
+              api_key
+              <input type="password" bind:value={anthApiKey} placeholder={$_("settings.anthropic_api_key_placeholder")} />
+            </label>
+            <label>
+              model
+              <input type="text" bind:value={anthModel} placeholder={$_("settings.anthropic_model_placeholder")} />
+            </label>
+            <label>
+              base_url
+              <input type="text" bind:value={anthBaseUrl} placeholder={$_("settings.anthropic_base_url_placeholder")} />
+            </label>
+          {:else if provider === "copilot"}
+            <h3>{$_("settings.copilot_section_title")}</h3>
+            <label>
+              model
+              <input type="text" bind:value={copModel} placeholder={$_("settings.copilot_model_placeholder")} />
+            </label>
+            <div class="copilot-status">
+              {#if copStatus.logged_in}
+                <p class="ok">{$_("settings.copilot_logged_in_as")} <b>{copStatus.github_user || $_("settings.copilot_user_unknown")}</b></p>
+                {#if copStatus.copilot_expires_at}
+                  <p class="hint">{$_("settings.copilot_token_expires")} {fmtExpiry(copStatus.copilot_expires_at)}</p>
+                {/if}
+                <button onclick={copilotLogout}>{$_("settings.copilot_logout_button")}</button>
+              {:else if copDevice}
+                <p>{$_("settings.copilot_device_step_open")}
+                  <a href={copDevice.verification_uri} target="_blank" rel="noreferrer">{copDevice.verification_uri}</a>
+                  {$_("settings.copilot_device_step_enter_code")}</p>
+                <pre class="usercode">{copDevice.user_code}</pre>
+                <p class="hint">{$_("settings.copilot_device_polling_hint", { values: { interval: copDevice.interval, minutes: Math.round(copDevice.expires_in / 60) } })}</p>
+                <button onclick={copilotCancel}>{$_("settings.copilot_device_cancel_button")}</button>
+              {:else}
+                <p>{$_("settings.copilot_not_logged_in")}</p>
+                <button onclick={copilotLogin} disabled={copBusy}>{copBusy ? $_("settings.copilot_login_busy") : $_("settings.copilot_login_button")}</button>
+              {/if}
+              {#if copError}<p class="err">{copError}</p>{/if}
+            </div>
           {/if}
-          <button onclick={copilotLogout}>{$_("settings.copilot_logout_button")}</button>
-        {:else if copDevice}
-          <p>{$_("settings.copilot_device_step_open")}
-            <a href={copDevice.verification_uri} target="_blank" rel="noreferrer">{copDevice.verification_uri}</a>
-            {$_("settings.copilot_device_step_enter_code")}</p>
-          <pre class="usercode">{copDevice.user_code}</pre>
-          <p class="hint">{$_("settings.copilot_device_polling_hint", { values: { interval: copDevice.interval, minutes: Math.round(copDevice.expires_in / 60) } })}</p>
-          <button onclick={copilotCancel}>{$_("settings.copilot_device_cancel_button")}</button>
-        {:else}
-          <p>{$_("settings.copilot_not_logged_in")}</p>
-          <button onclick={copilotLogin} disabled={copBusy}>{copBusy ? $_("settings.copilot_login_busy") : $_("settings.copilot_login_button")}</button>
-        {/if}
-        {#if copError}<p class="err">{copError}</p>{/if}
-      </div>
-    {/if}
 
-    <h3>{$_("settings.general_section_title")}</h3>
-    <label>
-      {$_("lang.picker_label")}
-      <select bind:value={uiLocale} onchange={onLocaleChange}>
-        {#each SUPPORTED_LOCALES as code (code)}
-          <option value={code}>{LOCALE_LABELS[code as SupportedLocale]}</option>
-        {/each}
-      </select>
-    </label>
-    <p class="hint">{$_("settings.language_hint")}</p>
-    <label>
-      {$_("settings.temperature_label")}
-      <input type="number" min="0" max="2" step="0.05" bind:value={temperature} />
-    </label>
-    <label>
-      {$_("settings.top_p_label")}
-      <input type="number" min="0" max="1" step="0.05" bind:value={topP} />
-    </label>
-    <p class="hint">{$_("settings.sampling_hint")}</p>
-    <label>
-      {$_("settings.emergency_hotkey_label")}
-      <input type="text" bind:value={emergencyHotkey} placeholder="ctrl+alt+esc" />
-    </label>
-    <p class="hint">{$_("settings.emergency_hotkey_hint")}</p>
-    <div class="row">
-      <button onclick={save} disabled={saving}>{saving ? $_("settings.saving_button") : $_("settings.save_button")}</button>
-      {#if savedAt}<span class="ok">{$_("settings.saved_at", { values: { at: savedAt } })}</span>{/if}
-      {#if error}<span class="err">{error}</span>{/if}
+          <h3>{$_("settings.sampling_section_title")}</h3>
+          <label>
+            {$_("settings.temperature_label")}
+            <input type="number" min="0" max="2" step="0.05" bind:value={temperature} />
+          </label>
+          <label>
+            {$_("settings.top_p_label")}
+            <input type="number" min="0" max="1" step="0.05" bind:value={topP} />
+          </label>
+          <p class="hint">{$_("settings.sampling_hint")}</p>
+
+          <div class="row">
+            <button onclick={save} disabled={saving}>{saving ? $_("settings.saving_button") : $_("settings.save_button")}</button>
+            {#if savedAt}<span class="ok">{$_("settings.saved_at", { values: { at: savedAt } })}</span>{/if}
+            {#if error}<span class="err">{error}</span>{/if}
+          </div>
+          <p class="hint">{$_("settings.hot_reload_hint")}</p>
+        </section>
+      {:else if activeTab === "voice"}
+        <section class="card">
+          <h2>{$_("settings.voice_section_title")}</h2>
+          <label class="check">
+            <input type="checkbox" bind:checked={vEnabled} />
+            {$_("settings.voice_enabled_label")}
+          </label>
+          <p class="hint">{$_("settings.voice_enabled_hint")}</p>
+
+          <label>
+            {$_("settings.voice_engine_label")}
+            <select bind:value={vEngine}>
+              <option value="faster-whisper">faster-whisper (CPU/GPU)</option>
+              <option value="sherpa-onnx">sherpa-onnx (experimental)</option>
+              <option value="vosk">vosk (experimental)</option>
+            </select>
+          </label>
+          <label>
+            {$_("settings.voice_model_label")}
+            <input type="text" bind:value={vModelSize} placeholder="distil-small.en | small | medium | large-v3" />
+          </label>
+          <label>
+            {$_("settings.voice_language_label")}
+            <input type="text" bind:value={vLanguage} placeholder={$_("settings.voice_language_placeholder")} />
+          </label>
+
+          <label>
+            {$_("settings.voice_hotkey_label")}
+            <input type="text" bind:value={vHotkey} placeholder="Space | ctrl+shift+v" />
+          </label>
+          <label>
+            {$_("settings.voice_hold_threshold_label")}
+            <input type="number" min="0" max="20000" step="100" bind:value={vHoldThresholdMs} />
+          </label>
+          {#if vHoldThresholdMs < 1000 && vHotkey.toLowerCase() === "space"}
+            <p class="err">{$_("settings.voice_hold_threshold_warning")}</p>
+          {/if}
+
+          <label>
+            {$_("settings.voice_stop_mode_label")}
+            <select bind:value={vStopMode}>
+              <option value="release">release</option>
+              <option value="tap_again">tap_again</option>
+              <option value="auto_silence">auto_silence</option>
+            </select>
+          </label>
+          <label>
+            {$_("settings.voice_start_feedback_label")}
+            <select bind:value={vStartFeedback}>
+              <option value="beep">beep</option>
+              <option value="vibrate-tray">vibrate-tray</option>
+              <option value="silent">silent</option>
+            </select>
+          </label>
+
+          <label>
+            {$_("settings.voice_mode_label")}
+            <select bind:value={vMode}>
+              <option value="agent">{$_("settings.voice_mode_agent")}</option>
+              <option value="dictation">{$_("settings.voice_mode_dictation")}</option>
+            </select>
+          </label>
+          <label class="check">
+            <input type="checkbox" bind:checked={vAlwaysNewThread} />
+            {$_("settings.voice_always_new_thread_label")}
+          </label>
+
+          <label>
+            {$_("settings.voice_max_seconds_label")}
+            <input type="number" min="3" max="120" step="1" bind:value={vMaxSeconds} />
+          </label>
+          <label>
+            {$_("settings.voice_overlay_screen_label")}
+            <select bind:value={vOverlayScreen}>
+              <option value="cursor">cursor</option>
+              <option value="primary">primary</option>
+            </select>
+          </label>
+          <label>
+            {$_("settings.voice_hf_endpoint_label")}
+            <input type="text" bind:value={vHfEndpoint} placeholder="https://hf-mirror.com" />
+          </label>
+
+          <div class="row">
+            <button onclick={saveVoice} disabled={voiceSaving}>{voiceSaving ? $_("settings.saving_button") : $_("settings.save_button")}</button>
+            {#if voiceSavedAt}<span class="ok">{$_("settings.saved_at", { values: { at: voiceSavedAt } })}</span>{/if}
+            {#if voiceError}<span class="err">{voiceError}</span>{/if}
+          </div>
+        </section>
+      {:else if activeTab === "about"}
+        <section class="card">
+          <h2>{$_("settings.about_section_title")}</h2>
+          <p class="hint">{$_("settings.about_intro")}</p>
+          <div class="row about-row">
+            <a class="btn-link" href="https://github.com/DaoZhang0123/Lucid" target="_blank" rel="noreferrer">
+              ⭐ {$_("settings.about_star_button")}
+            </a>
+            <a class="btn-link btn-link-ghost" href="https://github.com/DaoZhang0123" target="_blank" rel="noreferrer">
+              👤 {$_("settings.about_follow_button")}
+            </a>
+          </div>
+          <ul class="contact">
+            <li>
+              <span class="contact-label">{$_("settings.about_email_label")}:</span>
+              <a href="mailto:zhangdao@buaa.edu.cn">zhangdao@buaa.edu.cn</a>
+            </li>
+            <li>
+              <span class="contact-label">{$_("settings.about_x_label")}:</span>
+              <a href="https://x.com/zhangdao439566" target="_blank" rel="noreferrer">@zhangdao439566</a>
+            </li>
+          </ul>
+        </section>
+      {/if}
     </div>
-    <p class="hint">{$_("settings.hot_reload_hint")}</p>
-  </section>
-
-  <section class="card">
-    <h2>{$_("settings.voice_section_title")}</h2>
-    <label class="check">
-      <input type="checkbox" bind:checked={vEnabled} />
-      {$_("settings.voice_enabled_label")}
-    </label>
-    <p class="hint">{$_("settings.voice_enabled_hint")}</p>
-
-    <label>
-      {$_("settings.voice_engine_label")}
-      <select bind:value={vEngine}>
-        <option value="faster-whisper">faster-whisper (CPU/GPU)</option>
-        <option value="sherpa-onnx">sherpa-onnx (experimental)</option>
-        <option value="vosk">vosk (experimental)</option>
-      </select>
-    </label>
-    <label>
-      {$_("settings.voice_model_label")}
-      <input type="text" bind:value={vModelSize} placeholder="distil-small.en | small | medium | large-v3" />
-    </label>
-    <label>
-      {$_("settings.voice_language_label")}
-      <input type="text" bind:value={vLanguage} placeholder={$_("settings.voice_language_placeholder")} />
-    </label>
-
-    <label>
-      {$_("settings.voice_hotkey_label")}
-      <input type="text" bind:value={vHotkey} placeholder="Space | ctrl+shift+v" />
-    </label>
-    <label>
-      {$_("settings.voice_hold_threshold_label")}
-      <input type="number" min="0" max="20000" step="100" bind:value={vHoldThresholdMs} />
-    </label>
-    {#if vHoldThresholdMs < 1000 && vHotkey.toLowerCase() === "space"}
-      <p class="err">{$_("settings.voice_hold_threshold_warning")}</p>
-    {/if}
-
-    <label>
-      {$_("settings.voice_stop_mode_label")}
-      <select bind:value={vStopMode}>
-        <option value="release">release</option>
-        <option value="tap_again">tap_again</option>
-        <option value="auto_silence">auto_silence</option>
-      </select>
-    </label>
-    <label>
-      {$_("settings.voice_start_feedback_label")}
-      <select bind:value={vStartFeedback}>
-        <option value="beep">beep</option>
-        <option value="vibrate-tray">vibrate-tray</option>
-        <option value="silent">silent</option>
-      </select>
-    </label>
-
-    <label>
-      {$_("settings.voice_mode_label")}
-      <select bind:value={vMode}>
-        <option value="agent">{$_("settings.voice_mode_agent")}</option>
-        <option value="dictation">{$_("settings.voice_mode_dictation")}</option>
-      </select>
-    </label>
-    <label class="check">
-      <input type="checkbox" bind:checked={vAlwaysNewThread} />
-      {$_("settings.voice_always_new_thread_label")}
-    </label>
-
-    <label>
-      {$_("settings.voice_max_seconds_label")}
-      <input type="number" min="3" max="120" step="1" bind:value={vMaxSeconds} />
-    </label>
-    <label>
-      {$_("settings.voice_overlay_screen_label")}
-      <select bind:value={vOverlayScreen}>
-        <option value="cursor">cursor</option>
-        <option value="primary">primary</option>
-      </select>
-    </label>
-    <label>
-      {$_("settings.voice_hf_endpoint_label")}
-      <input type="text" bind:value={vHfEndpoint} placeholder="https://hf-mirror.com" />
-    </label>
-
-    <div class="row">
-      <button onclick={saveVoice} disabled={voiceSaving}>{voiceSaving ? $_("settings.saving_button") : $_("settings.save_button")}</button>
-      {#if voiceSavedAt}<span class="ok">{$_("settings.saved_at", { values: { at: voiceSavedAt } })}</span>{/if}
-      {#if voiceError}<span class="err">{voiceError}</span>{/if}
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>{$_("settings.ping_section_title")}</h2>
-    <button onclick={ping}>{$_("settings.ping_button")}</button>
-    {#if pingMs !== null}<span class="ok">{pingMs}ms</span>{/if}
-    {#if pingErr}<span class="err">{pingErr}</span>{/if}
-  </section>
-
-  <section class="card">
-    <h2>{$_("settings.selfcheck_section_title")}</h2>
-    <div class="row">
-      <button onclick={() => runSelfcheck("monitors")} disabled={selfcheckRunning}>{$_("settings.selfcheck_monitors_button")}</button>
-      <button onclick={() => runSelfcheck("winr")} disabled={selfcheckRunning}>{$_("settings.selfcheck_winr_button")}</button>
-      <button onclick={() => runSelfcheck("click")} disabled={selfcheckRunning}>{$_("settings.selfcheck_click_button")}</button>
-      <button onclick={() => runSelfcheck("all")} disabled={selfcheckRunning}>{$_("settings.selfcheck_all_button")}</button>
-    </div>
-    {#if selfcheckRunning}
-      <p>{$_("settings.selfcheck_running_hint")}</p>
-    {/if}
-    {#if selfcheckOut}
-      <pre>{JSON.stringify(selfcheckOut, null, 2)}</pre>
-    {/if}
-  </section>
+  </div>
 </main>
 
 <style>
   main {
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 16px 24px 64px;
-    font: 14px/1.5 -apple-system, "Segoe UI", sans-serif;
+    max-width: 56rem;
+    margin: 0;
+    padding: 1rem 1.5rem;
+    font: 14px -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
     color: #222;
   }
   header {
     display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 12px;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
   }
   header a {
     color: #2563eb;
     text-decoration: none;
   }
   .back { font-size: 0.9rem; }
-  h1 { margin-left: auto; font-size: 18px; }
+  h1 { margin: 0.5rem 0; }
   h2 { font-size: 15px; margin: 0 0 8px; color: #111; }
   h3 { font-size: 13px; margin: 16px 0 4px; color: #334155; text-transform: uppercase; letter-spacing: 0.04em; }
+
+  /* ---- Two-pane layout: left tab nav + right content panel ---- */
+  .layout { display: flex; gap: 1rem; align-items: flex-start; margin-top: 0.75rem; }
+  .tabs {
+    flex: none;
+    width: 10rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border: 1px solid #e2e8f0;
+    background: #fff;
+    border-radius: 8px;
+    padding: 6px;
+  }
+  .tab {
+    appearance: none;
+    background: transparent;
+    color: #334155;
+    border: 0;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font: inherit;
+  }
+  .tab:hover { background: #f1f5f9; }
+  .tab.active { background: #2563eb; color: #fff; }
+  .panel { flex: 1; min-width: 0; }
+
+  /* About / contact tab */
+  .btn-link {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    padding: 6px 14px; background: #2563eb; color: #fff;
+    border: 0; border-radius: 4px; text-decoration: none; font: inherit;
+  }
+  .btn-link:hover { background: #1d4ed8; }
+  .btn-link-ghost { background: #fff; color: #2563eb; border: 1px solid #93c5fd; }
+  .btn-link-ghost:hover { background: #eff6ff; }
+  .about-row { margin: 0.6rem 0 0.4rem; }
+  .contact { list-style: none; padding: 0; margin: 0.4rem 0 0; }
+  .contact li { padding: 0.3rem 0; }
+  .contact-label { display: inline-block; width: 5.5rem; color: #475569; font-weight: 600; }
+  .contact a { color: #2563eb; text-decoration: none; }
+  .contact a:hover { text-decoration: underline; }
   .copilot-status { padding: 10px 12px; background: #f8fafc; border-radius: 6px; margin-top: 8px; }
   .copilot-status p { margin: 4px 0; }
   .usercode { font: bold 22px/1.2 Consolas, monospace; letter-spacing: 4px; background: #fff; color: #0f172a; padding: 12px 16px; border: 1px dashed #94a3b8; border-radius: 6px; text-align: center; user-select: all; }
