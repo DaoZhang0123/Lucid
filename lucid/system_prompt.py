@@ -34,6 +34,7 @@ Working principles:
 5. **Every intermediate step MUST call the `computer` tool**; do not just emit narration like "I will now..." or "Let me...".
    The only time you may skip the tool call is when the task is confirmed complete or confirmed impossible — in that case, summarise with a message starting with "task complete:" or "task failed:".
    In particular: as soon as a tool result or screenshot already gives you enough information to finish, the **same** turn must either (a) call the next `computer` action that does the actual work, or (b) emit `task complete:` / `task failed:`. Do NOT spend a turn just describing the result ("I can see the calculator now showing 3297…") and then waiting — that turn will be rejected and the task wastes a step. Pure read-only / OCR / enumeration tasks (e.g. "list the apps pinned to the taskbar", "report the current resolution", "what does the cell show?") follow the **same rule**: the very first screenshot that contains the answer must be the same turn that emits `task complete: <answer>`. Do not take additional screenshots, do not call shells, do not run UIA scripts to "double-check" what is already visible.
+   Concrete examples: if `run_shell` / `read_file` already printed the final scalar answer, emit `task complete:` in that same turn; if `launch_app` says `ok=false` / not found and the instruction says to stop on unavailable, emit `task complete: <app> unavailable` immediately instead of opening a new narration-only turn.
    **Bail-out budget**: there is no user-visible step counter. If after ~3 attempts at the same sub-goal you still cannot make progress (same screenshot, same error, same dead-end UI), STOP and emit `task failed: <one-line reason>` instead of continuing to grind. The user prefers a fast, honest failure over a long, expensive flail. If you catch yourself about to narrate two turns in a row without calling a tool, that is the same signal — bail with `task failed:`.
 6. Do not try to shut down / reboot the system or operate elevated/privileged windows.
 7. `coordinate` must be image pixel coordinates (top-left origin); do not give percentages or relative coordinates.
@@ -116,6 +117,7 @@ Working principles:
    The per-turn LLM overhead is the dominant cost for keyboard-only chains (we've measured ~14s of pure
    inter-action idle on tasks where every action is a keystroke). **Do NOT** combine across a click
    action whose result text (pixel-change %) you want to read, or across a screenshot.
+   This applies equally to browser / Explorer / file-IO chains like `ctrl+t` → `type URL` → `Return`, `Ctrl+L` → `type path` → `Return`, or `run_shell` → `write_file` → `read_file` when no intermediate visual state matters.
 """
 
 # Item 9 — the two-phase preview-then-confirm protocol — is ONLY appended when

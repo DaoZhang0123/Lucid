@@ -9,7 +9,10 @@ window-detection works on zh-CN installs as well.
 SLUG = "photos"
 TITLE = "Photos"
 
-TIPS = ""
+TIPS = """\
+- [seed · launch] Prefer `launch_app(name="photos")` (internally via `ms-photos:`).
+- [seed · locale-title] On zh-CN systems the window title is often `照片`; on en-US it's usually `Photos`. Treat both as valid ready states and use `focus_window(title_substring="照片")` in Chinese locale when needed.
+"""
 
 LAUNCHER = {
     "name": "Photos",
@@ -17,4 +20,5 @@ LAUNCHER = {
     "uri": "ms-photos:",
     "process": "Microsoft.Photos.exe",
     "window_title_re": r"Photos|照片",
+    "launch_timeout_s": 3.0,
 }

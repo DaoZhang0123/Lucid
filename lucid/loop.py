@@ -791,6 +791,14 @@ class Agent:
             # the post-step user message; if a Capture is attached, its coord
             # metadata is rendered alongside so the model uses the right frame.
             step_meta_pngs: list[tuple[str, bytes, Any]] = []
+            # Anti-snowball guard for read_webpage. The model occasionally
+            # fans out 5–8 read_webpage calls in a single assistant turn
+            # (one URL per backend / news source) and burns the step waiting
+            # on every one of them — most of which fail identically. Cap at
+            # 2 per step; any extras short-circuit with an explanatory error
+            # that mirrors system_prompt Rule 19.
+            _READ_WEBPAGE_PER_STEP_CAP = 2
+            read_webpage_count = 0
             for tc in tool_calls:
                 fn_name = tc.name
                 try:
@@ -803,6 +811,32 @@ class Agent:
                 self._print(f"[magenta]→ {fn_name}.{action}[/magenta] {args}")
                 log.info(f"tool_call {fn_name}.{action} {args}")
                 self._emit("tool_call", step=step + 1, name=fn_name, action=action, args=args)
+
+                # E (anti-snowball): cap read_webpage to 2 per step. The 3rd+
+                # call is rejected without doing any network / browser work so
+                # the model is forced to read the first two results before
+                # fanning out further. See system_prompt Rule 19.
+                if fn_name == "read_webpage":
+                    read_webpage_count += 1
+                    if read_webpage_count > _READ_WEBPAGE_PER_STEP_CAP:
+                        tr = ToolResult(error=(
+                            f"read_webpage rate-limited: this step already "
+                            f"issued {_READ_WEBPAGE_PER_STEP_CAP} read_webpage "
+                            f"calls (the per-step cap). Wait for those results, "
+                            f"then decide whether to fetch more. Do NOT fan out "
+                            f"5–8 URLs in one turn — see system_prompt rule 19."
+                        ))
+                        content_str = f"ERROR: {tr.error}"
+                        log.error(f"tool error: {tr.error}")
+                        step_tool_records.append({"action": action, "args": args, "result": content_str})
+                        self._emit("tool_result", step=step + 1, action=action,
+                                   ok=False, output="", error=tr.error or "")
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": content_str,
+                        })
+                        continue
 
                 if fn_name != "computer":
                     tr = meta_tools.dispatch_meta_tool(

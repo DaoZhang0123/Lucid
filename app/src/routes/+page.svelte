@@ -222,6 +222,24 @@
     return m ? m[1] : "";
   }
 
+  // Thread titles created by the sidecar are prefixed with an emoji to mark
+  // their kind: `⏰` for cron / scheduled tasks (sidecar.py:1460), `🔔` for
+  // the visual_notify taskbar listener (sidecar.py:841). The bare emojis don't
+  // match the monochrome stroked SVG style used in the header nav, so here
+  // we detect the prefix, strip it from the displayed text, and render a
+  // matching inline SVG that visually pairs with the corresponding nav icon.
+  function threadIconKind(title?: string): "schedule" | "notify" | "" {
+    if (!title) return "";
+    const t = title.trimStart();
+    if (t.startsWith("⏰")) return "schedule";
+    if (t.startsWith("🔔")) return "notify";
+    return "";
+  }
+  function stripIconPrefix(title?: string): string {
+    if (!title) return "";
+    return title.replace(/^\s*[⏰🔔]\s*/u, "");
+  }
+
   // -------- Sidebar pagination --------
   const THREAD_PAGE_SIZE = 10;
   let threadPage = $state(0);
@@ -377,7 +395,20 @@
                  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void onPickThread(t.id); } }}>
               <div class="t-title" title={t.title}>
                 {#if chat.runningThreadId === t.id}<span class="t-tag run">{$_("sidebar.thread_running")}</span>{:else if chat.queuedThreadIds.includes(t.id)}<span class="t-tag queued">{$_("sidebar.thread_queued")}</span>{/if}
-                {t.title || $_("sidebar.thread_unnamed")}
+                {#if threadIconKind(t.title) === "schedule"}
+                  <svg class="t-kind-icon t-kind-schedule" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="13" r="7.5"/>
+                    <path d="M12 9v4l2.5 1.8"/>
+                    <path d="M5.5 4.5l-2 2"/>
+                    <path d="M18.5 4.5l2 2"/>
+                  </svg>
+                {:else if threadIconKind(t.title) === "notify"}
+                  <svg class="t-kind-icon t-kind-notify" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M6 17h12l-1.5-2v-3.5a4.5 4.5 0 0 0-9 0V15L6 17z"/>
+                    <path d="M10.5 19.5a1.8 1.8 0 0 0 3 0"/>
+                  </svg>
+                {/if}
+                {stripIconPrefix(t.title) || $_("sidebar.thread_unnamed")}
               </div>
               <div class="t-meta">
                 {#if extractHex(t.id)}<span class="t-id" title={t.id}>{extractHex(t.id)}</span>{/if}
@@ -600,6 +631,10 @@
   .thread.active { background: #2563eb; }
   .t-title { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
              padding-right: 1.2rem; }
+  .t-kind-icon { display: inline-block; vertical-align: -2px; margin-right: 0.25rem; flex: 0 0 auto; }
+  .t-kind-schedule { color: #f59e0b; }
+  .t-kind-notify { color: #22d3ee; }
+  .thread.active .t-kind-icon { color: #fff; opacity: 0.95; }
   .t-meta { font-size: 0.7rem; opacity: 0.65; margin-top: 0.15rem; display: flex; gap: 0.3rem; align-items: center; }
   .t-id { font-family: ui-monospace, Consolas, monospace; font-size: 0.65rem;
           background: rgba(148, 163, 184, 0.18); color: #cbd5e1; padding: 0.02rem 0.3rem;

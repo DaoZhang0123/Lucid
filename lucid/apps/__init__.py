@@ -90,9 +90,9 @@ def _iter_module_names() -> list[str]:
     # Last-resort static list (kept in sync manually). Used only if both
     # iter_modules AND the frozen TOC scan came up empty.
     return [
-        "browser", "calculator", "chrome", "cmd", "edge", "explorer",
-        "notepad", "outlook", "powershell", "run", "save_dialog", "settings",
-        "vscode", "wechat",
+        "browser", "calculator", "chrome", "cmd", "edge", "excel", "explorer",
+        "mail", "notepad", "outlook", "photos", "powerpoint", "powershell", "run",
+        "save_dialog", "settings", "teams", "vscode", "wechat", "word", "wt",
     ]
 
 

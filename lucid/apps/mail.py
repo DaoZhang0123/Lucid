@@ -35,4 +35,5 @@ LAUNCHER = {
     # "is it already running" probe.
     "process": "olk.exe|HxOutlook.exe|HxMail.exe|OUTLOOK.EXE",
     "window_title_re": r"(Outlook|Mail|邮件)",
+    "launch_timeout_s": 4.0,
 }

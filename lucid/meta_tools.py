@@ -755,7 +755,7 @@ def dispatch_meta_tool(
             ))
         # On success, also append the app's tips body so the model gets it for free.
         out_lines = [f"launch_app: {result.get('message', '')}"]
-        for k in ("ok", "method", "slug", "hwnd", "pid", "window_title"):
+        for k in ("ok", "method", "slug", "hwnd", "pid", "window_title", "foreground_title", "pending_window", "cdp_available"):
             if k in result and result[k] is not None:
                 out_lines.append(f"  {k}: {result[k]}")
         if result.get("ok") and cfg.tools.enabled:

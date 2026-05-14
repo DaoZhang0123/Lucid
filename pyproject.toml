@@ -22,6 +22,12 @@ dependencies = [
 voice = [
     "faster-whisper>=1.1.0",
 ]
+# Trafilatura article extraction. Optional but strongly recommended — when
+# present, read_webpage uses it instead of the in-house HTMLParser for far
+# cleaner CJK/news/blog text. Falls back transparently if unavailable.
+reader = [
+    "trafilatura>=1.12.0",
+]
 
 [project.scripts]
 lucid = "lucid.__main__:main"

@@ -18,4 +18,5 @@ LAUNCHER = {
     "exe": "winword",
     "process": "WINWORD.EXE",
     "window_title_re": r"Word",
+    "launch_timeout_s": 8.0,
 }

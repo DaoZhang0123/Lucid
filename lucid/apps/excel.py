@@ -18,4 +18,5 @@ LAUNCHER = {
     "exe": "excel",
     "process": "EXCEL.EXE",
     "window_title_re": r"Excel",
+    "launch_timeout_s": 8.0,
 }

@@ -192,11 +192,51 @@ class _TextExtractor(HTMLParser):
         return "\n".join(out_lines).strip()
 
 
+# Optional Trafilatura backend (better article extraction, esp. for CJK).
+# Imported lazily so the dependency stays soft — we still ship without it.
+try:
+    import trafilatura as _trafilatura  # type: ignore
+    _HAS_TRAFILATURA = True
+except Exception:
+    _trafilatura = None  # type: ignore[assignment]
+    _HAS_TRAFILATURA = False
+
+
 def html_to_text(html: str, max_chars: int = 8000) -> tuple[str, str]:
     """Convert HTML to readable plaintext-ish (markdown-flavoured).
 
+    If ``trafilatura`` is installed, prefer its article-extraction output (much
+    cleaner on news / blog pages, especially CJK). Falls back to the in-house
+    ``_TextExtractor`` (always available) on import failure or empty result.
+
     Returns ``(title, text)``.  Text is truncated to ``max_chars`` with a marker.
     """
+    if _HAS_TRAFILATURA and html and len(html) > 256:
+        try:
+            extracted = _trafilatura.extract(  # type: ignore[union-attr]
+                html,
+                include_comments=False,
+                include_tables=True,
+                favor_recall=True,
+                output_format="markdown",
+                with_metadata=False,
+            )
+            if extracted and len(extracted.strip()) >= 80:
+                # Pull title via metadata when available.
+                title = ""
+                try:
+                    meta = _trafilatura.extract_metadata(html)  # type: ignore[union-attr]
+                    if meta and getattr(meta, "title", None):
+                        title = (meta.title or "").strip()
+                except Exception:
+                    pass
+                text = extracted.strip()
+                if max_chars > 0 and len(text) > max_chars:
+                    text = text[:max_chars] + f"\n\n[... truncated, {len(text) - max_chars} more chars]"
+                return title, text
+        except Exception:
+            pass  # fall through to in-house parser
+
     parser = _TextExtractor()
     try:
         parser.feed(html)
@@ -549,6 +589,135 @@ def cdp_read_active_tab(
 # High-level façade for the meta tool
 # ---------------------------------------------------------------------------
 
+# Chrome 122 desktop UA — matches openclaw's web_fetch UA. Many anti-bot
+# layers gate on bare or "python-urllib" UAs.
+_FETCH_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+)
+# `Accept: text/markdown` triggers Cloudflare's "Markdown for Agents" path on
+# CDN-fronted sites — they serve pre-rendered markdown directly, zero parsing.
+_FETCH_ACCEPT = "text/markdown, text/html;q=0.9, application/xhtml+xml;q=0.8, */*;q=0.1"
+_FETCH_ACCEPT_LANG = "zh-CN,zh;q=0.9,en;q=0.8"
+
+
+def _plain_fetch(
+    url: str,
+    timeout_s: float = 8.0,
+    max_bytes: int = 1_500_000,
+) -> tuple[int, str, bytes]:
+    """Single-shot HTTP GET with browser-like headers.
+
+    Returns ``(status, content_type, body_bytes)``. Raises on transport error.
+    Follows up to 5 redirects (urllib default). Caps body at ``max_bytes``.
+    """
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": _FETCH_UA,
+            "Accept": _FETCH_ACCEPT,
+            "Accept-Language": _FETCH_ACCEPT_LANG,
+            "Accept-Encoding": "identity",  # we don't want to deal with gzip here
+            "Connection": "close",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        body = resp.read(max_bytes + 1)
+        if len(body) > max_bytes:
+            body = body[:max_bytes]
+        return int(getattr(resp, "status", 200)), ctype, body
+
+
+def _decode_body(body: bytes, content_type: str) -> str:
+    """Decode response bytes using charset hint or HTML <meta>; UTF-8 fallback."""
+    # 1) Content-Type charset=
+    m = re.search(r"charset=([\w\-]+)", content_type, re.I)
+    if m:
+        try:
+            return body.decode(m.group(1), errors="replace")
+        except LookupError:
+            pass
+    # 2) HTML meta charset
+    head = body[:4096]
+    m = re.search(rb"""<meta[^>]+charset=["']?([\w\-]+)""", head, re.I)
+    if m:
+        try:
+            return body.decode(m.group(1).decode("ascii", "replace"), errors="replace")
+        except LookupError:
+            pass
+    # 3) UTF-8, then GBK fallback for legacy CN sites
+    try:
+        return body.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return body.decode("gbk", errors="replace")
+        except Exception:
+            return body.decode("utf-8", errors="replace")
+
+
+def _jina_reader_fetch(url: str, timeout_s: float = 12.0) -> str:
+    """Pull the page through Jina Reader (https://r.jina.ai/<url>).
+
+    Free, no API key, returns clean markdown of the rendered article. Used as a
+    last-ditch fallback after plain-fetch + headless both fail. Raises on any
+    transport / non-200.
+    """
+    if not url:
+        raise RuntimeError("jina_reader: empty url")
+    # Reader expects the target URL appended verbatim (it tolerates the scheme).
+    proxied = "https://r.jina.ai/" + url
+    req = urllib.request.Request(
+        proxied,
+        headers={
+            "User-Agent": _FETCH_UA,
+            # Ask Reader for a compact text response (no images, no links list).
+            "X-Return-Format": "text",
+            "Accept": "text/plain, text/markdown, */*",
+            "Accept-Language": _FETCH_ACCEPT_LANG,
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        body = resp.read(2_000_000)
+    text = body.decode("utf-8", errors="replace").strip()
+    if not text:
+        raise RuntimeError("jina_reader returned empty body")
+    return text
+
+
+# Module-level result cache. Key = (normalised_url, max_chars). Stores both
+# successes AND failures with a short TTL so a model that violates the
+# "same URL, one strike" prompt rule still doesn't burn real network / browser
+# resources on the duplicate call.
+_CACHE_TTL_S = 300.0  # 5 min
+_CACHE_MAX_ENTRIES = 64
+_FETCH_CACHE: dict[tuple[str, int], tuple[float, dict[str, Any]]] = {}
+
+
+def _cache_get(key: tuple[str, int]) -> dict[str, Any] | None:
+    entry = _FETCH_CACHE.get(key)
+    if not entry:
+        return None
+    ts, payload = entry
+    if time.time() - ts > _CACHE_TTL_S:
+        _FETCH_CACHE.pop(key, None)
+        return None
+    # Return a shallow copy with `cached=True` marker so the model can tell.
+    out = dict(payload)
+    out["cached"] = True
+    return out
+
+
+def _cache_put(key: tuple[str, int], payload: dict[str, Any]) -> None:
+    if len(_FETCH_CACHE) >= _CACHE_MAX_ENTRIES:
+        # Evict oldest by timestamp. O(N) but N is tiny.
+        oldest = min(_FETCH_CACHE.items(), key=lambda kv: kv[1][0])[0]
+        _FETCH_CACHE.pop(oldest, None)
+    _FETCH_CACHE[key] = (time.time(), payload)
+
+
 def read_webpage(
     url: str | None = None,
     active_tab: bool = False,
@@ -559,15 +728,26 @@ def read_webpage(
 ) -> dict[str, Any]:
     """One-call API used by the meta tool.
 
+    Cascade (URL mode):
+      1) **Cache** — same (url, max_chars) within 5 min returns the prior result
+         (success OR failure) immediately. Caps wasted retries.
+      2) **plain HTTP** — `urllib` GET with Chrome 122 UA + ``Accept: text/markdown``
+         (triggers Cloudflare's Markdown-for-Agents on supported sites). Cheap and
+         works on most non-SPA pages.
+      3) **headless Chromium** — only if plain returned HTML too short / non-text.
+      4) **Jina Reader** (``https://r.jina.ai/<url>``) — final no-key fallback for
+         JS-rendered / anti-bot pages.
+
     - If ``active_tab=True``: read the user's live tab via CDP (login state preserved).
       ``url_match`` is an optional substring filter against tab title/url.
-    - Else: ``url`` is required; spawn a headless browser to fetch+render+dump.
 
     Returns a dict ``{ok, source, url, title, text, raw_html_len}`` or
-    ``{ok=False, error}``.
+    ``{ok=False, error}``. ``source`` is one of ``cdp | plain | cf-markdown |
+    headless | jina``.
     """
-    try:
-        if active_tab:
+    # CDP active-tab path is independent of the cascade — keep it as-is.
+    if active_tab:
+        try:
             tab_url, tab_title, html = cdp_read_active_tab(port=cdp_port, url_match=url_match)
             title, text = html_to_text(html, max_chars=max_chars)
             return {
@@ -578,17 +758,129 @@ def read_webpage(
                 "text": text,
                 "raw_html_len": len(html),
             }
-        if not url:
-            return {"ok": False, "error": "must provide either url= or active_tab=true"}
-        html = dump_dom_headless(url, browser=browser)
-        title, text = html_to_text(html, max_chars=max_chars)
-        return {
-            "ok": True,
-            "source": "headless",
-            "url": url,
-            "title": title,
-            "text": text,
-            "raw_html_len": len(html),
-        }
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    if not url:
+        return {"ok": False, "error": "must provide either url= or active_tab=true"}
+
+    cache_key = (url, max_chars)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    # The advisory we attach to a final hard failure — same wording as the
+    # system_prompt Rule 19 so the model sees a consistent message.
+    _DEAD_ADVISORY = (
+        " — All three backends (plain HTTP, headless Chromium, Jina Reader) "
+        "returned blocked / empty. Do NOT retry the same URL with read_webpage. "
+        "Switch strategy: open it in a real browser via "
+        "`launch_app('edge', url=...)` then `read_webpage(active_tab=true)`, "
+        "or try a structurally different source (RSS feed, official API, the "
+        "app's own in-app feed)."
+    )
+
+    attempts: list[str] = []  # human-readable trail for the final error message
+
+    # --- 2) plain HTTP ------------------------------------------------------
+    try:
+        status, ctype, body = _plain_fetch(url)
+        if status == 200 and body:
+            decoded = _decode_body(body, ctype)
+            # Cloudflare Markdown-for-Agents path: server returned ready text.
+            if "text/markdown" in ctype or "text/plain" in ctype:
+                text = decoded.strip()
+                if max_chars > 0 and len(text) > max_chars:
+                    text = text[:max_chars] + f"\n\n[... truncated, {len(text) - max_chars} more chars]"
+                if len(text) >= 80:
+                    payload = {
+                        "ok": True,
+                        "source": "cf-markdown",
+                        "url": url,
+                        "title": "",
+                        "text": text,
+                        "raw_html_len": len(body),
+                    }
+                    _cache_put(cache_key, payload)
+                    return payload
+                attempts.append(f"plain(cf-markdown)={len(text)}c")
+            elif "html" in ctype or "xml" in ctype or not ctype:
+                title, text = html_to_text(decoded, max_chars=max_chars)
+                # Same liveness threshold as the headless branch (>=80 chars
+                # of extracted text) so a tiny-but-valid page like example.com
+                # doesn't fall through to the much more expensive headless run.
+                if len(text.strip()) >= 80 and len(body) >= 256:
+                    payload = {
+                        "ok": True,
+                        "source": "plain",
+                        "url": url,
+                        "title": title,
+                        "text": text,
+                        "raw_html_len": len(body),
+                    }
+                    _cache_put(cache_key, payload)
+                    return payload
+                attempts.append(f"plain(html)=raw={len(body)}/text={len(text.strip())}c")
+            else:
+                attempts.append(f"plain(skip ctype={ctype!r})")
+        else:
+            attempts.append(f"plain(http {status}, {len(body)}b)")
     except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        attempts.append(f"plain({type(e).__name__}: {e})")
+
+    # --- 3) headless Chromium ----------------------------------------------
+    headless_html_len = 0
+    headless_text_len = 0
+    try:
+        html = dump_dom_headless(url, browser=browser)
+        headless_html_len = len(html)
+        if len(html) >= 512:
+            title, text = html_to_text(html, max_chars=max_chars)
+            headless_text_len = len(text.strip())
+            if headless_text_len >= 80:
+                payload = {
+                    "ok": True,
+                    "source": "headless",
+                    "url": url,
+                    "title": title,
+                    "text": text,
+                    "raw_html_len": len(html),
+                }
+                _cache_put(cache_key, payload)
+                return payload
+        attempts.append(f"headless(raw={headless_html_len}b/text={headless_text_len}c)")
+    except Exception as e:
+        attempts.append(f"headless({type(e).__name__}: {e})")
+
+    # --- 4) Jina Reader fallback -------------------------------------------
+    try:
+        text = _jina_reader_fetch(url)
+        if len(text.strip()) >= 80:
+            if max_chars > 0 and len(text) > max_chars:
+                text = text[:max_chars] + f"\n\n[... truncated, {len(text) - max_chars} more chars]"
+            payload = {
+                "ok": True,
+                "source": "jina",
+                "url": url,
+                "title": "",
+                "text": text,
+                "raw_html_len": len(text),
+            }
+            _cache_put(cache_key, payload)
+            return payload
+        attempts.append(f"jina(text={len(text.strip())}c)")
+    except Exception as e:
+        attempts.append(f"jina({type(e).__name__}: {e})")
+
+    # All three backends bombed. Cache the failure so a duplicate call returns
+    # immediately without re-running anything.
+    failure = {
+        "ok": False,
+        "error": (
+            f"read_webpage: all backends failed for {url!r} "
+            f"[{', '.join(attempts) or 'no attempts logged'}]"
+            + _DEAD_ADVISORY
+        ),
+    }
+    _cache_put(cache_key, failure)
+    return failure

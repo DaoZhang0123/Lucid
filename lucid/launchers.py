@@ -24,6 +24,7 @@ from typing import Any
 
 from .config import LaunchersConfig
 from . import apps as apps_pkg
+from .window import active_window as get_active_window
 
 
 # ---------------------------------------------------------------------------
@@ -166,9 +167,89 @@ def _is_running_by_name(process_name: str) -> tuple[bool, int | None]:
             n = (p.info.get("name") or "").lower()
         except Exception:
             continue
-        if n == target:
+        if _process_name_matches(target, n):
             return True, int(p.info.get("pid") or 0) or None
     return False, None
+
+
+def _process_name_matches(pattern: str, actual: str) -> bool:
+    pattern = (pattern or "").strip().lower()
+    actual = (actual or "").strip().lower()
+    if not pattern or not actual:
+        return False
+    if pattern == actual:
+        return True
+    try:
+        return bool(re.fullmatch(pattern, actual, re.IGNORECASE))
+    except re.error:
+        return False
+
+
+def _title_matches(spec: dict[str, Any], title: str) -> bool:
+    title_sub = spec.get("window_title")
+    title_re = spec.get("window_title_re")
+    pat = None
+    if title_re:
+        try:
+            pat = re.compile(title_re, re.IGNORECASE)
+        except re.error:
+            pat = None
+    if pat is not None:
+        return bool(pat.search(title or ""))
+    if title_sub:
+        return str(title_sub) in (title or "")
+    return False
+
+
+def _launch_timeout(spec: dict[str, Any], default: float) -> float:
+    try:
+        return max(0.1, float(spec.get("launch_timeout_s") or default))
+    except Exception:
+        return default
+
+
+def _foreground_title() -> str | None:
+    try:
+        info = get_active_window()
+    except Exception:
+        info = None
+    if not info or not info.title:
+        return None
+    return info.title
+
+
+def _foreground_window_match(spec: dict[str, Any]) -> WindowMatch | None:
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    hwnd = int(user32.GetForegroundWindow() or 0)
+    if not hwnd or not user32.IsWindowVisible(hwnd):
+        return None
+    length = int(user32.GetWindowTextLengthW(hwnd) or 0)
+    if length <= 0:
+        return None
+    buf = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buf, length + 1)
+    title = buf.value or ""
+    if not _title_matches(spec, title):
+        return None
+    pid = wintypes.DWORD(0)
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    pid_int = int(pid.value or 0)
+    proc_target = (spec.get("process") or "").lower()
+    if proc_target:
+        try:
+            import psutil  # type: ignore[import-not-found]
+            proc = psutil.Process(pid_int)
+            pname = (proc.name() or "").lower()
+            if not _process_name_matches(proc_target, pname):
+                return None
+        except Exception:
+            return None
+    return WindowMatch(hwnd=hwnd, title=title, pid=pid_int)
 
 
 def _find_windows(spec: dict[str, Any]) -> list[WindowMatch]:
@@ -180,16 +261,8 @@ def _find_windows(spec: dict[str, Any]) -> list[WindowMatch]:
     """
     if sys.platform != "win32":
         return []
-    title_sub = spec.get("window_title")
-    title_re = spec.get("window_title_re")
-    if not title_sub and not title_re:
+    if not spec.get("window_title") and not spec.get("window_title_re"):
         return []
-    pat = None
-    if title_re:
-        try:
-            pat = re.compile(title_re, re.IGNORECASE)
-        except re.error:
-            pat = None
     proc_target = (spec.get("process") or "").lower()
     pid_to_pname: dict[int, str] = {}
     if proc_target:
@@ -221,12 +294,7 @@ def _find_windows(spec: dict[str, Any]) -> list[WindowMatch]:
         buf = ctypes.create_unicode_buffer(length + 1)
         user32.GetWindowTextW(hwnd, buf, length + 1)
         title = buf.value or ""
-        ok = False
-        if pat is not None:
-            ok = bool(pat.search(title))
-        elif title_sub:
-            ok = title_sub in title
-        if not ok:
+        if not _title_matches(spec, title):
             return True
         pid = wintypes.DWORD(0)
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
@@ -236,7 +304,7 @@ def _find_windows(spec: dict[str, Any]) -> list[WindowMatch]:
         # enumerate processes (pid_to_pname empty) — fall back to title-only.
         if proc_target and pid_to_pname:
             pname = pid_to_pname.get(pid_int, "")
-            if pname != proc_target:
+            if not _process_name_matches(proc_target, pname):
                 return True
         found.append(WindowMatch(hwnd=int(hwnd), title=title, pid=pid_int))
         return True
@@ -377,6 +445,9 @@ def _wait_for_windows(spec: dict[str, Any], timeout: float = 1.5, interval: floa
         wins = _find_windows(spec)
         if wins:
             return wins
+        fg = _foreground_window_match(spec)
+        if fg is not None:
+            return [fg]
         if time.monotonic() >= deadline:
             return []
         time.sleep(interval)
@@ -403,22 +474,28 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
         deeplink_uri = f"{spec['uri']}{page_clean}"
         try:
             subprocess.Popen(["cmd", "/c", "start", "", deeplink_uri], shell=False)
-            wins2 = _wait_for_windows(spec, timeout=2.0)
+            wins2 = _wait_for_windows(spec, timeout=_launch_timeout(spec, 2.5))
             if wins2:
                 _force_foreground(wins2[0].hwnd)
-            return {
-                "ok": True,
-                "method": "uri_deeplink",
-                "slug": slug,
-                "name": spec.get("name", slug),
-                "uri": deeplink_uri,
-                "page": page_clean,
-                "hwnd": (wins2[0].hwnd if wins2 else None),
-                "message": f"launched {spec.get('name', slug)} via uri {deeplink_uri}",
-            }
+                return {
+                    "ok": True,
+                    "method": "uri_deeplink",
+                    "slug": slug,
+                    "name": spec.get("name", slug),
+                    "uri": deeplink_uri,
+                    "page": page_clean,
+                    "hwnd": wins2[0].hwnd,
+                    "window_title": wins2[0].title,
+                    "pid": wins2[0].pid,
+                    "foreground_title": _foreground_title(),
+                    "message": f"launched {spec.get('name', slug)} via uri {deeplink_uri}",
+                }
+            last_err = (
+                f"uri deep-link {deeplink_uri} fired but no matching window appeared "
+                f"within {_launch_timeout(spec, 2.5):.1f}s"
+            )
         except Exception as e:
-            return {"ok": False, "method": "uri_deeplink", "slug": slug,
-                    "uri": deeplink_uri, "message": f"uri deep-link failed: {e}"}
+            last_err = f"uri deep-link failed: {e}"
 
     # Step 1: already-running window → focus
     wins = _find_windows(spec)
@@ -458,6 +535,7 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
             "name": spec.get("name", slug),
             "hwnd": w.hwnd,
             "window_title": w.title,
+            "foreground_title": _foreground_title(),
             "pid": w.pid,
             "message": msg,
             **extra,
@@ -468,7 +546,8 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
     if shortcut:
         try:
             _send_hotkey(shortcut)
-            wins2 = _wait_for_windows(spec, timeout=1.5)
+            wait_s = _launch_timeout(spec, 1.5)
+            wins2 = _wait_for_windows(spec, timeout=wait_s)
             note = ""
             if not wins2:
                 # Many app hotkeys (e.g. WeChat's Ctrl+Alt+W) are TOGGLES:
@@ -482,7 +561,7 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
                 # only re-send when wins2 is empty, so by definition there
                 # was nothing to hide.
                 _send_hotkey(shortcut)
-                wins2 = _wait_for_windows(spec, timeout=1.5)
+                wins2 = _wait_for_windows(spec, timeout=wait_s)
                 if wins2:
                     note = " (hotkey is a toggle; first press hid an existing window, second press restored it)"
             if wins2:
@@ -496,6 +575,7 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
                     "shortcut": shortcut,
                     "hwnd": w.hwnd,
                     "window_title": w.title,
+                    "foreground_title": _foreground_title(),
                     "pid": w.pid,
                     "message": f"launched {spec.get('name', slug)} via shortcut {shortcut!r}{note}",
                 }
@@ -519,18 +599,25 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
         try:
             # Use start via cmd so URIs like ms-settings: get routed correctly.
             subprocess.Popen(["cmd", "/c", "start", "", uri], shell=False)
-            wins2 = _wait_for_windows(spec, timeout=1.5)
+            wins2 = _wait_for_windows(spec, timeout=_launch_timeout(spec, 2.0))
             if wins2:
                 _force_foreground(wins2[0].hwnd)
-            return {
-                "ok": True,
-                "method": "uri",
-                "slug": slug,
-                "name": spec.get("name", slug),
-                "uri": uri,
-                "hwnd": (wins2[0].hwnd if wins2 else None),
-                "message": f"launched {spec.get('name', slug)} via uri {uri}",
-            }
+                return {
+                    "ok": True,
+                    "method": "uri",
+                    "slug": slug,
+                    "name": spec.get("name", slug),
+                    "uri": uri,
+                    "hwnd": wins2[0].hwnd,
+                    "window_title": wins2[0].title,
+                    "foreground_title": _foreground_title(),
+                    "pid": wins2[0].pid,
+                    "message": f"launched {spec.get('name', slug)} via uri {uri}",
+                }
+            last_err = (
+                f"uri {uri!r} fired but no matching window appeared within "
+                f"{_launch_timeout(spec, 2.0):.1f}s; trying next method"
+            )
         except Exception as e:
             last_err = f"uri failed: {e}"
 
@@ -539,18 +626,43 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
     if exe:
         try:
             subprocess.Popen(exe, shell=True)
-            wins2 = _wait_for_windows(spec, timeout=2.0)
+            wins2 = _wait_for_windows(spec, timeout=_launch_timeout(spec, 2.0))
             if wins2:
                 _force_foreground(wins2[0].hwnd)
-            return {
-                "ok": True,
-                "method": "exe",
-                "slug": slug,
-                "name": spec.get("name", slug),
-                "exe": exe,
-                "hwnd": (wins2[0].hwnd if wins2 else None),
-                "message": f"launched {spec.get('name', slug)} via exe {exe!r}",
-            }
+                return {
+                    "ok": True,
+                    "method": "exe",
+                    "slug": slug,
+                    "name": spec.get("name", slug),
+                    "exe": exe,
+                    "hwnd": wins2[0].hwnd,
+                    "window_title": wins2[0].title,
+                    "foreground_title": _foreground_title(),
+                    "pid": wins2[0].pid,
+                    "message": f"launched {spec.get('name', slug)} via exe {exe!r}",
+                }
+            running, pid = _is_running_by_name(spec.get("process") or "")
+            fg_title = _foreground_title()
+            if running:
+                return {
+                    "ok": True,
+                    "method": "exe",
+                    "slug": slug,
+                    "name": spec.get("name", slug),
+                    "exe": exe,
+                    "pid": pid,
+                    "pending_window": True,
+                    "foreground_title": fg_title,
+                    "message": (
+                        f"spawned {spec.get('name', slug)} via exe {exe!r}; process is running "
+                        f"but no matching top-level window appeared within {_launch_timeout(spec, 2.0):.1f}s "
+                        "(likely cold start / splash)."
+                    ),
+                }
+            last_err = (
+                f"exe {exe!r} started but no matching window or process appeared within "
+                f"{_launch_timeout(spec, 2.0):.1f}s"
+            )
         except Exception as e:
             last_err = f"exe failed: {e}"
 

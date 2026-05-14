@@ -264,7 +264,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="cancel the CURRENT task if its events.jsonl has "
                              "not been updated for this many seconds (queue "
                              "keeps going)")
-    parser.add_argument("--cancel-grace", type=int, default=45,
+    parser.add_argument("--cancel-grace", type=int, default=15,
                         help="after sending `cancel` to a wedged task, wait "
                              "this many seconds for the worker to yield. If "
                              "events.jsonl still does not grow, kill+restart "
@@ -543,8 +543,10 @@ def main(argv: list[str] | None = None) -> int:
                 # syscall (e.g. pyautogui hung on a focus-stealing modal,
                 # LLM SDK ignoring its timeout, or a UIA call deadlocked).
                 # Soft-cancel won't reach it — escalate to a hard sidecar
-                # restart so the rest of the suite can proceed. The current
-                # query is recorded as harness_error.
+                # restart so the rest of the suite can proceed. In the
+                # current thread-based worker model, the sidecar restart is
+                # the only reliable hard-kill primitive. The current query is
+                # recorded as harness_error.
                 if (
                     cancelled
                     and now - cancelled_at > args.cancel_grace
