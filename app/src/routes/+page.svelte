@@ -303,6 +303,14 @@
           <line x1="8.5" y1="17" x2="13" y2="17"/>
         </svg>
       </a>
+      <a class="nav-icon" href="/skills" data-tooltip={$_("header.nav_skills")} aria-label={$_("header.nav_skills")}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/>
+          <path d="M12 12l8-4.5"/>
+          <path d="M12 12L4 7.5"/>
+          <path d="M12 12v9"/>
+        </svg>
+      </a>
       <a class="nav-icon" href="/schedules" data-tooltip={$_("header.nav_schedules")} aria-label={$_("header.nav_schedules")}>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="12" cy="13" r="7.5"/>

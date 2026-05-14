@@ -29,6 +29,7 @@ from . import tooltips as tooltips_mod
 from . import meta_tools
 from . import launchers as launchers_mod
 from . import regions as regions_mod
+from . import skills as skills_mod
 from .context_manager import ContextManager, build_summary_prompt
 from .system_prompt import build_system_prompt as _build_system_prompt
 
@@ -570,6 +571,8 @@ class Agent:
                       and self.cfg.launchers.inject_catalog_in_system_prompt else "")
                 + (regions_mod.regions_for_prompt(self.cfg.regions)
                    if getattr(self.cfg, "regions", None) and self.cfg.regions.enabled else "")
+                + (skills_mod.skills_for_prompt(self.cfg.skills)
+                   if getattr(self.cfg, "skills", None) and self.cfg.skills.enabled else "")
                 + ("\n\n" + self.extra_system if self.extra_system else "")
             )},
         ]

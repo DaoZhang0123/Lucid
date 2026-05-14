@@ -195,3 +195,23 @@ keep_audio = false
 hf_endpoint = ""
 # 模型空闲多少秒后从内存释放，下次用再重新加载（冷启动 ~3s）
 idle_unload_sec = 1800
+
+
+[skills]
+# Reusable parameterised playbooks. See Docs/skills.md.
+enabled = true
+
+# Allow downloading skill JSON from arbitrary http(s) URLs via
+# `install_skill_url`. Default false because the downloaded steps still run
+# through the agent loop with full user permissions. Toggle via /skills page.
+allow_online_install = false
+
+# Per-skill caps (defence against prompt-bombing / supply-chain abuse).
+max_steps = 32
+max_params = 16
+max_bytes = 32768
+
+# Inject the compact "## Available skills" block at the end of the system
+# prompt. Disable to keep the prompt smaller (the agent can still use
+# `list_skills` to enumerate them on demand).
+inject_in_system_prompt = true

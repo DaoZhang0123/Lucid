@@ -605,6 +605,15 @@
     border-radius: 4px;
     font: inherit;
   }
+  label.check { display: flex; align-items: center; gap: 8px; }
+  label.check > input[type="checkbox"] {
+    display: inline-block;
+    width: auto;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    flex: 0 0 auto;
+  }
   .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   button {
     padding: 6px 14px;

@@ -532,6 +532,50 @@ pub async fn template_delete(id: String) -> Result<Value, String> {
     instance().request("template_delete", json!({"id": id})).await
 }
 
+// ---- Skills (Anthropic Agent Skills format; see Docs/skills.md) ----
+#[tauri::command]
+pub async fn skill_list() -> Result<Value, String> {
+    instance().request("skill_list", json!({})).await
+}
+
+#[tauri::command]
+pub async fn skill_read(id: String) -> Result<Value, String> {
+    instance().request("skill_read", json!({"id": id})).await
+}
+
+#[tauri::command]
+pub async fn skill_add(name: String, description: String, body: String, version: Option<String>, license: Option<String>) -> Result<Value, String> {
+    instance().request("skill_add", json!({
+        "name": name,
+        "description": description,
+        "body": body,
+        "version": version,
+        "license": license,
+    })).await
+}
+
+#[tauri::command]
+pub async fn skill_update(id: String, name: Option<String>, description: Option<String>, body: Option<String>, version: Option<String>, license: Option<String>) -> Result<Value, String> {
+    instance().request("skill_update", json!({
+        "id": id,
+        "name": name,
+        "description": description,
+        "body": body,
+        "version": version,
+        "license": license,
+    })).await
+}
+
+#[tauri::command]
+pub async fn skill_delete(id: String) -> Result<Value, String> {
+    instance().request("skill_delete", json!({"id": id})).await
+}
+
+#[tauri::command]
+pub async fn skill_install_url(url: String) -> Result<Value, String> {
+    instance().request("skill_install_url", json!({"url": url})).await
+}
+
 // ---- 定时任务 ----
 #[tauri::command]
 pub async fn schedule_list() -> Result<Value, String> {

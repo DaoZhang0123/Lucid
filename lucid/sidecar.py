@@ -62,6 +62,7 @@ from .runlog import ThreadLog, resolve_logs_root
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
 from . import templates as templates_mod
+from . import skills as skills_mod
 from . import scheduler as scheduler_mod
 from . import launchers as launchers_mod
 from . import regions as regions_mod
@@ -881,6 +882,7 @@ instruction in this run.
         "ping", "get_status", "thread_list", "thread_read", "thread_read_image",
         "memory_read", "tools_read", "app_tips_list", "app_tips_read",
         "templates_list", "schedule_list",
+        "skill_list", "skill_read",
         "launchers_list", "regions_list", "doze_status", "doze_outputs",
         "installed_apps_list",
         "voice_status", "voice_config",
@@ -1394,6 +1396,56 @@ instruction in this run.
         if not tid:
             raise ValueError("id required")
         return {"deleted": templates_mod.delete_template(tid)}
+
+    # ---- Skills (Anthropic Agent Skills format; see Docs/skills.md) ----
+
+    def _rpc_skill_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {"skills": skills_mod.list_skills()}
+
+    def _rpc_skill_read(self, params: dict[str, Any]) -> dict[str, Any]:
+        key = (params.get("id") or params.get("name") or "").strip()
+        if not key:
+            raise ValueError("id or name required")
+        item = skills_mod.get_skill(key)
+        if item is None:
+            raise ValueError(f"skill {key!r} not found")
+        return item
+
+    def _rpc_skill_add(self, params: dict[str, Any]) -> dict[str, Any]:
+        payload = {
+            "name": params.get("name", ""),
+            "description": params.get("description", ""),
+            "body": params.get("body", ""),
+            "version": params.get("version") or None,
+            "license": params.get("license") or None,
+            "source": "user",
+        }
+        return skills_mod.add_skill(payload, cfg=self.cfg.skills)
+
+    def _rpc_skill_update(self, params: dict[str, Any]) -> dict[str, Any]:
+        sid = (params.get("id") or "").strip()
+        if not sid:
+            raise ValueError("id required")
+        fields: dict[str, Any] = {}
+        for k in ("name", "description", "body", "version", "license"):
+            if k in params and params[k] is not None:
+                fields[k] = params[k]
+        item = skills_mod.update_skill(sid, fields, cfg=self.cfg.skills)
+        if item is None:
+            raise ValueError(f"skill {sid!r} not found")
+        return item
+
+    def _rpc_skill_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        sid = (params.get("id") or "").strip()
+        if not sid:
+            raise ValueError("id required")
+        return {"deleted": skills_mod.delete_skill(sid)}
+
+    def _rpc_skill_install_url(self, params: dict[str, Any]) -> dict[str, Any]:
+        url = (params.get("url") or "").strip()
+        if not url:
+            raise ValueError("url required")
+        return skills_mod.install_skill_url(url, cfg=self.cfg.skills)
 
     # ---- 定时任务 ----
 

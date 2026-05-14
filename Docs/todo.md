@@ -119,18 +119,18 @@
   - **配置**：`[screenshot] feed_initial_l1_to_llm` / `click_verify_enabled` / `click_no_change_threshold` / `post_step_use_l3` / `[safety] verify_click_with_l3` / `verify_click_target_before` —— 全部已暴露。
   - **剩余 ToDo**：(R1) 是否真要拆出独立 `screenshot` tool（取舍见上）；(R4) 给 `coordinate` 加越界硬校验，越界直接 `ToolResult(error=...)` 让模型重新截图。
 
-- [ ] **语音输入 / Push-to-Talk 建任务**：注册一个全局快捷键（默认 `Ctrl+Alt+Space`，`[ui].voice_hotkey` 可改），按住录音、松开停止，把录到的音频送给 ASR（首选本地 `faster-whisper` small/medium，`[voice].engine = whisper-local | azure | openai`，`[voice].model_size`、`[voice].language="auto"`），转出文本后：
+- [x] **语音输入 / Push-to-Talk 建任务**：注册一个全局快捷键（默认 `Ctrl+Alt+Space`，`[ui].voice_hotkey` 可改），按住录音、松开停止，把录到的音频送给 ASR（首选本地 `faster-whisper` small/medium，`[voice].engine = whisper-local | azure | openai`，`[voice].model_size`、`[voice].language="auto"`），转出文本后：
   - 如果当前没有 active thread 或用户配置 `[voice].always_new_thread = true` → 自动 `thread_new` + `start_task`（前端 chat 视图自动滚到新 thread）；
   - 否则把文本作为 user message 续到当前 thread。
   - 录音/识别时托盘图标变红或主窗口 footer 显示波形 + 倒计时上限（`[voice].max_seconds=30`）；识别失败给出错音 + 前端 toast。
   - 注意权限：Tauri 需声明 `microphone` capability；Windows 隐私设置里需开过麦克风。
-- [ ] **Skills 系统（可复用动作蓝图）**：在 templates 之上做一层"参数化、可由 Agent 自己挑用"的 skill：
-  - 数据：`%LOCALAPPDATA%\dev.lucid\skills\<slug>.json`（含 `name` / `description` / `params: [{name,type,desc}]` / `steps: [<instruction template>...]` / `requires: [tool names]` / `examples`）；可由用户在 `/skills` 页面 CRUD，也可由模型用新 meta tool `learn_skill(name, description, params, steps)` 写入。
+- [x] **Skills 系统（可复用动作蓝图）**：在 templates 之上做一层"参数化、可由 Agent 自己挑用"的 skill：
+  - 数据：`.lucid\skills\<slug>.json`（含 `name` / `description` / `params: [{name,type,desc}]` / `steps: [<instruction template>...]` / `requires: [tool names]` / `examples`）；可由用户在 `/skills` 页面 CRUD，不需要模型用新 meta tool `learn_skill(name, description, params, steps)` 写入，因为假设用户不是很懂，只需要load skill就行。
   - 调用：模型用 `run_skill(name, params)` 触发；sidecar 把 steps 渲染成 instruction（Jinja2 风格的 `{{var}}` 替换）后逐条 inject 进 messages，相当于"批量 user nudges"。也允许用户在前端 `/skills` 列表里点"运行"直接发起。
-  - 注入：起手 prompt 里只列 skill 的 `name + description + params`（紧凑摘要），避免 prompt 膨胀；模型决定调用某 skill 时再把 steps 完整展开。
-  - 配置：`[skills] enabled / max_skills / max_steps_per_skill`。
+  - 注入：起手 prompt 里只列 skill 的 `name`（紧凑摘要），有需要再继续load `description + params`,避免 prompt 膨胀；模型决定调用某 skill 时再把 steps 完整展开。
+  - 配置：`[skills] enabled`。
   - 与 templates 的区别：templates 是"一句固定 instruction"，skills 是"参数化的多步剧本 + 可被 Agent 主动调度"。
-  - 增加skill，并且要支持online search然后offline load，但是要在system prompt里指明这是网上下载的，如果违反安全原则则去掉
+  - 支持online search然后offline load，但是要在system prompt里指明这是网上下载的，如果违反安全原则则去掉
 - [ ] **多 Agent 设计：planner / checker / executor 三角**：把现在单 Agent 的 ReAct 拆三个角色，三者共享 thread messages 与截图，但各有 system prompt：
   - **Planner**：拿到 user instruction + 当前屏幕，输出"高层步骤计划 + 验收标准"（不调 `computer`），写入 thread。
   - **Executor**：现有 ReAct，按 plan 调 `computer` 推进。

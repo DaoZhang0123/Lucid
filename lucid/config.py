@@ -384,6 +384,22 @@ class VoiceConfig:
 
 
 @dataclass
+class SkillsConfig:
+    """Reusable parameterised playbooks. See ``Docs/skills.md``."""
+    enabled: bool = True
+    # If True, also fetch skill JSON from arbitrary http(s) URLs via
+    # ``install_skill_url``. Default False because the downloaded steps run
+    # through the regular Agent loop and inherit user-level permissions.
+    allow_online_install: bool = False
+    # Per-skill caps (defence against prompt-bombing / supply-chain abuse).
+    max_steps: int = 32
+    max_params: int = 16
+    max_bytes: int = 32768
+    # Inject "## Available skills" block at the end of the system prompt.
+    inject_in_system_prompt: bool = True
+
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     screenshot: ScreenshotConfig = field(default_factory=ScreenshotConfig)
@@ -401,6 +417,7 @@ class Config:
     visual_notify: VisualNotifyConfig = field(default_factory=VisualNotifyConfig)
     doze: DozeConfig = field(default_factory=DozeConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    skills: SkillsConfig = field(default_factory=SkillsConfig)
 
 
 def _apply(dc: Any, raw: dict[str, Any] | None) -> Any:
@@ -456,4 +473,5 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.visual_notify, raw.get("visual_notify"))
     _apply(cfg.doze, raw.get("doze"))
     _apply(cfg.voice, raw.get("voice"))
+    _apply(cfg.skills, raw.get("skills"))
     return cfg
