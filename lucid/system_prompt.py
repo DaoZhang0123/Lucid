@@ -89,6 +89,29 @@ Working principles:
    Save-dialog filename-box pitfalls (pre-selected ComboBox, corrupted-filename bail-out, IME path guard)
    live in the `save-dialog` app tips file; load them via `load_app_tips(app="save-dialog")` if the task
    actually requires driving the dialog.
+14. **Artifact tasks → open the produced file in its associated app and screenshot to verify content.**
+   Whenever the task's goal is to **produce a file artifact** (an image, a document, a spreadsheet, a
+   slide deck, a PDF, a video, an audio clip, a `.txt` / `.csv` / `.json` / `.md` data file, etc. — anything
+   the user can later open and look at), `Test-Path` from rule 13 is necessary but **not sufficient**.
+   Before emitting `task complete:` you MUST also:
+   1) Open the produced file in its natural viewer / editor — preferred: `run_shell` `start "" "<P>"`
+      (Windows shell association, opens with the default app: `.png` → Photos, `.pdf` → Edge,
+      `.docx` → Word, `.xlsx` → Excel, `.txt` → Notepad, `.mp3` → Groove / WMP, etc.). Fallback: drive
+      the right app explicitly via `launch_app` then File → Open.
+   2) Take ONE `screenshot(level="active_window")` of the opened viewer.
+   3) Verify in your assistant_text that the visible content matches what the task asked for — the
+      drawing actually contains the requested shapes / colours, the document's first paragraph reads
+      correctly, the spreadsheet's expected cells hold the right values, the chart shape matches, the
+      audio file's player shows non-zero duration, etc. Quote the verifying detail verbatim per rule 8.
+   4) Only THEN emit `task complete:`.
+   This catches "the file exists but is 0 bytes / corrupted / blank canvas / wrong format" — the most
+   common silent-failure mode for produce-an-artifact tasks. **Exceptions** (Test-Path alone is enough,
+   no need to open):
+   - The task's phrasing is purely "write text X to file P" with no implication of viewing it
+     (`Set-Content` already round-trips text losslessly).
+   - The task explicitly says "do not open" / "just save".
+   - The "artifact" is a structured data dump whose verification is done by re-reading with `read_file`
+     in the same flow (e.g. JSON / CSV that you'll parse next step anyway).
 15. **No `wait` action.** There is intentionally no `wait` / `sleep` / `pause` action on the `computer`
    tool. Browser navigations, app launches, dialog transitions either complete by the time the next tool
    call dispatches, or they are blocked by an overlay that rule 11 says to bail on. Issuing a "wait N

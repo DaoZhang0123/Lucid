@@ -109,6 +109,8 @@ let cancelledResult = false;
 // listeners
 let unlistenHotkey: UnlistenFn | null = null;
 let unlistenOverlayAction: UnlistenFn | null = null;
+let unlistenSidecarReady: UnlistenFn | null = null;
+let voiceConfigLoaded = false;
 
 let dictationSink: DictationCallback | null = null;
 let lastTickerProgress = 0;
@@ -122,9 +124,24 @@ export function setDictationSink(cb: DictationCallback | null): void {
   dictationSink = cb;
 }
 
-/** Initialise: load config, register hotkey, subscribe to events. Idempotent. */
+/** Initialise: load config, register hotkey, subscribe to events. Idempotent.
+ *
+ * On first launch the sidecar is still spawning (PyInstaller cold start ~2-5s)
+ * so the immediate `voice_config` RPC almost always fails with "sidecar not
+ * started". We fall back to listening for the sidecar `ready` event on
+ * `lucid://event` and re-attempting then. Without this, the global Space
+ * hotkey is never registered until the user happens to open Settings and
+ * Save (which calls `reloadVoiceConfig` after the sidecar is up).
+ */
 export async function initVoice(): Promise<void> {
-  await loadConfigAndApply();
+  await tryLoadConfigAndApply();
+  if (!unlistenSidecarReady) {
+    unlistenSidecarReady = await listen<any>("lucid://event", (ev) => {
+      if (ev?.payload?.event === "ready" && !voiceConfigLoaded) {
+        void tryLoadConfigAndApply();
+      }
+    });
+  }
   if (!unlistenHotkey) {
     unlistenHotkey = await listen<{ kind: "pressed" | "released" }>(
       "lucid://voice",
@@ -139,10 +156,21 @@ export async function initVoice(): Promise<void> {
   }
 }
 
+async function tryLoadConfigAndApply(): Promise<void> {
+  try {
+    await loadConfigAndApply();
+    if (cfg) voiceConfigLoaded = true;
+  } catch (e) {
+    console.warn("voice initial config load failed (sidecar may still be starting):", e);
+  }
+}
+
 /** Tear down (e.g. on app quit). Currently unused but kept for symmetry. */
 export async function teardownVoice(): Promise<void> {
   if (unlistenHotkey) { unlistenHotkey(); unlistenHotkey = null; }
   if (unlistenOverlayAction) { unlistenOverlayAction(); unlistenOverlayAction = null; }
+  if (unlistenSidecarReady) { unlistenSidecarReady(); unlistenSidecarReady = null; }
+  voiceConfigLoaded = false;
   await unregisterHotkey();
   resetAll();
 }
@@ -150,6 +178,7 @@ export async function teardownVoice(): Promise<void> {
 /** Re-read config from sidecar and re-register the hotkey. Call after /settings save. */
 export async function reloadVoiceConfig(): Promise<void> {
   await loadConfigAndApply();
+  if (cfg) voiceConfigLoaded = true;
 }
 
 // ---------------------------------------------------------------------------

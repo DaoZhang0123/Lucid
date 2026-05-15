@@ -139,8 +139,9 @@ prompt_version = 1
 
 [voice]
 # 语音输入（Push-to-Talk）。详见 Docs/voice-input.md。
-# 默认关；用户在 /settings → Voice 显式开启。开启后首次按下快捷键
-# 才会下载模型（首次 ~150MB，后续走 ~/.lucid/voice/models/ 缓存）。
+# 默认关：长按 Space 即可录音；松开（或再按一下，取决于 stop_mode）转写。
+# tiny 模型 ~75MB 已随安装包内置，开箱即用；要更高准确率可在 /settings → Voice
+# 里点 "Download model" 预下载 small / large。
 enabled = false
 
 # ---- ASR 引擎 ----

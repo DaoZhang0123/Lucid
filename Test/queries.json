@@ -1,6 +1,6 @@
 {
-  "version": 16,
-  "notes": "Standing E2E queries — re-run every iteration. SKILL.md keys on `id`. All file deliverables go to %USERPROFILE%\\Downloads\\Test\\ (NOT the desktop). Each query has only an `instruction` (and optional `expect_files`). Verdict is computed by the SKILL: (1) Run layer = manifest.status == 'ok'; (2) Goal layer = a per-thread subagent reads instruction + final_text (+ context.log if needed) and judges whether the task's goal was achieved (goal_met = pass / fail / partial); (3) Deliverables layer = each `expect_files` entry passes its disk check (existence + optional must_contain substring). Categories: cognitive / fileio / notepad / calculator / explorer / browser / vscode / settings / multi-step / resilience / app (single-app coverage: Edge / Paint / Snipping Tool / Task Manager / VS Code / Clock / Downloads sort / Sticky Notes / Windows Terminal / Photos / Mail) / office (Word / Excel / PowerPoint / Outlook / OneNote — all dry-run, read-only or transient) / messaging (WeChat / Teams, dry-run only — never actually sends) / combo (multi-app integration). Designed to run against a REAL desktop (whatever is open). Do NOT pre-clean. Messaging + office queries are dry-run: type/click but never save, never send; if app is not installed or not signed in, reply '<app> unavailable' and stop — that is a degraded pass.",
+  "version": 17,
+  "notes": "Standing E2E queries — re-run every iteration. SKILL.md keys on `id`. All file deliverables go to %USERPROFILE%\\Downloads\\Test\\ (NOT the desktop). Each query has only an `instruction` (and optional `expect_files`). Verdict is computed by the SKILL: (1) Run layer = manifest.status == 'ok'; (2) Goal layer = a per-thread subagent reads instruction + final_text (+ context.log if needed) and judges whether the task's goal was achieved (goal_met = pass / fail / partial); (3) Deliverables layer = each `expect_files` entry passes its disk check (existence + optional must_contain substring). Categories: cognitive / fileio / notepad / calculator / explorer / browser / vscode / settings / multi-step / resilience / app (single-app coverage: Edge / Paint / Snipping Tool / Task Manager / VS Code / Clock / Downloads sort / Sticky Notes / Windows Terminal / Photos / Mail) / office (Word / Excel / PowerPoint / Outlook / OneNote — all dry-run, read-only or transient) / messaging (WeChat / Teams, dry-run only — never actually sends) / combo (multi-app integration) / self (Lucid operates its own UI: read sidebar, navigate /settings /memory /schedules /tools /templates pages, toggle theme — strictly read-only, never edits or deletes). Designed to run against a REAL desktop (whatever is open). Do NOT pre-clean. Messaging + office queries are dry-run: type/click but never save, never send; if app is not installed or not signed in, reply '<app> unavailable' and stop — that is a degraded pass.",
   "queries": [
     {
       "id": "A1",
@@ -539,7 +539,63 @@
         "app:msedge",
         "app:WeChat"
       ]
+    },
+    {
+      "id": "S1",
+      "category": "self",
+      "instruction": "Focus the Lucid app window itself (window title contains 'Lucid'). Use focus_window if needed. Take an active_window screenshot. In the left sidebar there is a 'Conversations' list — count the number of conversation entries currently visible (do NOT scroll, just what's on screen). Reply 'task complete: lucid conversations=<N>'. Do NOT click + new thread, do NOT delete any conversation, do NOT type into the input box.",
+      "needs": [
+        "app:Lucid"
+      ]
+    },
+    {
+      "id": "S2",
+      "category": "self",
+      "instruction": "Focus the Lucid window. In the top header click the gear / Settings link to open the /settings page. Once the page is visible, read the currently selected 'Provider' value (anthropic / copilot / proxy) and report it. Then navigate back to the chat by clicking '← Back to chat' (or the equivalent home / chat link). Reply 'task complete: lucid provider=<value>'. Do NOT change any setting, do NOT click Save.",
+      "needs": [
+        "app:Lucid"
+      ]
+    },
+    {
+      "id": "S3",
+      "category": "self",
+      "instruction": "Focus the Lucid window. Open the /memory page (navigate via the header / sidebar nav link labelled 'Memory' or 'memory.md'). Once visible, count the number of long-term memory bullet/list entries currently shown and report it. Then go back to chat. Reply 'task complete: lucid memory=<N> entries'. Do NOT add, edit, or delete any entry.",
+      "needs": [
+        "app:Lucid"
+      ]
+    },
+    {
+      "id": "S4",
+      "category": "self",
+      "instruction": "Focus the Lucid window. Open the /schedules page via the nav link labelled 'Schedules'. Report how many scheduled tasks are listed and how many of them are currently enabled (the ones with the toggle on). Then go back to chat. Reply 'task complete: lucid schedules total=<T> enabled=<E>'. Do NOT add, edit, delete, run, pause, or resume any schedule.",
+      "needs": [
+        "app:Lucid"
+      ]
+    },
+    {
+      "id": "S5",
+      "category": "self",
+      "instruction": "Focus the Lucid window. In the top header find the theme toggle button (🌙 or ☀️). Read the current theme by checking which icon is showing (☀️ means current theme is dark, 🌙 means current theme is light — the icon shows what you'd switch TO). Click the button ONCE to switch theme; observe the page colours change; then click it AGAIN to switch back to the original theme. Reply 'task complete: lucid theme cycled, original=<light|dark>'.",
+      "needs": [
+        "app:Lucid"
+      ]
+    },
+    {
+      "id": "S6",
+      "category": "self",
+      "instruction": "Focus the Lucid window. Open the /tools page (or 'Tips' / 'tools.md' nav link). Count how many operation tip entries are listed (one per line / bullet) and report it. Then go back to chat. Reply 'task complete: lucid tools=<N> tips'. Do NOT edit or delete any tip.",
+      "needs": [
+        "app:Lucid"
+      ]
+    },
+    {
+      "id": "S7",
+      "category": "self",
+      "instruction": "Focus the Lucid window. Open the /templates page via its nav link. Report the names of all templates currently saved (comma-separated). If none, reply '<empty>'. Then go back to chat. Reply 'task complete: lucid templates=<list-or-empty>'. Do NOT run, edit, delete, or create any template.",
+      "needs": [
+        "app:Lucid"
+      ]
     }
   ],
-  "total": 57
+  "total": 64
 }

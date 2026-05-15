@@ -210,6 +210,196 @@ def _ensure_safety_hooks() -> None:
 
 
 # ---------------------------------------------------------------------------
+# User-click hook — pulse the claw closed when the human (not Lucid) clicks
+# ---------------------------------------------------------------------------
+# Low-level mouse hook detects every system-wide mouse event. We filter
+# ``LLMHF_INJECTED`` so Lucid's own SendInput/mouse_event clicks (which
+# already get the explicit ``pulse_click()`` from ``tools.dispatch``) don't
+# double-trigger. Hook callback runs on the dedicated pump thread; the
+# pulse itself is dispatched to a tiny worker thread so we don't block
+# Windows' input pipeline.
+_WH_MOUSE_LL = 14
+_WM_QUIT = 0x0012
+_WM_LBUTTONDOWN = 0x0201
+_WM_RBUTTONDOWN = 0x0204
+_WM_MBUTTONDOWN = 0x0207
+_WM_XBUTTONDOWN = 0x020B
+_LLMHF_INJECTED = 0x00000001
+_LLMHF_LOWER_IL_INJECTED = 0x00000002
+_USER_CLICK_DOWNS = {
+    _WM_LBUTTONDOWN, _WM_RBUTTONDOWN, _WM_MBUTTONDOWN, _WM_XBUTTONDOWN,
+}
+
+_hook_thread: Optional[threading.Thread] = None
+_hook_thread_id: int = 0
+_hook_handle: int = 0
+# Keep a strong reference to the ctypes callback so it isn't GC'd.
+_hook_proc_ref = None
+_pulse_active = False  # debounce: skip overlapping user pulses
+
+
+class _MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt_x", ctypes.c_long),
+        ("pt_y", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("flags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.c_void_p),
+    ]
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+def _force_cursor_redraw() -> None:
+    """Force Windows to repaint the visible cursor.
+
+    ``SetSystemCursor`` updates the system cursor table but the on-screen
+    pointer only refreshes when something dispatches ``WM_SETCURSOR`` —
+    typically a mouse-move. When the user clicks without moving (very
+    common — they aim, then click) the visible cursor stays stale even
+    though our state changed.
+
+    Trick: post a 0-pixel injected ``MOUSEEVENTF_MOVE`` via ``mouse_event``.
+    Windows treats this as a no-op for position but still walks the cursor
+    refresh path, so the new system cursor becomes visible immediately.
+    The injected event carries ``LLMHF_INJECTED`` so our own hook ignores it.
+    """
+    if not _IS_WINDOWS:
+        return
+    try:
+        # MOUSEEVENTF_MOVE = 0x0001
+        ctypes.windll.user32.mouse_event(0x0001, 0, 0, 0, 0)
+    except Exception:
+        pass
+
+
+def _user_pulse_async() -> None:
+    """Fire-and-forget version of ``pulse_click`` for hooked user clicks.
+
+    Unlike the ``pulse_click`` context manager (which wraps a Lucid action),
+    this just shows the closed jaw for ~``_PULSE_MIN_HOLD_SEC`` then flips
+    back to open, all on a worker thread so the LL hook callback returns
+    immediately (Windows kills hooks that block the input pipeline).
+    """
+    global _pulse_active
+    with _lock:
+        if _pulse_active or _active_count == 0 or _active_kind != "open":
+            return
+        if not _apply_kind("closed"):
+            return
+        _pulse_active = True
+    # Force the visible cursor to repaint right now (user clicked without
+    # moving → no natural WM_SETCURSOR).
+    _force_cursor_redraw()
+
+    def _restore_open() -> None:
+        global _pulse_active
+        try:
+            time.sleep(_PULSE_MIN_HOLD_SEC)
+        finally:
+            with _lock:
+                if _active_count > 0 and _active_kind == "closed":
+                    _apply_kind("open")
+                _pulse_active = False
+            _force_cursor_redraw()
+
+    threading.Thread(target=_restore_open, name="crab-user-pulse", daemon=True).start()
+
+
+def _start_user_click_hook() -> None:
+    """Spin up a daemon thread that owns a low-level mouse hook + msg pump."""
+    global _hook_thread, _hook_thread_id, _hook_handle, _hook_proc_ref
+    if not _IS_WINDOWS or _hook_thread is not None:
+        return
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    HOOKPROC = ctypes.WINFUNCTYPE(
+        ctypes.c_long, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p,
+    )
+
+    def _proc(nCode, wParam, lParam):
+        try:
+            if nCode == 0 and int(wParam) in _USER_CLICK_DOWNS:
+                info = ctypes.cast(lParam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
+                injected = bool(info.flags & (_LLMHF_INJECTED | _LLMHF_LOWER_IL_INJECTED))
+                if not injected:
+                    _user_pulse_async()
+        except Exception:
+            pass
+        return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+    cb = HOOKPROC(_proc)
+
+    ready = threading.Event()
+
+    def _pump() -> None:
+        global _hook_thread_id, _hook_handle
+        _hook_thread_id = kernel32.GetCurrentThreadId()
+        try:
+            user32.SetWindowsHookExW.restype = ctypes.c_void_p
+            user32.SetWindowsHookExW.argtypes = [
+                ctypes.c_int, HOOKPROC, ctypes.c_void_p, ctypes.c_uint,
+            ]
+            hmod = kernel32.GetModuleHandleW(None)
+            handle = user32.SetWindowsHookExW(_WH_MOUSE_LL, cb, hmod, 0)
+            if not handle:
+                return
+            _hook_handle = handle
+        finally:
+            ready.set()
+        # Standard PeekMessage/GetMessage pump. PostThreadMessage(WM_QUIT)
+        # from _stop_user_click_hook will break us out.
+        msg = ctypes.create_string_buffer(64)  # MSG fits in 48B on x64; round up
+        try:
+            while user32.GetMessageW(msg, None, 0, 0) > 0:
+                user32.TranslateMessage(msg)
+                user32.DispatchMessageW(msg)
+        except Exception:
+            pass
+        try:
+            if _hook_handle:
+                user32.UnhookWindowsHookEx(_hook_handle)
+        except Exception:
+            pass
+
+    _hook_proc_ref = cb  # prevent GC
+    _hook_thread = threading.Thread(target=_pump, name="crab-mouse-hook", daemon=True)
+    _hook_thread.start()
+    ready.wait(timeout=2.0)
+    if not _hook_handle:
+        # Failed to install hook — drop references so we can retry next time.
+        _hook_thread = None
+        _hook_thread_id = 0
+        _hook_proc_ref = None
+
+
+def _stop_user_click_hook() -> None:
+    global _hook_thread, _hook_thread_id, _hook_handle, _hook_proc_ref
+    if not _IS_WINDOWS or _hook_thread is None:
+        return
+    try:
+        if _hook_thread_id:
+            ctypes.windll.user32.PostThreadMessageW(
+                _hook_thread_id, _WM_QUIT, 0, 0,
+            )
+    except Exception:
+        pass
+    try:
+        _hook_thread.join(timeout=1.0)
+    except Exception:
+        pass
+    _hook_thread = None
+    _hook_thread_id = 0
+    _hook_handle = 0
+    _hook_proc_ref = None
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 def is_active() -> bool:
@@ -243,17 +433,32 @@ class CrabCursor(AbstractContextManager):
             else:
                 _active_count += 1
                 self._applied_here = True
+        # Outermost CrabCursor turns on the user-click hook so manual clicks
+        # also pulse the claw closed. Best-effort; failure is silent (the
+        # claw indicator still works for Lucid-driven clicks).
+        if self._applied_here and _active_count == 1:
+            try:
+                _start_user_click_hook()
+            except Exception:
+                pass
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
         if not self.enabled or not self._applied_here:
             return None
         global _active_count
+        stopped = False
         with _lock:
             if _active_count > 0:
                 _active_count -= 1
                 if _active_count == 0:
                     _restore()
+                    stopped = True
+        if stopped:
+            try:
+                _stop_user_click_hook()
+            except Exception:
+                pass
         return None
 
 
