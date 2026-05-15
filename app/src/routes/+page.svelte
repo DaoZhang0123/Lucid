@@ -42,13 +42,153 @@
     // Voice dictation sink: when voice.ts gets a result in dictation mode,
     // append the text into the input box (with a leading space if needed).
     setDictationSink((text) => {
-      const sep = instruction && !/\s$/.test(instruction) ? " " : "";
-      instruction = instruction + sep + text;
+      appendDictation(text);
     });
   });
   onDestroy(() => {
     setDictationSink(null);
+    void stopInlineDictation(true).catch(() => {});
   });
+
+  function appendDictation(text: string): void {
+    const sep = instruction && !/\s$/.test(instruction) ? " " : "";
+    instruction = instruction + sep + text;
+  }
+
+  // ---------------- Inline mic button (click to dictate) ----------------
+  // Self-contained MediaRecorder + sidecar_transcribe loop. Independent of
+  // voice.ts's PTT hotkey state machine: no overlay window, no intent
+  // dispatch — always inserts the transcript into the textarea.
+  type DictateState = "idle" | "recording" | "transcribing";
+  let dictateState = $state<DictateState>("idle");
+  let dictateMs = $state(0);
+  let dictateStream: MediaStream | null = null;
+  let dictateRecorder: MediaRecorder | null = null;
+  let dictateChunks: Blob[] = [];
+  let dictateStartedAt = 0;
+  let dictateTickTimer: number | null = null;
+  // Hard cap so an accidentally-left-on mic doesn't run forever.
+  const DICTATE_MAX_MS = 60_000;
+  let dictateHardStopTimer: number | null = null;
+
+  async function toggleInlineDictation(): Promise<void> {
+    if (dictateState === "idle") {
+      await startInlineDictation();
+    } else if (dictateState === "recording") {
+      await stopInlineDictation(false);
+    }
+    // 'transcribing' clicks are ignored (button is disabled).
+  }
+
+  async function startInlineDictation(): Promise<void> {
+    dictateChunks = [];
+    try {
+      dictateStream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (e) {
+      console.error("dictation getUserMedia failed", e);
+      return;
+    }
+    const mimeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg", "audio/mp4"];
+    let chosenMime = "";
+    for (const m of mimeCandidates) {
+      if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) {
+        chosenMime = m;
+        break;
+      }
+    }
+    try {
+      dictateRecorder = chosenMime
+        ? new MediaRecorder(dictateStream, { mimeType: chosenMime, audioBitsPerSecond: 64_000 })
+        : new MediaRecorder(dictateStream, { audioBitsPerSecond: 64_000 });
+    } catch (e) {
+      console.error("dictation MediaRecorder init failed", e);
+      releaseDictateStream();
+      return;
+    }
+    dictateRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) dictateChunks.push(e.data);
+    };
+    dictateRecorder.onstop = () => { void onDictateStop(); };
+    dictateRecorder.onerror = (e) => { console.error("dictation MediaRecorder.onerror", e); };
+    dictateStartedAt = performance.now();
+    dictateRecorder.start();
+    dictateState = "recording";
+    dictateMs = 0;
+    if (dictateTickTimer !== null) clearInterval(dictateTickTimer);
+    dictateTickTimer = window.setInterval(() => {
+      dictateMs = performance.now() - dictateStartedAt;
+    }, 200);
+    if (dictateHardStopTimer !== null) clearTimeout(dictateHardStopTimer);
+    dictateHardStopTimer = window.setTimeout(() => {
+      if (dictateState === "recording") void stopInlineDictation(false);
+    }, DICTATE_MAX_MS);
+  }
+
+  async function stopInlineDictation(silent: boolean): Promise<void> {
+    if (dictateTickTimer !== null) { clearInterval(dictateTickTimer); dictateTickTimer = null; }
+    if (dictateHardStopTimer !== null) { clearTimeout(dictateHardStopTimer); dictateHardStopTimer = null; }
+    if (silent) {
+      // Discard everything, used in onDestroy / hard cancel.
+      try { dictateRecorder?.stop(); } catch { /* noop */ }
+      dictateRecorder = null;
+      dictateChunks = [];
+      releaseDictateStream();
+      dictateState = "idle";
+      return;
+    }
+    if (dictateRecorder && dictateRecorder.state !== "inactive") {
+      try { dictateRecorder.stop(); } catch { /* noop */ }
+    } else {
+      releaseDictateStream();
+      dictateState = "idle";
+    }
+  }
+
+  function releaseDictateStream(): void {
+    if (dictateStream) {
+      try { dictateStream.getTracks().forEach((t) => t.stop()); } catch { /* noop */ }
+      dictateStream = null;
+    }
+  }
+
+  async function onDictateStop(): Promise<void> {
+    releaseDictateStream();
+    const mime = dictateRecorder?.mimeType || "audio/webm";
+    dictateRecorder = null;
+    const blob = new Blob(dictateChunks, { type: mime });
+    dictateChunks = [];
+    if (blob.size === 0) {
+      dictateState = "idle";
+      return;
+    }
+    dictateState = "transcribing";
+    try {
+      const buf = new Uint8Array(await blob.arrayBuffer());
+      const b64 = uint8ToBase64Inline(buf);
+      const result: { text?: string; filtered_reason?: string } = await invoke("sidecar_transcribe", {
+        args: { audioB64: b64, mime, uiLocale: typeof navigator !== "undefined" ? navigator.language || "" : "" },
+      });
+      if (result && result.text && !result.filtered_reason) {
+        appendDictation(result.text.trim());
+      }
+    } catch (e) {
+      console.error("inline dictation transcribe failed", e);
+    } finally {
+      dictateState = "idle";
+      dictateMs = 0;
+    }
+  }
+
+  function uint8ToBase64Inline(arr: Uint8Array): string {
+    const CHUNK = 0x8000;
+    let s = "";
+    for (let i = 0; i < arr.length; i += CHUNK) {
+      s += String.fromCharCode.apply(null, Array.from(arr.subarray(i, i + CHUNK)) as number[]);
+    }
+    return btoa(s);
+  }
 
   // ---------------- Attachments: paste / drag-drop / 📎 button ----------------
 
@@ -522,6 +662,36 @@
             onpaste={onPaste}
             onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chat.running ? cancel() : start(); } }}
           ></textarea>
+          <button type="button"
+                  class="mic mic-{dictateState}"
+                  title={dictateState === "recording"
+                    ? $_("footer.mic_stop_title", { values: { sec: Math.ceil(dictateMs / 1000) } })
+                    : dictateState === "transcribing"
+                      ? $_("footer.mic_transcribing_title")
+                      : $_("footer.mic_start_title")}
+                  aria-label={$_("footer.mic_start_title")}
+                  aria-pressed={dictateState === "recording"}
+                  disabled={dictateState === "transcribing"}
+                  onclick={() => void toggleInlineDictation()}>
+            {#if dictateState === "recording"}
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
+              </svg>
+            {:else if dictateState === "transcribing"}
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke-dasharray="40" stroke-dashoffset="14">
+                  <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite"/>
+                </circle>
+              </svg>
+            {:else}
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="11" rx="3"/>
+                <path d="M5 11a7 7 0 0 0 14 0"/>
+                <path d="M12 18v3"/>
+                <path d="M9 21h6"/>
+              </svg>
+            {/if}
+          </button>
           {#if chat.running}
             <button type="submit" class="stop">{$_("footer.stop_button")}</button>
           {:else}
@@ -708,6 +878,18 @@
                        border: 1px solid #cbd5e1; font-size: 1.1rem; line-height: 1;
                        display: inline-flex; align-items: center; justify-content: center; }
   form button.attach:hover:not(:disabled) { background: #f1f5f9; color: #1e293b; }
+  form button.mic { padding: 0 0.7rem; background: #fff; color: #475569;
+                    border: 1px solid #cbd5e1; line-height: 1;
+                    display: inline-flex; align-items: center; justify-content: center; }
+  form button.mic:hover:not(:disabled) { background: #f1f5f9; color: #1e293b; }
+  form button.mic.mic-recording { background: #fee2e2; color: #b91c1c; border-color: #fca5a5;
+                                  animation: micPulse 1.2s ease-in-out infinite; }
+  form button.mic.mic-transcribing { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe;
+                                     cursor: progress; }
+  @keyframes micPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.45); }
+    50%      { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+  }
   .chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.4rem; }
   .chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.4rem 0.25rem 0.3rem;
           border: 1px solid #cbd5e1; border-radius: 6px; background: #f8fafc; font-size: 0.8rem;

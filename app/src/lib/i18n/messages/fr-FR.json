@@ -52,6 +52,9 @@
     "stop_button": "Arrêter",
     "attach_title": "Joindre images ou fichiers (aussi : coller capture, glisser-déposer)",
     "attach_folder_title": "Joindre un dossier (le chemin est envoyé au modèle ; le contenu n'est pas lu)",
+    "mic_start_title": "Dictée (clic pour enregistrer, re-clic pour arrêter)",
+    "mic_stop_title": "Enregistrement {sec}s — cliquez pour arrêter et transcrire",
+    "mic_transcribing_title": "Transcription…",
     "attach_coming_soon": "Pièces jointes à venir : coller une capture d'écran, déposer des fichiers, etc. Pour démarrer une nouvelle conversation, utilisez le + en haut de la barre latérale gauche.",
     "drop_hint": "Déposez pour joindre"
   },

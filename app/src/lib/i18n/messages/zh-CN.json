@@ -52,6 +52,9 @@
     "stop_button": "停止",
     "attach_title": "附加图片或文件（也可粘贴截图、拖拽文件）",
     "attach_folder_title": "附加一个文件夹（只传路径给模型，不读内容）",
+    "mic_start_title": "语音输入（点击开始录音，再点击停止）",
+    "mic_stop_title": "录音中 {sec}s — 点击停止并转写",
+    "mic_transcribing_title": "转写中…",
     "attach_coming_soon": "附件功能开发中：很快支持粘贴截图、拖入文件等。新建对话请用左侧栏顶部的 +。",
     "drop_hint": "松开以附加文件"
   },

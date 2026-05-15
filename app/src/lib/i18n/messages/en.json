@@ -52,6 +52,9 @@
     "stop_button": "Stop",
     "attach_title": "Attach images or files (also: paste screenshots, drag-drop)",
     "attach_folder_title": "Attach a folder (path is sent to the model; folder content is not read)",
+    "mic_start_title": "Dictate (click to record, click again to stop)",
+    "mic_stop_title": "Recording {sec}s — click to stop and transcribe",
+    "mic_transcribing_title": "Transcribing…",
     "attach_coming_soon": "Attachments coming soon: paste a screenshot, drop files, etc. To start a new conversation use the + at the top of the left sidebar.",
     "drop_hint": "Drop to attach"
   },
