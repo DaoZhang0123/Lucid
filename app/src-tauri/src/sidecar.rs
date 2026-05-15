@@ -835,6 +835,11 @@ pub struct VoicePatch {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+pub struct UiPatch {
+    pub locale: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SettingsPatch {
     pub provider: Option<String>,
     pub temperature: Option<f64>,
@@ -844,6 +849,7 @@ pub struct SettingsPatch {
     pub anthropic: Option<ProviderAnthropicPatch>,
     pub copilot: Option<ProviderCopilotPatch>,
     pub voice: Option<VoicePatch>,
+    pub ui: Option<UiPatch>,
 }
 
 /// Apply a partial patch to config.toml in-place using simple line rewriting
@@ -896,6 +902,9 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
         if let Some(v) = &p.overlay_y_offset_px{ want.entry("[voice]").or_default().push(("overlay_y_offset_px",format!("{}", v))); }
         if let Some(v) = &p.keep_audio         { want.entry("[voice]").or_default().push(("keep_audio",         if *v {"true".into()} else {"false".into()})); }
         if let Some(v) = &p.hf_endpoint        { want.entry("[voice]").or_default().push(("hf_endpoint",        v.clone())); }
+    }
+    if let Some(p) = &patch.ui {
+        if let Some(v) = &p.locale { want.entry("[ui]").or_default().push(("locale", v.clone())); }
     }
 
     // Group existing file into sections (preserving order). Index 0 is the

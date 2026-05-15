@@ -35,7 +35,7 @@
   },
   "chat": {
     "role_user": "Vous",
-    "role_assistant": "Agent · étape {step}",
+    "role_assistant": "Lucid · étape {step}",
     "step_unknown": "?",
     "image_meta": "📷 étape {step} · {level}",
     "image_loading": "chargement…",
@@ -47,7 +47,7 @@
   },
   "footer": {
     "new_thread_title": "Nouvelle conversation (efface le chat actuel ; annule l'exécution active)",
-    "input_placeholder": "Dites à l'Agent quoi faire… Entrée pour envoyer, Maj+Entrée pour saut de ligne",
+    "input_placeholder": "Dites à Lucid quoi faire… Entrée pour envoyer, Maj+Entrée pour saut de ligne",
     "send_button": "Envoyer",
     "stop_button": "Arrêter",
     "attach_title": "Joindre images ou fichiers (aussi : coller capture, glisser-déposer)",
@@ -174,7 +174,8 @@
     "about_star_button": "Mettre une étoile sur GitHub",
     "about_follow_button": "Suivre l'auteur",
     "about_email_label": "E-mail",
-    "about_x_label": "X (Twitter)"
+    "about_x_label": "X (Twitter)",
+    "about_zhihu_label": "Zhihu"
   },
   "common": {
     "back": "‹ Retour"

@@ -400,6 +400,17 @@ class SkillsConfig:
 
 
 @dataclass
+class UIConfig:
+    """User-interface preferences shared between the Tauri app and the sidecar."""
+    # ISO locale tag chosen in /settings (e.g. "en", "zh-CN", "fr-FR").
+    # "" or "auto" = detect from the OS user locale at runtime.
+    # Used by the system prompt so the LLM defaults to replying in the same
+    # language the user reads the app in (still adapts when the query itself
+    # is clearly in a different language).
+    locale: str = "auto"
+
+
+@dataclass
 class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     screenshot: ScreenshotConfig = field(default_factory=ScreenshotConfig)
@@ -418,6 +429,7 @@ class Config:
     doze: DozeConfig = field(default_factory=DozeConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
+    ui: UIConfig = field(default_factory=UIConfig)
 
 
 def _apply(dc: Any, raw: dict[str, Any] | None) -> Any:
@@ -474,4 +486,5 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.doze, raw.get("doze"))
     _apply(cfg.voice, raw.get("voice"))
     _apply(cfg.skills, raw.get("skills"))
+    _apply(cfg.ui, raw.get("ui"))
     return cfg

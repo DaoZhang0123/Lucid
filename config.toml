@@ -217,3 +217,9 @@ max_bytes = 32768
 # prompt. Disable to keep the prompt smaller (the agent can still use
 # `list_skills` to enumerate them on demand).
 inject_in_system_prompt = true
+
+
+# 注：界面语言（[ui].locale）不在这里配置。
+# 它由 App 内 /设置 → 通用 → 语言 直接管理：选择后会自动写入
+# ~/.lucid/config.toml 的 [ui] 段，sidecar 下次构建 system prompt 时读取。
+# 想改语言请去设置页，不要手改这个模板（升级会被覆盖）。

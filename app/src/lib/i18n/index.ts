@@ -50,7 +50,15 @@ function readStoredLocale(): string | null {
   }
 }
 
-/** Persist the user-selected locale; fail-soft if storage is unavailable. */
+/** Persist the user-selected locale; fail-soft if storage is unavailable.
+ *
+ * Also pushes the new value into config.toml `[ui].locale` via the sidecar's
+ * `write_settings` command so the Python loop can use it inside the system
+ * prompt (so the LLM defaults to replying in the user's chosen UI language).
+ * Both writes are best-effort; failures are silent (e.g. private browsing
+ * disables localStorage; sidecar might still be spawning on first boot —
+ * the next change will succeed).
+ */
 export function saveLocale(value: string): void {
   if (!browser) return;
   try {
@@ -58,6 +66,16 @@ export function saveLocale(value: string): void {
   } catch {
     /* private mode / disabled storage — silently ignore */
   }
+  // Mirror to config.toml [ui].locale (async, fire-and-forget).
+  // Dynamic import keeps the i18n module independent of Tauri at SSR time.
+  void (async () => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("write_settings", { patch: { ui: { locale: value } } });
+    } catch {
+      /* sidecar not up yet, or non-Tauri context — ignore */
+    }
+  })();
 }
 
 /** Initialise svelte-i18n once. Safe to call multiple times. */

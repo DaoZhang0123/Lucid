@@ -35,7 +35,7 @@
   },
   "chat": {
     "role_user": "You",
-    "role_assistant": "Agent · step {step}",
+    "role_assistant": "Lucid · step {step}",
     "step_unknown": "?",
     "image_meta": "📷 step {step} · {level}",
     "image_loading": "loading…",
@@ -47,7 +47,7 @@
   },
   "footer": {
     "new_thread_title": "New conversation (clears current chat; cancels active run first)",
-    "input_placeholder": "Tell the Agent what to do… Enter to send, Shift+Enter for newline",
+    "input_placeholder": "Tell Lucid what to do… Enter to send, Shift+Enter for newline",
     "send_button": "Send",
     "stop_button": "Stop",
     "attach_title": "Attach images or files (also: paste screenshots, drag-drop)",
@@ -174,7 +174,8 @@
     "about_star_button": "Star on GitHub",
     "about_follow_button": "Follow author",
     "about_email_label": "Email",
-    "about_x_label": "X (Twitter)"
+    "about_x_label": "X (Twitter)",
+    "about_zhihu_label": "Zhihu"
   },
   "common": {
     "back": "‹ Back"

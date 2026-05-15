@@ -754,6 +754,10 @@
               <span class="contact-label">{$_("settings.about_x_label")}:</span>
               <a href="https://x.com/zhangdao439566" target="_blank" rel="noreferrer">@zhangdao439566</a>
             </li>
+            <li>
+              <span class="contact-label">{$_("settings.about_zhihu_label")}:</span>
+              <a href="https://www.zhihu.com/people/zhang-dao-68" target="_blank" rel="noreferrer">@zhang-dao-68</a>
+            </li>
           </ul>
         </section>
       {/if}

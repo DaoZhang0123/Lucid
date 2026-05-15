@@ -8,6 +8,10 @@ The prompt is split into three sections:
   so we don't lie to the model about whether clicks are previewed first.
 * :data:`SYSTEM_PROMPT_TAIL` — guidance on tools.md / memory.md and the
   `learn_tip` / `remember` meta tools.
+* An :data:`IDENTITY_SECTION` — appended last — tells the model its own
+  display name (Lucid / 明眸) and the user's preferred reply language
+  (resolved STRICTLY from ``cfg.ui.locale`` — the language the user picked
+  in the Lucid app's /settings page; this is NOT the Windows system locale).
 
 :func:`build_system_prompt` is the only public entry point used by ``loop.py``.
 """
@@ -248,6 +252,69 @@ Long-term memory:
 """
 
 
+def _detect_os_locale() -> str:
+    """DEPRECATED — Lucid only ships en / zh-CN / fr-FR translations and the
+    user-facing language is owned by ``cfg.ui.locale`` (set in /settings →
+    General → Language). Unsupported / missing values now clamp to English in
+    :func:`_identity_section` directly; this stub is retained only so any
+    out-of-tree caller still resolves a string.
+    """
+    return "en"
+
+
+# Map a Lucid UI locale tag to (display name in that language, English name)
+# so the identity line reads naturally regardless of which locale the user
+# picked. Keys are exactly the SUPPORTED_LOCALES values from
+# app/src/lib/i18n/index.ts ("en", "zh-CN", "fr-FR"), normalised to lowercase.
+_LOCALE_NAME_MAP = {
+    "en": ("Lucid", "Lucid"),
+    "zh-cn": ("\u660e\u7738", "Lucid"),  # 明眸
+    "fr-fr": ("Lucid", "Lucid"),
+}
+
+
+def _identity_section(cfg: Any) -> str:
+    """Build the runtime identity + language preference block.
+
+    Reads ``cfg.ui.locale`` — the language the user picked in the Lucid app's
+    /settings page (NOT the Windows system locale). Lucid currently supports
+    ``en``, ``zh-CN``, and ``fr-FR``; anything else (or "auto") falls back to
+    English.
+    """
+    raw = ""
+    try:
+        raw = (getattr(getattr(cfg, "ui", None), "locale", "") or "").strip()
+    except Exception:
+        pass
+    # Clamp to the three locales Lucid actually ships translations for; anything
+    # else (including "auto" / "system" / unsupported tags like "ja", "de", …)
+    # falls back to English so the prompt never advertises a language Lucid's UI
+    # doesn't support.
+    SUPPORTED = {"en", "zh-cn", "fr-fr"}
+    tag = raw.lower()
+    if tag not in SUPPORTED:
+        # Allow bare primary tags as aliases for their supported regional form.
+        primary_alias = {"zh": "zh-cn", "fr": "fr-fr"}.get(tag.split("-")[0])
+        tag = primary_alias if primary_alias else "en"
+        raw = tag
+    primary = tag.split("-")[0]
+    display, en_name = _LOCALE_NAME_MAP.get(tag, ("Lucid", "Lucid"))
+    # Friendly language name for the prompt sentence.
+    lang_name = {
+        "zh": "Simplified Chinese (\u7b80\u4f53\u4e2d\u6587)",
+        "en": "English",
+        "fr": "French (Fran\u00e7ais)",
+    }[primary]
+    return f"""\
+
+Identity & language:
+- **Your name is "{en_name}" (Chinese: \u660e\u7738 / "Mingmou").** When the user asks who you are, refer to a previous conversation, or you need to mention yourself in third person, call yourself "{display}". Do NOT say "I am an AI assistant", "I am Claude", "I am GPT", or invent a different name. If long-term memory (memory.md) records a different self-name the user explicitly assigned (e.g. "from now on call yourself X"), that user-set name OVERRIDES this default.
+- **The user's preferred reply language is {lang_name}**, taken from the Lucid app's UI language picker (`/settings` \u2192 General \u2192 Language; stored as `cfg.ui.locale = "{raw}"`). This is the language the user reads the Lucid window in \u2014 it is NOT necessarily the Windows system language. When you write assistant_text intended for the user (greetings, questions, status updates, the final `task complete:` / `task failed:` line, the human-readable part of any answer), default to this language.
+- **Adapt to the query's language when it clearly differs.** If the user writes in a different language than the UI default, mirror the user's language for that reply (and for any follow-ups in the same thread, until they switch back). A one-word English token inside an otherwise-Chinese sentence is NOT a switch \u2014 only switch when the entire question is in another language.
+- Tool-call arguments, file paths, shell commands, code, and the literal prefixes `task complete:` / `task failed:` stay in English regardless of the reply language.
+"""
+
+
 def build_system_prompt(cfg: Any) -> str:
     """Assemble the system prompt, picking the click-protocol section that
     matches the current ``safety.verify_click_target_before`` setting so we
@@ -255,4 +322,4 @@ def build_system_prompt(cfg: Any) -> str:
     """
     two_phase = bool(getattr(getattr(cfg, "safety", None), "verify_click_target_before", False))
     click_section = TWO_PHASE_CLICK_SECTION if two_phase else SINGLE_PHASE_CLICK_SECTION
-    return SYSTEM_PROMPT_HEAD + click_section + SYSTEM_PROMPT_TAIL
+    return SYSTEM_PROMPT_HEAD + click_section + SYSTEM_PROMPT_TAIL + _identity_section(cfg)
