@@ -74,6 +74,13 @@ class ComputerTool:
         # 没有任何可点击的坐标系。L0 (icon_atlas) 不会被装入这里 — 它是
         # 合成图，没有屏幕偏移。
         self.last_capture: Capture | None = None
+        # Separately remember the most recent L1/L2 ("macro") capture so a
+        # tiny L3 cursor_local taken just to *verify* a click doesn't shrink
+        # the validator's accepted coordinate domain. Without this, the
+        # model after an L3 has to either re-screenshot a full window or
+        # restrict every click to a 893x112 tile around the previous
+        # cursor position — which is almost never what it actually wants.
+        self.last_macro_capture: Capture | None = None
 
     # ----- 暴露给 LLM 的工具 schema -----
     def tool_param(self, screen_w: int, screen_h: int) -> dict[str, Any]:
@@ -319,6 +326,43 @@ class ComputerTool:
                     flush=True,
                 )
                 return None
+            # L3 cursor_local fallback: a tiny verification tile must NOT
+            # shrink the accepted coordinate domain. If the click doesn't
+            # fit the L3 frame, transparently retry against the most
+            # recent L1/L2 capture — that's almost always what the model
+            # was actually targeting (it took the L3 just to "look at the
+            # cursor", not to redefine where it can click).
+            macro = self.last_macro_capture
+            if (
+                cap.level is ScreenLevel.L3
+                and macro is not None
+                and macro is not cap
+            ):
+                msw, msh = macro.sent_size
+                if 0 <= ix < msw and 0 <= iy < msh:
+                    self.last_capture = macro
+                    print(
+                        f"[coord_l3_fallback] {action} ({ix},{iy}) outside "
+                        f"L3 {cap.sent_size} but inside L{macro.level.value} "
+                        f"macro frame {macro.sent_size}; reverting active "
+                        f"frame to the macro capture.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return None
+                madj = self._maybe_unscreen_coord(macro, ix, iy)
+                if madj is not None:
+                    params["coordinate"] = [madj[0], madj[1]]
+                    self.last_capture = macro
+                    print(
+                        f"[coord_l3_fallback] {action} ({ix},{iy}) screen-pixel "
+                        f"-> ({madj[0]},{madj[1]}) image-pixel against macro "
+                        f"capture (level={macro.level.value} sent={macro.sent_size} "
+                        f"offset={macro.offset}).",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return None
             ox, oy = cap.offset
             rw, rh = cap.raw_size
             return ToolResult(error=(
@@ -436,6 +480,10 @@ class ComputerTool:
             # detects this via cap.level / cap.offset is None.
             if level is not ScreenLevel.L0:
                 self.last_capture = cap
+                # Track macro frames separately so click validation can
+                # fall back to them after a tiny L3 verification capture.
+                if level in (ScreenLevel.L1, ScreenLevel.L2):
+                    self.last_macro_capture = cap
             tag = {
                 ScreenLevel.L0: "L0/icon_atlas",
                 ScreenLevel.L1: "L1/fullscreen",

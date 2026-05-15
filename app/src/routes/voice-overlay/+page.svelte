@@ -34,22 +34,39 @@
     maxMs?: number;
     /** result: transcribed text */
     text?: string;
-    /** result: agent | dictation */
-    mode?: "agent" | "dictation";
+    /** result: agent | dictation | auto */
+    mode?: "thread_new" | "dictation_append" | "auto";
     /** error: short reason to display */
     error?: string;
     /** result: countdown until auto-dismiss (ms) */
     autoDismissMs?: number;
+    /** result: dispatched intent (Docs/voice-input.md §5.2) */
+    intent?: "thread_new" | "thread_abort" | "dictation_append";
+    /** result: classifier confidence */
+    confidence?: "high" | "medium" | "low";
+    /** result: short rationale from the classifier */
+    reason?: string;
+    /** result: whether the host will auto-commit (controls ✓ vs auto-dismiss) */
+    autoSend?: boolean;
+    /** result: render the three intent-pick chips (low confidence + !autoSend) */
+    showChips?: boolean;
   };
+
+  type DispatchIntent = "thread_new" | "thread_abort" | "dictation_append";
 
   let state = $state<OverlayState>("holding");
   let holdProgress = $state(0);
   let recordingMs = $state(0);
   let maxMs = $state(30000);
   let text = $state("");
-  let mode = $state<"agent" | "dictation">("agent");
+  let mode = $state<"thread_new" | "dictation_append" | "auto">("auto");
   let error = $state("");
   let autoDismissMs = $state(0);
+  let intent = $state<DispatchIntent>("thread_new");
+  let confidence = $state<"high" | "medium" | "low">("high");
+  let reason = $state("");
+  let autoSend = $state(true);
+  let showChips = $state(false);
 
   // wave-form bars driven by a self-running timer when recording — no real
   // PCM hooked up here (audio capture happens in the main window's voice.ts);
@@ -84,6 +101,11 @@
       if (p.mode) mode = p.mode;
       if (typeof p.error === "string") error = p.error;
       if (typeof p.autoDismissMs === "number") autoDismissMs = p.autoDismissMs;
+      if (p.intent) intent = p.intent;
+      if (p.confidence) confidence = p.confidence;
+      if (typeof p.reason === "string") reason = p.reason;
+      if (typeof p.autoSend === "boolean") autoSend = p.autoSend;
+      if (typeof p.showChips === "boolean") showChips = p.showChips;
     });
   });
 
@@ -118,8 +140,38 @@
   function onRetry() { emitFromOverlay("retry"); }
   function onClose() { emitFromOverlay("close"); }
   function onToggleMode() {
-    mode = mode === "agent" ? "dictation" : "agent";
+    mode = mode === "thread_new" ? "dictation_append" : "thread_new";
     emitFromOverlay("set_mode", { mode });
+  }
+  function onPickIntent(next: DispatchIntent) {
+    intent = next;
+    confidence = "high";
+    emitFromOverlay("pick_intent", { intent: next });
+  }
+  function onCommit() {
+    emitFromOverlay("commit");
+  }
+
+  // Pretty label + icon for the dispatch chips and result header.
+  function intentIcon(i: DispatchIntent): string {
+    if (i === "thread_new") return "\u{1F916}"; // robot
+    if (i === "thread_abort") return "\u23F9"; // stop
+    return "\u2328"; // keyboard
+  }
+  function intentLabel(i: DispatchIntent): string {
+    if (i === "thread_new") return "New task";
+    if (i === "thread_abort") return "Stop task";
+    return "Dictation";
+  }
+  function intentAccent(i: DispatchIntent): string {
+    if (i === "thread_new") return "#22c55e";
+    if (i === "thread_abort") return "#ef4444";
+    return "#3b82f6";
+  }
+  function intentGlow(i: DispatchIntent): string {
+    if (i === "thread_new") return "#86efac";
+    if (i === "thread_abort") return "#fca5a5";
+    return "#93c5fd";
   }
 
   // Pretty-print mm:ss countdown for the recording state.
@@ -179,7 +231,7 @@
       style="background: radial-gradient(circle at 30% 30%, {glow}, {accent}); box-shadow: 0 0 18px {accent}66;"
     >
       {#if stateName === "result"}
-        <span class="orb-icon">{mode === "agent" ? "🤖" : "⌨"}</span>
+        <span class="orb-icon">{intentIcon(intent)}</span>
       {:else if stateName === "error"}
         <span class="orb-icon">!</span>
       {:else if stateName === "too_short"}
@@ -219,20 +271,50 @@
       <div class="sub">Whisper is working locally</div>
     </div>
   {:else if state === "result"}
-    {@render orb(state, 1, mode === "agent" ? "#22c55e" : "#3b82f6", mode === "agent" ? "#86efac" : "#93c5fd")}
+    {@render orb(state, 1, intentAccent(intent), intentGlow(intent))}
     <div class="info" data-tauri-drag-region>
       <div class="title-row">
-        <span class="title small">{mode === "agent" ? "Sending to agent" : "Inserting"}</span>
+        <span class="title small">{intentLabel(intent)}</span>
+        {#if confidence !== "high"}
+          <span class="conf" title={reason}>?</span>
+        {/if}
       </div>
       <div class="result-text" title={text}>{text || "(empty)"}</div>
+      {#if showChips}
+        <div class="chip-row">
+          <button
+            type="button"
+            class="chip"
+            class:active={intent === "thread_new"}
+            style="--chip-accent: {intentAccent('thread_new')};"
+            onclick={() => onPickIntent("thread_new")}
+            title="Start a new agent task"
+          >{intentIcon("thread_new")} {intentLabel("thread_new")}</button>
+          <button
+            type="button"
+            class="chip"
+            class:active={intent === "thread_abort"}
+            style="--chip-accent: {intentAccent('thread_abort')};"
+            onclick={() => onPickIntent("thread_abort")}
+            title="Cancel the running task"
+          >{intentIcon("thread_abort")} {intentLabel("thread_abort")}</button>
+          <button
+            type="button"
+            class="chip"
+            class:active={intent === "dictation_append"}
+            style="--chip-accent: {intentAccent('dictation_append')};"
+            onclick={() => onPickIntent("dictation_append")}
+            title="Insert into the focused input"
+          >{intentIcon("dictation_append")} {intentLabel("dictation_append")}</button>
+        </div>
+      {/if}
     </div>
-    <button
-      class="ctl mode"
-      type="button"
-      title={mode === "agent" ? "Switch to dictation" : "Switch to agent mode"}
-      onclick={onToggleMode}
-    >{mode === "agent" ? "⌨" : "🤖"}</button>
-    <button class="ctl close" type="button" title="Cancel (don't send)" onclick={onCancel}>✗</button>
+    {#if autoSend}
+      <button class="ctl close" type="button" title="Cancel" onclick={onCancel}>✗</button>
+    {:else}
+      <button class="ctl mode" type="button" title="Send now" onclick={onCommit}>✓</button>
+      <button class="ctl close" type="button" title="Cancel (don't send)" onclick={onCancel}>✗</button>
+    {/if}
   {:else if state === "too_short"}
     {@render orb(state, 1, "#f59e0b", "#fcd34d")}
     <div class="info warn" data-tauri-drag-region>
@@ -270,13 +352,15 @@
     font: 13px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif;
     padding: 10px 14px 10px 10px;
     box-sizing: border-box;
-    background: rgba(15, 23, 42, 0.78);
+    background: rgba(15, 23, 42, 0.96);
     backdrop-filter: blur(14px) saturate(140%);
     -webkit-backdrop-filter: blur(14px) saturate(140%);
     border-radius: 20px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+    border: 0;
+    outline: none;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
     cursor: grab;
+    overflow: hidden;
   }
   .overlay-root:active { cursor: grabbing; }
 
@@ -386,8 +470,53 @@
   }
   .btn-row .mini:hover { background: rgba(255, 255, 255, 0.20); }
 
+  .conf {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: rgba(245, 158, 11, 0.25);
+    color: #fcd34d;
+    font-size: 10px;
+    font-weight: 700;
+    margin-left: 6px;
+    cursor: help;
+  }
+
+  .chip-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #f8fafc;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 11px;
+    white-space: nowrap;
+    transition: background 120ms, border-color 120ms;
+  }
+  .chip:hover {
+    background: color-mix(in srgb, var(--chip-accent) 22%, transparent);
+    border-color: color-mix(in srgb, var(--chip-accent) 55%, transparent);
+  }
+  .chip.active {
+    background: color-mix(in srgb, var(--chip-accent) 28%, transparent);
+    border-color: var(--chip-accent);
+  }
   .overlay-root[data-state="error"] {
-    border-color: rgba(220, 38, 38, 0.6);
+    border: 0;
     background: rgba(80, 20, 20, 0.85);
+    box-shadow: 0 6px 18px rgba(220, 38, 38, 0.35);
   }
 </style>

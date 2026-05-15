@@ -34,20 +34,108 @@
   let topP = $state<number>(1.0);
   let emergencyHotkey = $state("ctrl+alt+esc");
 
+  // ---- hotkey capture -----------------------------------------------
+  // Tracks which hotkey input is currently capturing key presses, so the
+  // shared keydown handler knows whether to write into emergencyHotkey or
+  // vHotkey. Set on focus, cleared on blur. We don't try to be a full
+  // global recorder — the user clicks the field and presses the combo.
+  let capturingHotkeyFor = $state<"emergency" | "voice" | null>(null);
+
+  // Normalise a Tauri-compatible accelerator string from a KeyboardEvent.
+  // Format: lower-case modifiers joined by '+', then the main key.
+  // Returns null if the event is just a modifier (Shift / Ctrl / Alt /
+  // Meta) on its own — we wait for a real key.
+  function eventToHotkey(e: KeyboardEvent): string | null {
+    const code = e.code; // physical key, locale-independent
+    const key = e.key;
+    // Skip pure-modifier presses.
+    if (
+      key === "Control" || key === "Shift" || key === "Alt" ||
+      key === "Meta" || key === "OS" || key === "Hyper" || key === "Super" ||
+      key === "AltGraph"
+    ) {
+      return null;
+    }
+    const mods: string[] = [];
+    if (e.ctrlKey) mods.push("ctrl");
+    if (e.altKey) mods.push("alt");
+    if (e.shiftKey) mods.push("shift");
+    if (e.metaKey) mods.push("meta");
+
+    let main = "";
+    if (code.startsWith("Key")) {
+      main = code.slice(3).toLowerCase();          // KeyA → a
+    } else if (code.startsWith("Digit")) {
+      main = code.slice(5);                         // Digit1 → 1
+    } else if (code.startsWith("Numpad")) {
+      main = "num" + code.slice(6).toLowerCase();   // NumpadEnter → numenter
+    } else if (code.startsWith("Arrow")) {
+      main = code.slice(5).toLowerCase();           // ArrowLeft → left
+    } else if (/^F\d{1,2}$/.test(code)) {
+      main = code.toLowerCase();                    // F9 → f9
+    } else {
+      // Common named keys → tauri global-shortcut accelerator names.
+      const named: Record<string, string> = {
+        "Space": "Space",
+        "Enter": "Return",
+        "Escape": "Escape",
+        "Backspace": "Backspace",
+        "Tab": "Tab",
+        "Delete": "Delete",
+        "Home": "Home",
+        "End": "End",
+        "PageUp": "PageUp",
+        "PageDown": "PageDown",
+        "Insert": "Insert",
+        "Minus": "-",
+        "Equal": "=",
+        "BracketLeft": "[",
+        "BracketRight": "]",
+        "Backslash": "\\",
+        "Semicolon": ";",
+        "Quote": "'",
+        "Comma": ",",
+        "Period": ".",
+        "Slash": "/",
+        "Backquote": "`",
+      };
+      main = named[code] ?? key;
+    }
+    if (!main) return null;
+    return mods.length ? mods.join("+") + "+" + main : main;
+  }
+
+  function onHotkeyKeydown(target: "emergency" | "voice", e: KeyboardEvent): void {
+    if (capturingHotkeyFor !== target) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const combo = eventToHotkey(e);
+    if (!combo) return; // pure modifier, keep waiting
+    if (target === "emergency") emergencyHotkey = combo;
+    else vHotkey = combo;
+    // Drop focus so the user can immediately Save without re-pressing.
+    (e.currentTarget as HTMLInputElement | null)?.blur();
+  }
+
   // ---- voice ---------------------------------------------------------
   let vEnabled = $state(false);
   let vEngine = $state("faster-whisper");
   let vModelSize = $state("tiny");
-  let vLanguage = $state("");
+  let vLanguage = $state("auto");
   let vHotkey = $state("Space");
   let vHoldThresholdMs = $state(5000);
   let vStopMode = $state("tap_again");
   let vStartFeedback = $state("beep");
-  let vMode = $state("agent");
-  let vAlwaysNewThread = $state(false);
+  let vMode = $state("auto");
+  let vAutoSend = $state(false);
   let vMaxSeconds = $state(30);
-  let vOverlayScreen = $state("cursor");
   let vHfEndpoint = $state("");
+  // Preset selection for the HF endpoint dropdown. Stays in sync with
+  // `vHfEndpoint` (saved value): empty string means "auto fallback",
+  // a known mirror URL selects that preset, anything else picks
+  // "custom" and reveals the URL field.
+  const HF_ENDPOINT_PRESETS = new Set(["", "https://hf-mirror.com", "https://huggingface.tuna.tsinghua.edu.cn", "https://huggingface.co"]);
+  let vHfEndpointPreset = $state("");
   let voiceSaving = $state(false);
   let voiceSavedAt = $state("");
   let voiceError = $state("");
@@ -116,7 +204,7 @@
           stop_mode: string;
           start_feedback: string;
           mode: string;
-          always_new_thread: boolean | null;
+          auto_send: boolean | null;
           max_seconds: number | null;
           overlay_screen: string;
           hf_endpoint: string;
@@ -147,16 +235,31 @@
         if (typeof v.enabled === "boolean") vEnabled = v.enabled;
         if (v.engine) vEngine = v.engine;
         if (v.model_size) vModelSize = v.model_size;
-        if (typeof v.language === "string") vLanguage = v.language;
+        if (typeof v.language === "string") {
+          const lang = v.language.trim().toLowerCase();
+          // Only en / zh / fr are supported transcription targets (matches
+          // sidecar's lucid.voice.SUPPORTED_LANGS). Any other value
+          // ("", "system", "detect", legacy two-letter codes) collapses
+          // to "auto" so the dropdown displays a valid option.
+          vLanguage = (lang === "en" || lang === "zh" || lang === "fr") ? lang : "auto";
+        }
         if (v.hotkey) vHotkey = v.hotkey;
         if (typeof v.hold_threshold_ms === "number") vHoldThresholdMs = v.hold_threshold_ms;
         if (v.stop_mode) vStopMode = v.stop_mode;
         if (v.start_feedback) vStartFeedback = v.start_feedback;
-        if (v.mode) vMode = v.mode;
-        if (typeof v.always_new_thread === "boolean") vAlwaysNewThread = v.always_new_thread;
+        if (v.mode) {
+          // Back-compat: rename the legacy hard-mode values.
+          const m = v.mode === "agent" ? "thread_new"
+                  : v.mode === "dictation" ? "dictation_append"
+                  : v.mode;
+          vMode = m;
+        }
+        if (typeof v.auto_send === "boolean") vAutoSend = v.auto_send;
         if (typeof v.max_seconds === "number") vMaxSeconds = v.max_seconds;
-        if (v.overlay_screen) vOverlayScreen = v.overlay_screen;
-        if (typeof v.hf_endpoint === "string") vHfEndpoint = v.hf_endpoint;
+        if (typeof v.hf_endpoint === "string") {
+          vHfEndpoint = v.hf_endpoint;
+          vHfEndpointPreset = HF_ENDPOINT_PRESETS.has(v.hf_endpoint) ? v.hf_endpoint : "custom";
+        }
       }
     } catch (e) {
       error = String(e);
@@ -199,6 +302,16 @@
     }
   }
 
+  function onHfPresetChange() {
+    // Built-in presets overwrite the saved URL; "custom" keeps whatever
+    // the user previously typed (or starts blank if they had a preset).
+    if (vHfEndpointPreset !== "custom") {
+      vHfEndpoint = vHfEndpointPreset;
+    } else if (HF_ENDPOINT_PRESETS.has(vHfEndpoint)) {
+      vHfEndpoint = "";
+    }
+  }
+
   async function saveVoice() {
     voiceSaving = true;
     voiceError = "";
@@ -216,9 +329,8 @@
             stop_mode: vStopMode,
             start_feedback: vStartFeedback,
             mode: vMode,
-            always_new_thread: vAlwaysNewThread,
+            auto_send: vAutoSend,
             max_seconds: vMaxSeconds,
-            overlay_screen: vOverlayScreen,
             hf_endpoint: vHfEndpoint,
           },
         },
@@ -399,7 +511,16 @@
           <p class="hint">{$_("settings.language_hint")}</p>
           <label>
             {$_("settings.emergency_hotkey_label")}
-            <input type="text" bind:value={emergencyHotkey} placeholder="ctrl+alt+esc" />
+            <input
+              type="text"
+              readonly
+              bind:value={emergencyHotkey}
+              placeholder={capturingHotkeyFor === "emergency" ? $_("settings.hotkey_capture_listening") : "ctrl+alt+esc"}
+              onfocus={() => { capturingHotkeyFor = "emergency"; }}
+              onblur={() => { if (capturingHotkeyFor === "emergency") capturingHotkeyFor = null; }}
+              onkeydown={(e) => onHotkeyKeydown("emergency", e)}
+              title={$_("settings.hotkey_capture_hint")}
+            />
           </label>
           <p class="hint">{$_("settings.emergency_hotkey_hint")}</p>
           <div class="row">
@@ -493,8 +614,6 @@
             {$_("settings.voice_engine_label")}
             <select bind:value={vEngine}>
               <option value="faster-whisper">faster-whisper (CPU/GPU)</option>
-              <option value="sherpa-onnx">sherpa-onnx (experimental)</option>
-              <option value="vosk">vosk (experimental)</option>
             </select>
           </label>
           <label>
@@ -522,13 +641,29 @@
           <p class="hint">{$_("settings.voice_model_download_hint")}</p>
           <label>
             {$_("settings.voice_language_label")}
-            <input type="text" bind:value={vLanguage} placeholder={$_("settings.voice_language_placeholder")} />
+            <select bind:value={vLanguage}>
+              <option value="auto">{$_("settings.voice_language_opt_auto")}</option>
+              <option value="en">{$_("settings.voice_language_opt_en")}</option>
+              <option value="zh">{$_("settings.voice_language_opt_zh")}</option>
+              <option value="fr">{$_("settings.voice_language_opt_fr")}</option>
+            </select>
           </label>
+          <p class="hint">{$_("settings.voice_language_hint")}</p>
 
           <label>
             {$_("settings.voice_hotkey_label")}
-            <input type="text" bind:value={vHotkey} placeholder="Space | ctrl+shift+v" />
+            <input
+              type="text"
+              readonly
+              bind:value={vHotkey}
+              placeholder={capturingHotkeyFor === "voice" ? $_("settings.hotkey_capture_listening") : "Space | ctrl+shift+v"}
+              onfocus={() => { capturingHotkeyFor = "voice"; }}
+              onblur={() => { if (capturingHotkeyFor === "voice") capturingHotkeyFor = null; }}
+              onkeydown={(e) => onHotkeyKeydown("voice", e)}
+              title={$_("settings.hotkey_capture_hint")}
+            />
           </label>
+          <p class="hint">{$_("settings.hotkey_capture_hint")}</p>
           {#if vHotkey.trim().toLowerCase() === "space" || vHotkey.trim().toLowerCase() === "spacebar"}
             <p class="hint">{$_("settings.voice_hotkey_space_hint")}</p>
           {/if}
@@ -543,47 +678,53 @@
           <label>
             {$_("settings.voice_stop_mode_label")}
             <select bind:value={vStopMode}>
-              <option value="release">release</option>
-              <option value="tap_again">tap_again</option>
-              <option value="auto_silence">auto_silence</option>
+              <option value="release">{$_("settings.voice_stop_mode_release")}</option>
+              <option value="tap_again">{$_("settings.voice_stop_mode_tap_again")}</option>
+              <option value="auto_silence">{$_("settings.voice_stop_mode_auto_silence")}</option>
             </select>
           </label>
           <label>
             {$_("settings.voice_start_feedback_label")}
             <select bind:value={vStartFeedback}>
-              <option value="beep">beep</option>
-              <option value="vibrate-tray">vibrate-tray</option>
-              <option value="silent">silent</option>
+              <option value="beep">{$_("settings.voice_start_feedback_beep")}</option>
+              <option value="silent">{$_("settings.voice_start_feedback_silent")}</option>
             </select>
           </label>
 
           <label>
             {$_("settings.voice_mode_label")}
             <select bind:value={vMode}>
-              <option value="agent">{$_("settings.voice_mode_agent")}</option>
-              <option value="dictation">{$_("settings.voice_mode_dictation")}</option>
+              <option value="auto">{$_("settings.voice_mode_auto")}</option>
+              <option value="thread_new">{$_("settings.voice_mode_thread_new")}</option>
+              <option value="dictation_append">{$_("settings.voice_mode_dictation_append")}</option>
             </select>
           </label>
+          <p class="hint">{$_("settings.voice_mode_hint")}</p>
           <label class="check">
-            <input type="checkbox" bind:checked={vAlwaysNewThread} />
-            {$_("settings.voice_always_new_thread_label")}
+            <input type="checkbox" bind:checked={vAutoSend} />
+            {$_("settings.voice_auto_send_label")}
           </label>
+          <p class="hint">{$_("settings.voice_auto_send_hint")}</p>
 
           <label>
             {$_("settings.voice_max_seconds_label")}
             <input type="number" min="3" max="120" step="1" bind:value={vMaxSeconds} />
           </label>
           <label>
-            {$_("settings.voice_overlay_screen_label")}
-            <select bind:value={vOverlayScreen}>
-              <option value="cursor">cursor</option>
-              <option value="primary">primary</option>
+            {$_("settings.voice_hf_endpoint_label")}
+            <select bind:value={vHfEndpointPreset} onchange={onHfPresetChange}>
+              <option value="">{$_("settings.voice_hf_endpoint_preset_auto")}</option>
+              <option value="https://hf-mirror.com">{$_("settings.voice_hf_endpoint_preset_hfmirror")}</option>
+              <option value="https://huggingface.tuna.tsinghua.edu.cn">{$_("settings.voice_hf_endpoint_preset_tuna")}</option>
+              <option value="https://huggingface.co">{$_("settings.voice_hf_endpoint_preset_official")}</option>
+              <option value="custom">{$_("settings.voice_hf_endpoint_preset_custom")}</option>
             </select>
           </label>
-          <label>
-            {$_("settings.voice_hf_endpoint_label")}
-            <input type="text" bind:value={vHfEndpoint} placeholder="https://hf-mirror.com" />
-          </label>
+          {#if vHfEndpointPreset === "custom"}
+            <label>
+              <input type="text" bind:value={vHfEndpoint} placeholder="https://your-hf-mirror.example.com" />
+            </label>
+          {/if}
           <p class="hint">{$_("settings.voice_hf_endpoint_hint")}</p>
 
           <div class="row">

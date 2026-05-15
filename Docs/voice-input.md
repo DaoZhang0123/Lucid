@@ -1,6 +1,10 @@
 # Voice Input — Push-to-Talk 建任务
 
-> **状态**：调研稿 / 设计稿；尚未实现。
+> **状态**：Phase 1–3 已落地（sidecar transcribe RPC + Tauri 全局快捷键 + 设置页）。
+>   - 仅支持 `faster-whisper`（`sherpa-onnx` / `vosk` 已从 UI 下架，只留下本文的调研记录）。
+>   - 语言只约束在 **en / zh / fr** 三种（与 Lucid UI i18n 保持一致）。
+>   - 悬浮窗仅支持屏顶居中，`overlay_screen` / `overlay_position` / `start_feedback=vibrate-tray` 这三个占位项从 UI 删除（config.toml 中保留 fallback，老配置不会报错）。
+>   - 下一步：§5.2 描述的 **意图分发 LLM**（新 thread / 中止当前 / 续写输入框），还未落地。
 > **目标问题**：能否做到 **完全本地、不依赖大模型 API、不依赖外部云服务** 的语音输入。
 > **结论先行**：**完全可行**。Windows / Python 生态下有 3 条成熟离线 ASR 路线，且都是宽松开源协议（MIT / Apache-2.0），离线模型 30 MB ~ 500 MB 可选。下面给出选型对比、推荐方案和落地拆解。
 
@@ -16,10 +20,12 @@
     - 录音停止方式 `stop_mode`：`release`（松开即停）/ `tap_again`（再点一下停，默认）/ `auto_silence`（VAD 静音 1.5s 自动停）。
     - 触发反馈 `start_feedback`：`beep` / `vibrate-tray` / `silent`。
   - **冲突保护**：默认键 `Space` 在文本输入框聚焦时会冲突 → 焦点感知屏蔽（输入框 / IME 组合状态时不夺取，详见 §4.2）。
-- **结果落点（双轨）**：
-  1. **直接喂给 LLM 作为指令**（默认 `mode = "agent"`）：转录文本 → 走主 Agent 循环（`start_task` 或追加到当前 thread），等价于在输入框敲完按回车。这样用户可以说"关掉当前 thread"/"打开微信发条消息"/"暂停"等**控制类指令**，由模型理解并调用 `meta_tools` (`thread_close` / `thread_new` / `pause` / 等) 执行。
-  2. **续写当前输入框**（`mode = "dictation"`）：纯听写模式，文本插入输入框光标处，由用户人工确认按回车。
-  - 在 `/settings` 单选；也可以在悬浮录音窗右下角一键切换（🤖 / ⌨）。
+- **结果落点（意图分发）**：**不再靠用户在设置页二选一**（agent / dictation），而是转写完成后走一个 **快、小、便宜的意图分类 LLM**（详见 §5.2），把转写文本分到1个动作档：
+  1. **`thread_new`** — 开一个新 thread（“帮我打开记事本写入 hello”，明显是一个新任务）。
+  2. **`thread_abort`** — 中止当前正在跑的 thread（“停下” / “取消” / “不要了”）；发 cancel RPC 后不再走后续。
+  3. **`dictation_append`** — 续写到当前输入框（“... 這篇文章要提到” 这种装填词不该被拿去起任务）。
+  - 分类器返回 `low` 置信度时，悬浮窗出快选 chip让用户 1 帧设定。不再依赖 `[voice].mode`（可保留作为 override、默认 `auto`）。
+  - 意图 LLM 默认走同一个已配置的主 LLM provider（copilot / anthropic）但走一个 **独立、超短的 system prompt** 与独立 max_tokens（~150），不跳进主 agent 循环，避免跳动主线的上下文。
 - **离线 ASR**：不调用任何云端 ASR（Azure / OpenAI Whisper API / Google），ASR 不依赖大模型；模型权重本地装。**注意**：转录后的文本仍然会送给 Lucid 主 LLM（这是 Agent 控制的入口），与 ASR 是否本地无关。
 - **延迟**：停止录音后 ≤ 1.5s 出文本（小模型在 CPU 上即可达到）。
 - **语言**：至少英 / 中 / 法（与 i18n 三语保持一致），auto-detect。
@@ -100,7 +106,7 @@ audio = sd.rec(int(seconds * 16000), samplerate=16000, channels=1, dtype="int16"
 
 ### 4.1 行为
 
-- 默认键 `Space`，长按阈值 5000 ms，停止方式 `tap_again`。
+- 默认键 `Space`，长按阈值 3000 ms，停止方式 `tap_again`。
 - `tauri-plugin-global-shortcut` 的 `Pressed` / `Released` 事件由前端组合成长按状态机：
   ```
   on Pressed   → start timer(hold_threshold_ms)
@@ -199,32 +205,79 @@ audio = sd.rec(int(seconds * 16000), samplerate=16000, channels=1, dtype="int16"
 
 **这是一个独立的 Tauri WebviewWindow，不是主窗的子元素**，目的是不挤占主窗内容也不打断用户当前操作。要点：
 
-- **位置**：当前主屏（`overlay_screen` 决定取主屏 / 鼠标所在屏 / 活动窗口所在屏）顶部水平居中，`y = overlay_y_offset_px`（默认 8）。
+- **位置**：当前主屏顶部水平居中，`y = overlay_y_offset_px`（默认 8）。`overlay_screen` / `overlay_position` 在当前版本均为占位，不再暴露到 UI。
 - **尺寸**：录音 `360×72`，转录 `360×56`，错误 `360×96`。
-- **窗口属性**：`always_on_top = true`、`decorations = false`、`skip_taskbar = true`、`resizable = false`、`transparent = true`、`focused = false`（不抢焦点）。
-- **视觉**：圆角 + 半透明毛玻璃 —— `border-radius: 16px; backdrop-filter: blur(12px); background: rgba(0,0,0,0.55);`。
+- **窗口属性**：`always_on_top = true`、`decorations = false`、`shadow = false`、`skip_taskbar = true`、`resizable = false`、`transparent = true`、`focused = false`（不抢焦点）。
+- **视觉**：圆角 + 半透明毛玻璃 —— `border-radius: 16px; backdrop-filter: blur(12px); background: rgba(0,0,0,0.55);`，不走原生边框与阴影。
 - **鼠标穿透**：默认开 `set_ignore_cursor_events(true)`，用户可以直接点穿；只有 hover 检测到要交互（✗ 撤销 / 模式切换）时短暂关闭穿透。
-- **Tauri 2 创建方式**：
-  ```rust
-  let overlay = tauri::WebviewWindowBuilder::new(app, "voice-overlay",
-      tauri::WebviewUrl::App("voice-overlay".into()))
-      .always_on_top(true)
-      .decorations(false)
-      .skip_taskbar(true)
-      .resizable(false)
-      .transparent(true)
-      .focused(false)
-      .inner_size(360.0, 72.0)
-      .build()?;
-  let mon = overlay.current_monitor()?.unwrap();
-  let scale = mon.scale_factor();
-  let mw = mon.size().width as f64 / scale;
-  overlay.set_position(tauri::LogicalPosition::new((mw - 360.0) / 2.0, 8.0))?;
-  overlay.set_ignore_cursor_events(true)?;
-  ```
-- **状态机**：`idle-hidden` / `holding`（屏顶细长进度条）/ `recording`（波形 + 倒计时 + ✗）/ `transcribing`（旋转图标）/ `result`（文本 + 模式切换 🤖/⌨ + ✗ 撤销）/ `error`（红边 + 重试/保留/关闭）。
-- **跨屏 / DPI**：长按触发时根据 `overlay_screen` 重新定位；DPI 变化用 `current_monitor()` + `scale_factor()` 重算。
+- **状态机**：`idle-hidden` / `holding`（屏顶细长进度条）/ `recording`（波形 + 倒计时 + ✗）/ `transcribing`（旋转图标）/ `result`（文本 + 意图 独立 chip：🤖新任务 / ⏹中止 / ⌨续写 + ✗ 撤销）/ `error`（红边 + 重试/保留/关闭）。
 - **路由**：独立页 `app/src/routes/voice-overlay/+page.svelte`，零开销，与主窗解耦。
+
+### 5.2 意图分发 LLM（新品设计，未落地）
+
+**动机**：老设计里 `mode` 是一个全局开关——要么全部转写都发任务，要么全部填输入框。但现实使用是混合的：
+- “帮我在桌面起个记事本” → 明显该走 thread。
+- “这个别跑了” / “取消这个” → 中止。
+- “……还要提到 X 和 Y” → 填输入框的装填词。
+靠一个全局开关选不准；靠主 LLM 去意图识别又太重（走主循环 = 吃 system prompt + 截图上下文 + 可能调用 meta_tools）。所以加一个独立的、超轻量的意图分类调用。
+
+**接口（调度在 sidecar `voice_dispatch` 新 RPC 里）**：
+
+```python
+# lucid/voice_dispatch.py (新)
+class IntentResult(TypedDict):
+    intent: Literal["thread_new", "thread_abort", "dictation_append"]
+    confidence: Literal["high", "medium", "low"]
+    reason: str        # 一句中文解释，供悬浮窗 tooltip
+    cleaned_text: str  # 去除唤醒词、口头禄丝后的文本
+
+def classify(transcript: str, ctx: VoiceContext) -> IntentResult: ...
+
+@dataclass
+class VoiceContext:
+    has_running_thread: bool       # 当前是否有在跑的 thread
+    active_input_focus: bool       # 前台是否输入框有焦点（前端传入）
+    last_user_text: str | None     # 同一个 thread 上一句，帮判断 “还有……” 这种接词
+    locale: str                    # "en" / "zh" / "fr"
+```
+
+**System prompt（定位：超短，同时垃圾不走主上下文）**：
+
+```
+You are a voice-to-action router. Read the transcript and classify it as exactly one of:
+  - thread_new      : the user wants Lucid to start a NEW task (open an app, send a message,
+                      summarise something, etc.). Verbs like “open” / “send” / “summari·ze” /
+                      “write” / “compute” / “tell me”.
+  - thread_abort    : the user wants to STOP / cancel the currently-running task. Triggers:
+                      “stop” / “cancel” / “abort” / “never mind” / “don’t do that” /
+                      Chinese “停下” / “取消” / “不要了”. ONLY pick this if has_running_thread = true.
+  - dictation_append: the transcript is filler / continuation / correction meant for the
+                      currently focused input box. Triggers: starts mid-sentence, contains
+                      “also” / “and” / “one more thing” / “oops” / Chinese “还有…” /
+                      “补充一句” / “刚才那句改成”. Only pick this if active_input_focus = true.
+Return STRICT JSON: {"intent": "...", "confidence": "high|medium|low", "reason": "...",
+"cleaned_text": "去掉唤醒词与口头禄丝后的文本"}.
+No prose outside the JSON.
+```
+
+**调用**：`max_tokens=200`、`temperature=0`；走与主会话同一个 `provider`（复用 token / OAuth）；超时默认 6s，出错 → fallback 到以下 **纯正则启发识听**：
+
+```python
+_ABORT_RE = re.compile(r"^\s*(停下|取消|不要了|别跑了|stop|cancel|abort|never mind)\b", re.I)
+_NEW_VERBS = re.compile(r"\b(open|launch|send|write|summari[sz]e|tell me|打开|发|写|总结)\b", re.I)
+```
+
+规则：`_ABORT_RE` 中 & has_running_thread → abort；action `_NEW_VERBS` 命中 → `thread_new`；其它 & active_input_focus → `dictation_append`；完全不能区分 → 默认 `thread_new` + `confidence=low` 、悬浮窗跳出 chip 让用户 1 帧选。
+
+**前端映射 · result 状态里 1.5s 反悔窗口**：
+- `thread_new` → `🤖 将作为新任务执行` + 默认 OK
+- `thread_abort` → `⏹ 将中止当前任务` + 默认 OK；如 has_running_thread = false → 降级为 `thread_new`
+- `dictation_append` → `⌨ 填入输入框` + 默认 OK；如 active_input_focus = false → 降级为 `thread_new`
+- `confidence == low` → 不默认 OK，同时显示三个 chip 让用户点
+
+**与 `[voice].mode` 的关系**：保留为越位 override。默认 `auto`＝交给分发 LLM；`mode=agent` / `dictation` 仍然可以硕性锁死不调用分发 LLM（低资源、离线、决议performance 需求逆作选项）。
+
+**成本估算**：claude-opus-4.6 调用 ≈ 200 in / 80 out tokens ≈ 0.0007 USD/句；同时达到1 RPS 不会压跨 Copilot quota。中期可切到 Haiku / mini 类模型进一步限住。
 
 ---
 
@@ -233,9 +286,18 @@ audio = sd.rec(int(seconds * 16000), samplerate=16000, channels=1, dtype="int16"
 ```toml
 [voice]
 enabled = false           # 默认关；用户在 /settings 显式开
-engine = "faster-whisper" # faster-whisper | sherpa-onnx | vosk
+engine = "faster-whisper" # 当前只支持 faster-whisper（sherpa-onnx / vosk 已从 UI 下架）
 model_size = "small"      # tiny | base | small | medium | distil-small.en | distil-large-v3
-language = "auto"         # ISO 639-1 或 "auto"
+language = "auto"         # auto | en | zh | fr  （仅这三种与 UI 三语保持一致）
+                          #   "auto" / "system" / "detect" / 空：从系统区域设置（Win32
+                          #   GetUserDefaultLocaleName，回退 Python locale +
+                          #   LC_*）解析出主语言并 **snap 到 {en, zh, fr}**（不在集合
+                          #   内一律落到 "en"），再下发给 WhisperModel.transcribe 的
+                          #   `language=` 参数；这样避免 <2s 短语在 zh / ko / cy 之间漂移，
+                          #   也避免下载 UI 不支持的语种模型管道。
+                          #   显式 "en" / "zh" / "fr" 始终最高优先级；其它字符串会被强制
+                          #   coerce 到系统语言（仍 snap 到三者之一）并打一行 stderr 警告。
+                          #   设置页此项是下拉框，只能选 自动 / English / 简体中文 / Français。
 compute_type = "int8"     # int8 | int8_float16 | float16 | float32（决定速度 / 显存）
 device = "cpu"            # cpu | cuda（cuda 需用户自己装 CUDA 12 + cuDNN 9）
 vad_filter = true         # Silero VAD 切静音
@@ -244,19 +306,19 @@ max_seconds = 30          # 录音硬上限
 
 # —— 触发（a11y 优先：默认单键长按） ——
 hotkey = "Space"            # 任意单键或组合，默认单键 Space
-hold_threshold_ms = 5000    # 长按多少毫秒进入录音；0 = 经典 PTT（按下即录）
+hold_threshold_ms = 3000    # 长按多少毫秒进入录音；0 = 经典 PTT（按下即录）
 stop_mode = "tap_again"     # release | tap_again | auto_silence
-start_feedback = "beep"     # beep | vibrate-tray | silent
+start_feedback = "beep"     # beep | silent  (vibrate-tray 占位项已删除)
 focus_aware = true          # 输入框聚焦时不抢 Space
 
 # —— 文本去向 ——
-mode = "agent"              # agent（默认，文本送 LLM 当指令）| dictation（纯听写到输入框）
-always_new_thread = false   # agent 模式：true=每次起新 thread；false=续到当前
+mode = "auto"               # auto（默认）→ 走§5.2 意图分发 LLM选 thread_new / thread_abort / dictation_append；
+                            # agent＝硕性锁死只走 thread_new；dictation＝硕性锁死只填输入框
+always_new_thread = false   # mode=auto/agent 且意图 = thread_new 时：true=总是起新 thread；false=有当前 thread 则追写
 
 # —— 悬浮窗 ——
-overlay_position = "top-center"  # 当前只支持 top-center，预留扩展位
-overlay_y_offset_px = 8
-overlay_screen = "cursor"        # cursor | primary | active-window
+overlay_y_offset_px = 8     # 只保留 y 偏移；overlay_position / overlay_screen 已从默认 toml 删除
+                            # （lucid/config.py 仍保留字段让老配置不报错，但 UI 不再暴露）
 
 # —— 杂项 ——
 keep_audio = false               # 是否保留 ~/.lucid/voice/last.webm 供调试

@@ -145,6 +145,10 @@
   - 数据：`%LOCALAPPDATA%\dev.lucid\regions\<app_id>.json`（`window_signature` 用于 startup 时验证窗口尺寸/版本是否变化、变化则提示重校准）。
   - Runtime：模型可用新 meta tool `region(app, region_name)` 拿到"屏幕坐标 + 描述"，省掉一次截图+识别+点击的 3 步。
   - 配置：`[regions] enabled / auto_recalibrate_on_resolution_change`。
+  - **Teams / 微信 子任务（2026-05-15 验证：Teams 上发消息一条任务跑了 39 步，主要卡在反复点击「键入消息」输入框命中不准 + 每步都先 narrate 被 nudge 浪费一轮，详见 `thread-20260515-181215-8e6fec`）**：
+    - **Teams** — 有完整 UIA 树（`Microsoft.Teams.WebView2` 暴露 `Edit` / `Document` 控件），用 `IUIAutomation.FindFirst(TreeScope_Subtree)` 按 `LocalizedControlType="编辑"` + `Name in {"键入消息","Type a message"}` 直接拿 `BoundingRectangle`，命中后写入 `regions/teams.json` 的 `input_box`。其余区域（左导航栏 / 对话列表 / 标题栏）也都有 `AutomationId`，一次性枚举即可。
+    - **微信** — Win32 老控件 + Duilib 自绘，UIA 几乎拿不到子结构（最多见到一个空的 `Window`）。备选三选一：(a) **OCR 锚点**：`region(app="wechat", name="input_box")` 触发时抓 L2 → 用 PaddleOCR/RapidOCR 找"搜索"/"发送(S)"等已知文案 → 反推输入框矩形；(b) **模板匹配**：把"发送"按钮和输入框边框作为模板图（`<user data>/regions/wechat/templates/*.png`），OpenCV `matchTemplate` 灰度匹配，鲁棒性比 OCR 高且无依赖；(c) **像素特征**：微信输入框上沿是固定灰线 (#E7E7E7)，沿 y 轴扫一行像素差找到边界。建议优先 (b)，配合首次运行让用户在校准面板里框一次输入框作为模板源。
+    - **Teams 专用强制 tip（独立 todo）**：写入 `apps/teams.py` seed `[seed · compose-keyboard-first]`：发消息任务先 `Ctrl+Shift+X` 聚焦 compose box（已是 app tip 但未升级为强制路径），失败再退化到 `region("teams","input_box")` 点击；禁止直接用截图坐标点底部边缘。
 - [ ] **Query-augmented user message**：在每次 LLM call 前，根据当前 user instruction 与最近若干 assistant 文本做轻量检索（BM25 + 可选 sentence-transformers embedding，`[rag] backend = bm25 | embed`），从 `memory.md` / `tools.md` / 历史 thread 摘要里召回 Top-K 相关条目，**只把相关的**那几条以 `## Relevant memory / tools (auto-retrieved)` 块拼进当前 user message——不再在 system prompt 里全量倾注 memory.md / tools.md（现在的做法）。
   - 触发：每次 `_run` 起手 + 每隔 `[rag].refresh_every_steps` 步重新检索（捕获任务中途话题漂移）。
   - 索引：sidecar 启动时把 memory/tools 切成单条 → 倒排索引；条目变更时增量更新（监听 `/memory` `/tools` 页面写盘事件）。

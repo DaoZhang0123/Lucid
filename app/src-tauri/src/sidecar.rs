@@ -692,7 +692,7 @@ pub async fn read_settings() -> Result<Value, String> {
     let mut v_start_feedback = String::new();
     let mut v_focus_aware: Option<bool> = None;
     let mut v_mode = String::new();
-    let mut v_always_new_thread: Option<bool> = None;
+    let mut v_auto_send: Option<bool> = None;
     let mut v_max_seconds: Option<i64> = None;
     let mut v_overlay_screen = String::new();
     let mut v_overlay_y_offset_px: Option<i64> = None;
@@ -740,7 +740,7 @@ pub async fn read_settings() -> Result<Value, String> {
                 if let Some(v) = parse_kv(l, "start_feedback")      { v_start_feedback = v; }
                 if let Some(v) = parse_kv(l, "focus_aware")         { v_focus_aware = parse_bool(&v); }
                 if let Some(v) = parse_kv(l, "mode")                { v_mode = v; }
-                if let Some(v) = parse_kv(l, "always_new_thread")   { v_always_new_thread = parse_bool(&v); }
+                if let Some(v) = parse_kv(l, "auto_send")           { v_auto_send = parse_bool(&v); }
                 if let Some(v) = parse_kv(l, "max_seconds")         { v_max_seconds = v.parse::<i64>().ok(); }
                 if let Some(v) = parse_kv(l, "overlay_screen")      { v_overlay_screen = v; }
                 if let Some(v) = parse_kv(l, "overlay_y_offset_px") { v_overlay_y_offset_px = v.parse::<i64>().ok(); }
@@ -783,7 +783,7 @@ pub async fn read_settings() -> Result<Value, String> {
             "start_feedback": v_start_feedback,
             "focus_aware": v_focus_aware,
             "mode": v_mode,
-            "always_new_thread": v_always_new_thread,
+            "auto_send": v_auto_send,
             "max_seconds": v_max_seconds,
             "overlay_screen": v_overlay_screen,
             "overlay_y_offset_px": v_overlay_y_offset_px,
@@ -826,7 +826,7 @@ pub struct VoicePatch {
     pub start_feedback: Option<String>,
     pub focus_aware: Option<bool>,
     pub mode: Option<String>,
-    pub always_new_thread: Option<bool>,
+    pub auto_send: Option<bool>,
     pub max_seconds: Option<i64>,
     pub overlay_screen: Option<String>,
     pub overlay_y_offset_px: Option<i64>,
@@ -890,7 +890,7 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
         if let Some(v) = &p.start_feedback     { want.entry("[voice]").or_default().push(("start_feedback",     v.clone())); }
         if let Some(v) = &p.focus_aware        { want.entry("[voice]").or_default().push(("focus_aware",        if *v {"true".into()} else {"false".into()})); }
         if let Some(v) = &p.mode               { want.entry("[voice]").or_default().push(("mode",               v.clone())); }
-        if let Some(v) = &p.always_new_thread  { want.entry("[voice]").or_default().push(("always_new_thread",  if *v {"true".into()} else {"false".into()})); }
+        if let Some(v) = &p.auto_send          { want.entry("[voice]").or_default().push(("auto_send",          if *v {"true".into()} else {"false".into()})); }
         if let Some(v) = &p.max_seconds        { want.entry("[voice]").or_default().push(("max_seconds",        format!("{}", v))); }
         if let Some(v) = &p.overlay_screen     { want.entry("[voice]").or_default().push(("overlay_screen",     v.clone())); }
         if let Some(v) = &p.overlay_y_offset_px{ want.entry("[voice]").or_default().push(("overlay_y_offset_px",format!("{}", v))); }
@@ -913,7 +913,7 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
     let is_numeric = |k: &str| matches!(
         k,
         "temperature" | "top_p" | "hold_threshold_ms" | "max_seconds" | "overlay_y_offset_px"
-        | "enabled" | "focus_aware" | "always_new_thread" | "keep_audio"
+        | "enabled" | "focus_aware" | "auto_send" | "keep_audio"
     );
     let format_kv = |k: &str, v: &str| -> String {
         if is_numeric(k) {

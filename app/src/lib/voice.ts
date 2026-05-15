@@ -18,15 +18,30 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, emit, type UnlistenFn } from "@tauri-apps/api/event";
-import { startTask, newThread } from "./chatStore.svelte";
+import { startTask, newThread, cancelTask, chat } from "./chatStore.svelte";
+import { get } from "svelte/store";
+import { locale as i18nLocale } from "svelte-i18n";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type VoiceMode = "agent" | "dictation";
+// `auto` = run the intent-dispatch LLM (Docs/voice-input.md §5.2);
+// `thread_new` / `dictation_append` skip the LLM and hard-route every utterance.
+export type VoiceMode = "auto" | "thread_new" | "dictation_append";
 export type StopMode = "release" | "tap_again" | "auto_silence";
 export type StartFeedback = "beep" | "vibrate-tray" | "silent";
+
+export type DispatchIntent = "thread_new" | "thread_abort" | "dictation_append";
+export type DispatchConfidence = "high" | "medium" | "low";
+
+export interface DispatchResult {
+  intent: DispatchIntent;
+  confidence: DispatchConfidence;
+  reason: string;
+  cleaned_text: string;
+  source: "llm" | "regex" | "rule";
+}
 
 export interface VoiceConfig {
   enabled: boolean;
@@ -36,7 +51,7 @@ export interface VoiceConfig {
   start_feedback: StartFeedback;
   focus_aware: boolean;
   mode: VoiceMode;
-  always_new_thread: boolean;
+  auto_send: boolean;
   max_seconds: number;
   overlay_screen: string;
   overlay_y_offset_px: number;
@@ -87,7 +102,8 @@ let recordingHardStopTimer: number | null = null;
 // result auto-dismiss
 let resultDismissTimer: number | null = null;
 let pendingResult: TranscribeResult | null = null;
-let pendingResultMode: VoiceMode = "agent";
+let pendingResultMode: VoiceMode = "auto";
+let pendingDispatch: DispatchResult | null = null;
 let cancelledResult = false;
 
 // listeners
@@ -116,7 +132,7 @@ export async function initVoice(): Promise<void> {
     );
   }
   if (!unlistenOverlayAction) {
-    unlistenOverlayAction = await listen<{ action: string; mode?: VoiceMode }>(
+    unlistenOverlayAction = await listen<{ action: string; mode?: VoiceMode; intent?: DispatchIntent }>(
       "voice-overlay-action",
       (ev) => onOverlayAction(ev.payload),
     );
@@ -373,7 +389,7 @@ async function onRecorderStop(): Promise<void> {
   let result: TranscribeResult;
   try {
     result = await invoke<TranscribeResult>("sidecar_transcribe", {
-      args: { audioB64: b64, mime },
+      args: { audioB64: b64, mime, uiLocale: get(i18nLocale) ?? "" },
     });
   } catch (e) {
     showError(typeof e === "string" ? e : `Transcription failed: ${e}`);
@@ -395,17 +411,150 @@ async function onRecorderStop(): Promise<void> {
   pendingResultMode = cfg!.mode;
   cancelledResult = false;
 
+  // ----- intent dispatch (Docs/voice-input.md §5.2) -----
+  // For `auto`, ask the sidecar's classifier LLM to pick thread_new /
+  // thread_abort / dictation_append. For the hard-locked modes, build a
+  // synthetic high-confidence dispatch so the rest of the pipeline is
+  // uniform.
+  let dispatch: DispatchResult;
+  if (pendingResultMode === "thread_new") {
+    dispatch = {
+      intent: "thread_new",
+      confidence: "high",
+      reason: "settings: mode=thread_new",
+      cleaned_text: result.text,
+      source: "rule",
+    };
+  } else if (pendingResultMode === "dictation_append") {
+    dispatch = {
+      intent: "dictation_append",
+      confidence: "high",
+      reason: "settings: mode=dictation_append",
+      cleaned_text: result.text,
+      source: "rule",
+    };
+  } else {
+    try {
+      dispatch = await invoke<DispatchResult>("voice_dispatch", {
+        args: {
+          text: result.text,
+          mode: "auto",
+          context: {
+            hasRunningThread: !!chat.running,
+            activeInputFocus: !!dictationSink && hasFocusedEditable(),
+            lastUserText: null,
+            locale: (navigator.language || "en").split("-")[0].toLowerCase(),
+          },
+        },
+      });
+    } catch (e) {
+      console.warn("voice_dispatch failed, defaulting to thread_new:", e);
+      dispatch = {
+        intent: "thread_new",
+        confidence: "low",
+        reason: `dispatch error: ${e}`,
+        cleaned_text: result.text,
+        source: "rule",
+      };
+    }
+  }
+  pendingDispatch = dispatch;
+
+  // ----- routing matrix -----
+  // auto_send = true  : commit immediately after a short dwell (overlay
+  //                     stays visible only as a status indicator).
+  // auto_send = false : skip the overlay confirm flow entirely and stuff
+  //                     the cleaned text into the chat input box — the
+  //                     user reads / edits / hits Enter themselves.
+  //                     `thread_abort` is the one exception: there's
+  //                     nothing to put into a textbox, so we still need
+  //                     to either fire it (high/medium) or surface the
+  //                     three chips (low) so the user can pick.
+  if (cfg!.auto_send) {
+    stateName = "result";
+    setOverlayState({
+      state: "result",
+      text: dispatch.cleaned_text || result.text,
+      mode: pendingResultMode,
+      intent: dispatch.intent,
+      confidence: dispatch.confidence,
+      reason: dispatch.reason,
+      autoSend: true,
+      showChips: false,
+    });
+    const dwellMs = dispatch.intent === "dictation_append" ? 800 : 1500;
+    if (resultDismissTimer !== null) clearTimeout(resultDismissTimer);
+    resultDismissTimer = window.setTimeout(() => commitResult(), dwellMs);
+    return;
+  }
+
+  // auto_send = false branch
+  if (dispatch.intent === "thread_abort") {
+    if (dispatch.confidence === "low") {
+      // Show chips so the user can disambiguate.
+      stateName = "result";
+      setOverlayState({
+        state: "result",
+        text: dispatch.cleaned_text || result.text,
+        mode: pendingResultMode,
+        intent: dispatch.intent,
+        confidence: dispatch.confidence,
+        reason: dispatch.reason,
+        autoSend: false,
+        showChips: true,
+      });
+      return;
+    }
+    // High/medium abort: fire it. (No way to "preview" a cancel.)
+    // Cancel both the currently running task AND any queued tasks so
+    // "停止所有的对话" / "stop everything" actually clears the whole list,
+    // not just the head.
+    void cancelTask().catch((e) => console.warn("cancelTask failed:", e));
+    void invoke("task_queue_clear").catch((e) => console.warn("task_queue_clear failed:", e));
+    pendingResult = null;
+    pendingDispatch = null;
+    void invoke("voice_overlay_hide");
+    resetAll();
+    return;
+  }
+
+  // thread_new / dictation_append → stuff into the chat input. Both end up
+  // in the same place (the dictation sink), the only difference being a
+  // leading newline for thread_new so the user can clearly see it as a
+  // fresh task before they hit Enter.
+  const sink = dictationSink;
+  if (sink) {
+    sink(dispatch.cleaned_text || result.text);
+    pendingResult = null;
+    pendingDispatch = null;
+    void invoke("voice_overlay_hide");
+    resetAll();
+    return;
+  }
+
+  // No dictation sink registered (e.g. settings page) — fall back to the
+  // overlay confirm flow so the utterance isn't lost.
   stateName = "result";
   setOverlayState({
     state: "result",
-    text: result.text,
+    text: dispatch.cleaned_text || result.text,
     mode: pendingResultMode,
+    intent: dispatch.intent,
+    confidence: dispatch.confidence,
+    reason: dispatch.reason,
+    autoSend: false,
+    showChips: dispatch.confidence === "low",
   });
+  if (resultDismissTimer !== null) { clearTimeout(resultDismissTimer); resultDismissTimer = null; }
+}
 
-  // Reflection / undo window (1.5s for agent, 0.8s for dictation).
-  const dwellMs = pendingResultMode === "agent" ? 1500 : 800;
-  if (resultDismissTimer !== null) clearTimeout(resultDismissTimer);
-  resultDismissTimer = window.setTimeout(() => commitResult(), dwellMs);
+function hasFocusedEditable(): boolean {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA") return true;
+  if ((el as HTMLElement).isContentEditable) return true;
+  return false;
 }
 
 function commitResult(): void {
@@ -414,29 +563,36 @@ function commitResult(): void {
     void invoke("voice_overlay_hide");
     return;
   }
-  const text = pendingResult.text;
-  const mode = pendingResultMode;
+  const text = (pendingDispatch?.cleaned_text || pendingResult.text).trim();
+  const intent: DispatchIntent = pendingDispatch?.intent ?? "thread_new";
   pendingResult = null;
+  pendingDispatch = null;
   void invoke("voice_overlay_hide");
   resetAll();
 
-  if (mode === "dictation" && dictationSink) {
-    dictationSink(text);
-  } else if (mode === "agent") {
-    // always_new_thread is enforced server-side via thread switching, but the
-    // simplest path here is to call startTask which appends to the active
-    // thread (or creates one). If the user wants always_new, we open a new
-    // thread first, then start the task.
-    if (cfg?.always_new_thread) {
+  switch (intent) {
+    case "thread_abort":
+      void cancelTask().catch((e) => console.warn("cancelTask failed:", e));
+      void invoke("task_queue_clear").catch((e) => console.warn("task_queue_clear failed:", e));
+      return;
+    case "dictation_append":
+      if (dictationSink) {
+        dictationSink(text);
+      } else {
+        // No active input sink — fall back to starting a task so the user
+        // doesn't lose what they said.
+        void startTask(text);
+      }
+      return;
+    case "thread_new":
+    default:
       void (async () => {
         try {
           await newThread();
         } catch { /* ignore */ }
         void startTask(text);
       })();
-    } else {
-      void startTask(text);
-    }
+      return;
   }
 }
 
@@ -444,7 +600,7 @@ function commitResult(): void {
 // Overlay action handler — buttons clicked inside the overlay window
 // ---------------------------------------------------------------------------
 
-function onOverlayAction(payload: { action: string; mode?: VoiceMode }): void {
+function onOverlayAction(payload: { action: string; mode?: VoiceMode; intent?: DispatchIntent }): void {
   switch (payload.action) {
     case "cancel":
       // User changed their mind. Stop recording (if any), suppress result.
@@ -458,9 +614,28 @@ function onOverlayAction(payload: { action: string; mode?: VoiceMode }): void {
       }
       break;
     case "set_mode":
-      if (payload.mode === "agent" || payload.mode === "dictation") {
+      if (payload.mode === "thread_new" || payload.mode === "dictation_append" || payload.mode === "auto") {
         pendingResultMode = payload.mode;
       }
+      break;
+    case "pick_intent":
+      // User tapped one of the chips on a low-confidence result. Just
+      // update the active intent — the user still has to press ✓ to send
+      // (when auto_send is off, which is the only state in which chips
+      // are shown).
+      if (payload.intent && pendingDispatch) {
+        pendingDispatch = { ...pendingDispatch, intent: payload.intent, confidence: "high" };
+        setOverlayState({
+          intent: payload.intent,
+          confidence: "high",
+          showChips: false,
+        });
+      }
+      break;
+    case "commit":
+      // User pressed the explicit confirm button.
+      if (resultDismissTimer !== null) { clearTimeout(resultDismissTimer); resultDismissTimer = null; }
+      commitResult();
       break;
     case "retry":
       // Discard current error, hide overlay; user can press hotkey again.
@@ -520,6 +695,7 @@ function resetAll(): void {
   mediaRecorder = null;
   recordedChunks = [];
   pendingResult = null;
+  pendingDispatch = null;
   cancelledResult = false;
 }
 

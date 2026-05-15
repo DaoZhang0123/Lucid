@@ -22,6 +22,9 @@ dependencies = [
 # config.toml to leave them unloaded at runtime even if installed.
 voice = [
     "faster-whisper>=1.1.0",
+    # Whisper outputs Traditional Hanzi for ~zh fairly often; this pure-
+    # Python converter normalises everything to Simplified post-decode.
+    "zhconv>=1.4.3",
 ]
 # Trafilatura article extraction. Optional but strongly recommended — when
 # present, read_webpage uses it instead of the in-house HTMLParser for far

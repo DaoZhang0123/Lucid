@@ -986,6 +986,14 @@ instruction in this run.
         if self._worker and self._worker.is_alive():
             return {"ok": False, "error": "task running; cancel first"}
         self.cfg = new_cfg
+        # Voice dispatcher caches an LLM client; bust it so the next dispatch
+        # picks up the new provider / model.
+        try:
+            disp = getattr(self, "_voice_disp", None)
+            if disp is not None:
+                disp.reload_config(new_cfg)
+        except Exception:
+            pass
         if getattr(self.cfg, "visual_notify", None) and self.cfg.visual_notify.enabled:
             # Rebind so updated visual-notify settings take effect immediately.
             self._stop_taskbar_monitor()
@@ -1060,7 +1068,7 @@ instruction in this run.
             "start_feedback": v.start_feedback,
             "focus_aware": v.focus_aware,
             "mode": v.mode,
-            "always_new_thread": v.always_new_thread,
+            "auto_send": v.auto_send,
             "overlay_position": v.overlay_position,
             "overlay_y_offset_px": v.overlay_y_offset_px,
             "overlay_screen": v.overlay_screen,
@@ -1118,13 +1126,63 @@ instruction in this run.
         if not b64:
             raise ValueError("audio_b64 is required")
         mime = (params.get("mime") or params.get("mime_type") or "audio/webm").strip()
+        ui_locale = (params.get("ui_locale") or "").strip()
         try:
             raw = base64.b64decode(b64, validate=False)
         except Exception as e:
             raise ValueError(f"bad base64: {e}")
         tr = self._voice_transcriber()
-        result = tr.transcribe(raw, mime)
+        result = tr.transcribe(raw, mime, ui_locale=ui_locale)
         return result.to_dict()
+
+    # ---- voice intent dispatch (Docs/voice-input.md §5.2) ----
+
+    def _voice_dispatcher(self):  # type: ignore[no-untyped-def]
+        """Singleton dispatcher; lazy-built."""
+        from . import voice_dispatch as _vd
+        cur = getattr(self, "_voice_disp", None)
+        if cur is None:
+            cur = _vd.VoiceDispatcher(self.cfg)
+            self._voice_disp = cur
+        return cur
+
+    def _rpc_voice_dispatch(self, params: dict[str, Any]) -> dict[str, Any]:
+        from . import voice_dispatch as _vd
+        text = (params.get("text") or "").strip()
+        if not text:
+            raise ValueError("text is required")
+        ctx_in = params.get("context") if isinstance(params.get("context"), dict) else {}
+        # Auto-fill `has_running_thread` if the front-end didn't supply it.
+        if ctx_in is not None and "has_running_thread" not in ctx_in:
+            ctx_in = dict(ctx_in)
+            ctx_in["has_running_thread"] = bool(self._worker and self._worker.is_alive())
+        ctx = _vd.VoiceContext.from_dict(ctx_in)
+        # `mode` override from the front-end (settings page can hard-lock
+        # auto / thread_new / dictation_append). When non-auto, skip the LLM.
+        mode = (params.get("mode") or "auto").strip().lower()
+        # Back-compat: accept the legacy names too.
+        if mode == "agent":
+            mode = "thread_new"
+        elif mode == "dictation":
+            mode = "dictation_append"
+        if mode == "thread_new":
+            return _vd.DispatchResult(
+                intent="thread_new",
+                confidence="high",
+                reason="forced by [voice].mode = thread_new",
+                cleaned_text=text,
+                source="rule",
+            ).to_dict()
+        if mode == "dictation_append":
+            return _vd.DispatchResult(
+                intent="dictation_append",
+                confidence="high",
+                reason="forced by [voice].mode = dictation_append",
+                cleaned_text=text,
+                source="rule",
+            ).to_dict()
+        disp = self._voice_dispatcher()
+        return disp.classify(text, ctx).to_dict()
 
     # ---- thread management ----
 

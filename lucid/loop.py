@@ -912,6 +912,14 @@ class Agent:
                     step_meta_pngs.append((label, tr.image_png, tr.attached_capture))
                     if tr.attached_capture is not None:
                         self.tool.last_capture = tr.attached_capture
+                        # Mirror the bookkeeping in tools.py: macro frames
+                        # (L1/L2) are also remembered as the fallback domain
+                        # for click validation, so a subsequent L3 verify
+                        # capture doesn't shrink the accepted coordinate
+                        # frame to a tiny tile.
+                        from .screen import ScreenLevel as _SL
+                        if tr.attached_capture.level in (_SL.L1, _SL.L2):
+                            self.tool.last_macro_capture = tr.attached_capture
                     try:
                         saved_meta_name = log.save_image(tr.image_png, save_tag, level="INFO")
                         if saved_meta_name:

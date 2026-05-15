@@ -33,6 +33,69 @@ def _lucid_home() -> Path:
     return (Path(base) if base else Path(".")) / ".lucid"
 
 
+# Voice transcription is restricted to the same three languages Lucid's UI
+# supports (English / Simplified Chinese / French). Anything outside this
+# set — either explicitly configured or inferred from the system locale —
+# is coerced to the closest match (system primary if it's in the set, else
+# English) so Whisper's `language=` parameter is always one of these three.
+SUPPORTED_LANGS: tuple[str, ...] = ("en", "zh", "fr")
+
+# Whisper accepts ISO-639-1 two-letter codes (plus a few extras). We only need
+# the primary tag from the system locale — strip region / script suffixes.
+_WHISPER_LANG_ALIASES = {
+    "iw": "he",   # legacy Hebrew
+    "in": "id",   # legacy Indonesian
+    "ji": "yi",   # legacy Yiddish
+    "nb": "no",   # Norwegian Bokmål → Norwegian
+    "nn": "no",   # Nynorsk → Norwegian
+}
+
+
+def _coerce_supported(tag: Optional[str]) -> str:
+    """Map any 2-letter tag onto the supported set, defaulting to English."""
+    if tag and tag in SUPPORTED_LANGS:
+        return tag
+    return "en"
+
+
+def _system_language_tag() -> Optional[str]:
+    """Return a Whisper-compatible 2-letter language tag from the OS locale.
+
+    Used when ``[voice].language`` is left as ``auto`` / ``system`` so the
+    transcriber doesn't drift between languages on short clips. Returns
+    ``None`` if we can't determine a sensible tag (caller will fall back to
+    Whisper's own auto-detect).
+    """
+    candidates: list[str] = []
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(85)
+            # GetUserDefaultLocaleName → e.g. "zh-CN", "en-US", "fr-FR".
+            n = ctypes.windll.kernel32.GetUserDefaultLocaleName(buf, 85)
+            if n > 0:
+                candidates.append(buf.value)
+        except Exception:
+            pass
+    try:
+        import locale
+        loc = locale.getdefaultlocale()[0]
+        if loc:
+            candidates.append(loc)
+    except Exception:
+        pass
+    for env in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        v = os.environ.get(env)
+        if v:
+            candidates.append(v)
+    for raw in candidates:
+        tag = raw.split(".", 1)[0].split("@", 1)[0].replace("_", "-")
+        primary = tag.split("-", 1)[0].strip().lower()
+        if len(primary) == 2 and primary.isalpha():
+            return _WHISPER_LANG_ALIASES.get(primary, primary)
+    return None
+
+
 def voice_dir() -> Path:
     d = _lucid_home() / "voice"
     d.mkdir(parents=True, exist_ok=True)
@@ -152,22 +215,121 @@ def download_voice_model(model_size: str, hf_endpoint: str = "") -> dict[str, An
     repo = _FW_REPO.get(size)
     if not repo:
         return {"ok": False, "error": f"unknown model size: {size}"}
-    if hf_endpoint:
-        os.environ["HF_ENDPOINT"] = hf_endpoint
-        os.environ["HF_HUB_ENDPOINT"] = hf_endpoint
     try:
         # Use snapshot_download directly so we can target our cache root.
         from huggingface_hub import snapshot_download  # type: ignore[import-not-found]
     except ImportError as e:
         return {"ok": False, "error": f"huggingface_hub not installed: {e}"}
-    try:
-        local_path = snapshot_download(
-            repo_id=repo,
-            cache_dir=str(models_dir()),
-            local_files_only=False,
-        )
-    except Exception as e:  # noqa: BLE001 — surface whatever HF threw at the UI
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    # Try the user-supplied endpoint first, then fall back to common
+    # mirrors. huggingface.co is intentionally last because it is
+    # blocked on many networks where the user has set a mirror.
+    candidates: list[str] = []
+    seen_eps: set[str] = set()
+    for ep in (hf_endpoint, "https://hf-mirror.com", "https://huggingface.tuna.tsinghua.edu.cn", "https://huggingface.co"):
+        ep = (ep or "").strip().rstrip("/")
+        if ep and ep not in seen_eps:
+            candidates.append(ep)
+            seen_eps.add(ep)
+
+    def _patch_endpoint(ep: str) -> None:
+        """Force every loaded huggingface_hub module to use ``ep``.
+
+        ``huggingface_hub`` reads ``HF_ENDPOINT`` once at import time and
+        caches it into module-level constants, so simply setting the env
+        var here is a no-op when the module is already loaded (which is
+        likely, because faster-whisper imports it during ``_load``).
+        """
+        os.environ["HF_ENDPOINT"] = ep
+        os.environ["HF_HUB_ENDPOINT"] = ep
+        try:
+            from huggingface_hub import constants as _hf_const  # type: ignore[import-not-found]
+            _hf_const.ENDPOINT = ep
+            _hf_const.HUGGINGFACE_CO_URL_HOME = ep + "/"
+            if hasattr(_hf_const, "HUGGINGFACE_CO_URL_TEMPLATE"):
+                _hf_const.HUGGINGFACE_CO_URL_TEMPLATE = ep + "/{repo_id}/resolve/{revision}/{filename}"
+            for _modname in ("huggingface_hub.file_download",
+                             "huggingface_hub._snapshot_download",
+                             "huggingface_hub.hf_api"):
+                _m = sys.modules.get(_modname)
+                if _m is not None and hasattr(_m, "ENDPOINT"):
+                    setattr(_m, "ENDPOINT", ep)
+        except Exception as e:
+            print(f"[voice] HF endpoint patch failed for {ep} ({e})", file=sys.stderr)
+
+    last_err: Exception | None = None
+    last_ep: str = ""
+    local_path: str = ""
+
+    def _has_complete_weights(snap_dir: str) -> tuple[bool, int]:
+        """Check the snapshot dir really contains the weight file.
+
+        faster-whisper distributes its weights as ``model.bin`` (CTranslate2
+        format). HuggingFace's ``snapshot_download`` has a misfeature where,
+        if the connection drops mid-large-file but the small companion
+        files (config/tokenizer/vocab) finished first, it can return
+        successfully and leave a zero-byte ``*.incomplete`` blob behind.
+        We have to verify by hand.
+        """
+        sd = Path(snap_dir)
+        if not sd.is_dir():
+            return False, 0
+        candidates_w = list(sd.glob("model.bin")) + list(sd.glob("*.bin"))
+        if not candidates_w:
+            return False, 0
+        # Pick the largest — for distil-* there may be multiple.
+        sizes = []
+        for w in candidates_w:
+            try:
+                sizes.append(w.resolve().stat().st_size)
+            except OSError:
+                sizes.append(0)
+        biggest = max(sizes) if sizes else 0
+        # Even tiny is ~75 MB; anything under 5 MB means the weight file
+        # is just an LFS pointer or an incomplete blob.
+        return biggest > 5 * 1024 * 1024, biggest
+
+    for ep in candidates:
+        _patch_endpoint(ep)
+        try:
+            print(f"[voice] downloading {repo} via {ep} ...", file=sys.stderr)
+            local_path = snapshot_download(
+                repo_id=repo,
+                cache_dir=str(models_dir()),
+                local_files_only=False,
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[voice] download via {ep} raised: {type(e).__name__}: {e}", file=sys.stderr)
+            last_err = e
+            last_ep = ep
+            continue
+        ok_w, weight_bytes = _has_complete_weights(local_path)
+        if not ok_w:
+            print(f"[voice] download via {ep} returned but model.bin is missing/incomplete "
+                  f"(largest weight: {weight_bytes} bytes); trying next mirror", file=sys.stderr)
+            last_err = RuntimeError("model weights missing or incomplete after download")
+            last_ep = ep
+            continue
+        last_ep = ep
+        last_err = None
+        break
+
+    if last_err is not None:
+        msg = f"{type(last_err).__name__}: {last_err}"
+        text = str(last_err)
+        if "missing or incomplete" in text:
+            msg = (
+                f"模型权重 model.bin 没下载完整（已尝试镜像：{', '.join(candidates)}）。"
+                "通常是网络在传大文件时被中断。请检查网络/VPN 后重试，"
+                "或在“HuggingFace 镜像”里换一个可用的镜像。"
+            )
+        elif "UNEXPECTED_EOF_WHILE_READING" in text or "SSLEOF" in text or "Max retries exceeded" in text:
+            msg = (
+                f"无法连接到模型镜像（{last_ep}）。已尝试镜像：{', '.join(candidates)}。"
+                f"原始错误：{type(last_err).__name__}。"
+                "请检查网络/VPN，或在“HuggingFace 镜像”里换一个可用的镜像后重试。"
+            )
+        return {"ok": False, "error": msg}
     # Compute on-disk size of the snapshot dir (resolved symlinks count once).
     total = 0
     seen: set[Path] = set()
@@ -246,7 +408,7 @@ class Transcriber:
 
     engine: str = "?"
 
-    def transcribe(self, audio_bytes: bytes, mime: str = "") -> TranscribeResult:
+    def transcribe(self, audio_bytes: bytes, mime: str = "", ui_locale: str = "") -> TranscribeResult:
         raise NotImplementedError
 
     def unload(self) -> None:
@@ -334,7 +496,7 @@ class FasterWhisperTranscriber(Transcriber):
 
     # ---- public API ----
 
-    def transcribe(self, audio_bytes: bytes, mime: str = "") -> TranscribeResult:
+    def transcribe(self, audio_bytes: bytes, mime: str = "", ui_locale: str = "") -> TranscribeResult:
         if not audio_bytes:
             return TranscribeResult(text="", engine=self.engine, model=self._model_id(),
                                     filtered_reason="empty")
@@ -349,10 +511,57 @@ class FasterWhisperTranscriber(Transcriber):
         tmp_path.write_bytes(audio_bytes)
 
         try:
-            language = (self.cfg.language or "auto").strip()
-            lang_param: Optional[str] = None if language in ("", "auto") else language
+            language = (self.cfg.language or "auto").strip().lower()
+            # Whisper's `language=` is always one of the three Lucid UI
+            # languages (en / zh / fr). "auto" / "system" / empty resolves
+            # against the **Lucid UI locale first** (so the user's chosen
+            # interface language wins over the OS locale, which may differ
+            # — e.g. Lucid set to zh-CN on an en-US Windows install). Falls
+            # back to OS locale only if the front-end didn't pass one.
+            # "detect" is intentionally treated the same way — we no longer
+            # expose true multilingual auto-detect because <2s clips drift
+            # between zh / ko / cy / etc. and we don't ship those models'
+            # downstream pipelines anyway. An explicit code outside the set
+            # is coerced to English with a one-line warning.
+            def _ui_lang_to_whisper(s: str) -> Optional[str]:
+                t = (s or "").strip().lower().replace("_", "-")
+                if not t:
+                    return None
+                primary = t.split("-", 1)[0]
+                return primary if primary in SUPPORTED_LANGS else None
+
+            if language in ("", "auto", "system", "detect"):
+                lang_param: Optional[str] = (
+                    _ui_lang_to_whisper(ui_locale)
+                    or _coerce_supported(_system_language_tag())
+                )
+            elif language in SUPPORTED_LANGS:
+                lang_param = language
+            else:
+                lang_param = (
+                    _ui_lang_to_whisper(ui_locale)
+                    or _coerce_supported(_system_language_tag())
+                )
+                print(
+                    f"[voice] language={language!r} is not in the supported set "
+                    f"{SUPPORTED_LANGS}; falling back to {lang_param!r}.",
+                    file=sys.stderr,
+                )
 
             t0 = time.time()
+            # Whisper's `zh` token covers both Mandarin scripts; the model
+            # outputs Traditional more often than Simplified for short
+            # clips. Bias the decoder with a Simplified-Chinese prompt and
+            # post-convert anything that slips through with `zhconv`.
+            # For en/fr we also pass a short language hint so the decoder
+            # stays in-language on noisy clips.
+            initial_prompt: Optional[str] = None
+            if lang_param == "zh":
+                initial_prompt = "以下是简体中文普通话的句子。请用简体中文输出。"
+            elif lang_param == "en":
+                initial_prompt = "The following is a sentence in English."
+            elif lang_param == "fr":
+                initial_prompt = "Ce qui suit est une phrase en français."
             segments_iter, info = self._model.transcribe(
                 str(tmp_path),
                 language=lang_param,
@@ -363,6 +572,7 @@ class FasterWhisperTranscriber(Transcriber):
                 # a low log-prob threshold.
                 no_speech_threshold=0.6,
                 condition_on_previous_text=False,
+                initial_prompt=initial_prompt,
             )
             # segments_iter is a generator; materialise it to drain decoder.
             parts: list[str] = []
@@ -376,6 +586,14 @@ class FasterWhisperTranscriber(Transcriber):
             elapsed_ms = int((time.time() - t0) * 1000)
 
             text = " ".join(parts).strip()
+            # Whisper still emits Traditional Hanzi for ~zh fairly often even
+            # with a Simplified prompt; force-convert when the user picked zh.
+            if text and lang_param == "zh":
+                try:
+                    from zhconv import convert as _zh_convert  # type: ignore
+                    text = _zh_convert(text, "zh-cn")
+                except Exception as e:  # zhconv missing → leave text alone
+                    print(f"[voice] zhconv unavailable ({e}); leaving Traditional output", file=sys.stderr)
             confidence: float | None = None
             if avg_log_probs:
                 # avg_logprob is negative (closer to 0 = more confident).
@@ -433,7 +651,7 @@ class _StubTranscriber(Transcriber):
     def __init__(self, name: str):
         self.engine = name
 
-    def transcribe(self, audio_bytes: bytes, mime: str = "") -> TranscribeResult:
+    def transcribe(self, audio_bytes: bytes, mime: str = "", ui_locale: str = "") -> TranscribeResult:
         raise NotImplementedError(
             f"Voice engine '{self.engine}' is not implemented yet. "
             "Set [voice].engine = 'faster-whisper' for now."

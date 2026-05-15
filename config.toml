@@ -168,7 +168,7 @@ max_seconds = 30
 # 任意单键或组合，默认单键 Space。设置页提供"录键"按钮捕获新键。
 hotkey = "Space"
 # 长按多少毫秒进入录音；0 = 经典 PTT（按下即录）。<1000 容易误触发，设置页会警告。
-hold_threshold_ms = 5000
+hold_threshold_ms = 3000
 # release（松开即停）/ tap_again（再点一下停，残障友好默认）/ auto_silence（VAD 1.5s 自动停）
 stop_mode = "tap_again"
 # beep（听觉提示）/ vibrate-tray（托盘抖动，纯视觉）/ silent
@@ -177,17 +177,17 @@ start_feedback = "beep"
 focus_aware = true
 
 # ---- 文本去向 ----
-# agent（默认，转录后送主 LLM 当 user message，可发"关掉当前 thread"等控制类指令）
-# dictation（纯听写：插入到当前输入框，由用户人工按回车确认）
-mode = "agent"
-# agent 模式：true=每次起新 thread；false=续到当前 thread
-always_new_thread = false
+# auto（默认）          ：转录后过一个小 LLM 判定意图，路由到 thread_new /
+#                       thread_abort / dictation_append。低置信度时悬浮窗
+#                       弹出三选一让用户点。
+# thread_new           ：跳过分流，每次都开新 thread 当任务执行。
+# dictation_append     ：跳过分流，每次都拼到当前活跃 thread 的输入框 / 文本里。
+mode = "auto"
+# true = 转录完直接发送；false（默认）= 悬浮窗等用户点 ✓ 才发，先给用户检查 / 取消的机会
+auto_send = false
 
 # ---- 悬浮窗（屏顶居中）----
-overlay_position = "top-center"
-overlay_y_offset_px = 8
-# cursor（鼠标所在屏，默认）/ primary（主屏）/ active-window（前台窗口所在屏）
-overlay_screen = "cursor"
+overlay_y_offset_px = 48
 
 # ---- 杂项 ----
 # 是否保留 ~/.lucid/voice/recording-*.webm 供调试

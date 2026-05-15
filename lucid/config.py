@@ -370,11 +370,11 @@ class VoiceConfig:
     start_feedback: str = "beep"     # beep | vibrate-tray | silent
     focus_aware: bool = True         # don't steal Space when an editable is focused
     # ---- text routing ----
-    mode: str = "agent"              # agent (text → LLM as user msg) | dictation (insert into input box)
-    always_new_thread: bool = False  # agent mode: force new thread per utterance
+    mode: str = "auto"               # auto (LLM intent dispatch) | thread_new (always start a task) | dictation_append (always insert into focused input)
+    auto_send: bool = False          # true = commit immediately after the dwell window; false = wait for the user to tap ✓ in the overlay
     # ---- overlay window ----
     overlay_position: str = "top-center"  # only top-center supported for now
-    overlay_y_offset_px: int = 8
+    overlay_y_offset_px: int = 48
     overlay_screen: str = "cursor"   # cursor | primary | active-window
     # ---- misc ----
     keep_audio: bool = False         # keep ~/.lucid/voice/recording-*.webm for debugging

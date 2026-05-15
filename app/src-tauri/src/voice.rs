@@ -136,6 +136,8 @@ pub struct TranscribeArgs {
     pub audio_b64: String,
     #[serde(default)]
     pub mime: Option<String>,
+    #[serde(default)]
+    pub ui_locale: Option<String>,
 }
 
 /// Forward a base64-encoded audio blob to the Python sidecar for transcription.
@@ -145,7 +147,55 @@ pub async fn sidecar_transcribe(args: TranscribeArgs) -> Result<Value, String> {
     if let Some(m) = args.mime {
         params["mime"] = json!(m);
     }
+    if let Some(l) = args.ui_locale {
+        params["ui_locale"] = json!(l);
+    }
     sidecar::instance().request("transcribe_audio", params).await
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchContext {
+    #[serde(default)]
+    pub has_running_thread: Option<bool>,
+    #[serde(default)]
+    pub active_input_focus: Option<bool>,
+    #[serde(default)]
+    pub last_user_text: Option<String>,
+    #[serde(default)]
+    pub locale: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchArgs {
+    pub text: String,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub context: Option<DispatchContext>,
+}
+
+/// Classify a transcribed utterance into thread_new / thread_abort /
+/// dictation_append. See ``lucid/voice_dispatch.py`` and
+/// ``Docs/voice-input.md`` §5.2.
+#[tauri::command]
+pub async fn voice_dispatch(args: DispatchArgs) -> Result<Value, String> {
+    let mut params = json!({"text": args.text});
+    if let Some(m) = args.mode {
+        params["mode"] = json!(m);
+    }
+    if let Some(ctx) = args.context {
+        let mut c = serde_json::Map::new();
+        if let Some(v) = ctx.has_running_thread { c.insert("has_running_thread".into(), json!(v)); }
+        if let Some(v) = ctx.active_input_focus { c.insert("active_input_focus".into(), json!(v)); }
+        if let Some(v) = ctx.last_user_text { c.insert("last_user_text".into(), json!(v)); }
+        if let Some(v) = ctx.locale { c.insert("locale".into(), json!(v)); }
+        if !c.is_empty() {
+            params["context"] = Value::Object(c);
+        }
+    }
+    sidecar::instance().request("voice_dispatch", params).await
 }
 
 #[tauri::command]
@@ -224,6 +274,7 @@ pub async fn voice_overlay_show(app: AppHandle, args: OverlayShowArgs) -> Result
         .inner_size(420.0, 96.0)
         .always_on_top(true)
         .decorations(false)
+        .shadow(false)
         .skip_taskbar(true)
         .resizable(false)
         .transparent(true)
