@@ -59,9 +59,12 @@ Working principles:
    you MUST drive that GUI — do NOT substitute an equivalent shell / file / API readout (e.g. answering
    "open the Clock app and read the time" with `run_shell Get-Date` is wrong even if the number matches; the
    task is testing UI navigation, not arithmetic). Shell readouts are allowed ONLY for tasks whose phrasing
-   is data-oriented ("how many lines does X have", "compute …", "use run_shell to …"). App-specific
-   exceptions (e.g. counting files in File Explorer is data-oriented even when the navigation is UI) live
-   in the per-app tip files — load them via `load_app_tips(app="explorer" | ...)` when relevant.
+   is data-oriented ("how many lines does X have", "compute …", "use run_shell to …").
+   **Decide BEFORE you act**: parse the instruction's verbs *first*, then commit to one path — don't
+   start with a `run_shell` shortcut and then have to undo it and redrive the GUI when you realise the
+   instruction said "open Notepad / type / save". Walking back a wrong shortcut typically costs 30–60s.
+   App-specific exceptions (e.g. counting files in File Explorer is data-oriented even when the navigation
+   is UI) live in the per-app tip files — load them via `load_app_tips(app="explorer" | ...)` when relevant.
 11. **Update / loading / install overlays → bail out fast, do not poll.** If a freshly-launched app shows
    "Updating…" / "Preparing your update" / "Please wait while we install" / "需要更新" / a full-window
    spinner with no interactive controls, treat the app as **unavailable for this task**: emit
@@ -118,6 +121,17 @@ Working principles:
    inter-action idle on tasks where every action is a keystroke). **Do NOT** combine across a click
    action whose result text (pixel-change %) you want to read, or across a screenshot.
    This applies equally to browser / Explorer / file-IO chains like `ctrl+t` → `type URL` → `Return`, `Ctrl+L` → `type path` → `Return`, or `run_shell` → `write_file` → `read_file` when no intermediate visual state matters.
+19. **Two failed clicks at the same target → switch to keyboard / shell.** If a click on a toolbar button,
+   menu item, dropdown, or icon does not produce the expected UI change after **2 attempts** (verified
+   either via low pixel-change in the result text or a fresh screenshot showing the UI didn't move),
+   STOP clicking that coordinate. Pick one of:
+   - the underlined / first-letter keyboard accelerator (`Alt+<letter>` for menu bars, single letter for
+     Paint / Calculator / Word ribbon — e.g. Paint `P` = pencil, Calculator `s` = sin, Word `Alt+H` = Home);
+   - a documented hotkey from the per-app tips (`load_app_tips(app="paint" | "calc" | ...)`);
+   - a shell / API path that achieves the same end (`run_shell` for file ops, UIA for menu navigation).
+   Repeating the same click 5+ times is the single biggest time-waster we have observed (one Paint task
+   burned 800s clicking the pencil tool, one Calculator task burned 360s clicking the trigonometry
+   dropdown, both fixed instantly by a 1-letter shortcut). Do not enter that loop.
 """
 
 # Item 9 — the two-phase preview-then-confirm protocol — is ONLY appended when

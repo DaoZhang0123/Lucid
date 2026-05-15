@@ -137,7 +137,20 @@ class OpenAIChatClient:
         if top_p is not None:
             kwargs["top_p"] = top_p
         resp = self._client.chat.completions.create(**kwargs)
-        msg = resp.choices[0].message
+        # Some upstreams (Copilot under content-filter, certain proxy errors)
+        # return an empty `choices` list. Indexing [0] then raises an opaque
+        # `IndexError: list index out of range` that surfaces in the loop as
+        # `LLM error: list index out of range`. Convert it to a descriptive
+        # RuntimeError so the loop's retry logic and the user-facing log have
+        # something to act on.
+        choices = getattr(resp, "choices", None) or []
+        if not choices:
+            finish = getattr(resp, "system_fingerprint", None)
+            raise RuntimeError(
+                f"LLM returned no choices (model={self.model}, fingerprint={finish}); "
+                "likely a content-filter / upstream rejection—safe to retry."
+            )
+        msg = choices[0].message
         text = msg.content or ""
         calls: list[ToolCall] = []
         for tc in (msg.tool_calls or []):
@@ -426,7 +439,18 @@ class CopilotClient:
         if top_p is not None:
             kwargs["top_p"] = top_p
         resp = client.chat.completions.create(**kwargs)
-        msg = resp.choices[0].message
+        # Copilot occasionally returns an empty `choices` list when the
+        # request is rejected by content filtering or the upstream model is
+        # transiently unavailable. Indexing [0] then raises an opaque
+        # `IndexError: list index out of range`. Convert to a descriptive
+        # RuntimeError so the retry layer can act on it.
+        choices = getattr(resp, "choices", None) or []
+        if not choices:
+            raise RuntimeError(
+                f"Copilot returned no choices (model={self.model}); "
+                "likely a content-filter / upstream rejection—safe to retry."
+            )
+        msg = choices[0].message
         text = msg.content or ""
         calls: list[ToolCall] = []
         for tc in (msg.tool_calls or []):

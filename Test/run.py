@@ -8,8 +8,7 @@ Usage::
 
     python Test/run.py
     python Test/run.py --only A1,B2,C1
-    python Test/run.py --queries Test/queries.json \
-                       --global-timeout 3600
+    python Test/run.py --queries Test/queries.json
 
 Outputs::
 
@@ -254,8 +253,6 @@ def main(argv: list[str] | None = None) -> int:
                         help="path to queries.json")
     parser.add_argument("--only", default="",
                         help="comma-separated query ids to run")
-    parser.add_argument("--global-timeout", type=int, default=120 * 60,
-                        help="hard cap in seconds for the whole run (default 120 min; 48 queries serial typically take 65–80 min)")
     parser.add_argument("--enqueue-gap-ms", type=int, default=300,
                         help="(deprecated, ignored — tasks now run strictly serially)")
     parser.add_argument("--poll-interval", type=float, default=5.0,
@@ -376,15 +373,10 @@ def main(argv: list[str] | None = None) -> int:
             return False
 
         total = len(queries)
-        global_deadline = time.time() + args.global_timeout
         aborted_reason: str | None = None
 
         for idx, q in enumerate(queries, start=1):
             tag = f"[query = {idx}/{total}] {q['id']}"
-            if time.time() > global_deadline:
-                _log(f"{tag} skipped — global-timeout reached")
-                aborted_reason = "global_timeout"
-                break
             if client.proc is not None and client.proc.poll() is not None:
                 _log(f"{tag} skipped — sidecar process has exited (code {client.proc.returncode})")
                 aborted_reason = "sidecar_died"
@@ -459,10 +451,6 @@ def main(argv: list[str] | None = None) -> int:
             cancelled_at = 0.0
             last_log = time.time()
             while True:
-                if time.time() > global_deadline:
-                    _log(f"{tag} global-timeout reached while waiting; bailing out")
-                    aborted_reason = "global_timeout"
-                    break
                 if client.proc is not None and client.proc.poll() is not None:
                     _log(f"{tag} sidecar process exited (code {client.proc.returncode}); bailing out")
                     aborted_reason = "sidecar_died"

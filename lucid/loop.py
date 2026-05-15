@@ -535,6 +535,12 @@ class Agent:
                         raise exc
                     last_exc = exc
                     kind = f"http{status}"
+                elif isinstance(exc, RuntimeError) and "no choices" in str(exc):
+                    # Upstream returned 200 but with an empty `choices` list
+                    # (Copilot content filter, transient model rejection, etc.)
+                    # Retry — same backoff as a connection error.
+                    last_exc = exc
+                    kind = "no-choices"
                 else:
                     raise exc
             else:

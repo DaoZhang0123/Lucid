@@ -136,17 +136,10 @@ Optional flags:
 # Run only specific ids (debug / re-run failures from previous round)
 .\.venv\Scripts\python.exe Test\run.py --only A1,B2,L1,M3
 
-# Bigger global timeout (default 120 min — 57 queries serial typically take 75–95 min)
-.\.venv\Scripts\python.exe Test\run.py --global-timeout 10800
-
 # Cancel the current task if its events.jsonl has not advanced for N
 # seconds (default 1200). Cancelling moves on to the next task in the
 # queue — it does NOT shut down the run.
 .\.venv\Scripts\python.exe Test\run.py --per-task-cap 1800
-
-# Whole-run wedge cap: if neither tid nor queue length nor events
-# activity changes for N seconds, abort the whole run (default 600).
-.\.venv\Scripts\python.exe Test\run.py --queue-idle-cap 1200
 ```
 
 What `run.py` does (one paragraph):
