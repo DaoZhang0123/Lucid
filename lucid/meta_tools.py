@@ -609,13 +609,21 @@ REGION_SCHEMA: dict = {
             "rect {x,y,w,h}). Each region is a stable area like 'editor' / 'activity_bar' / 'chat_view' / 'input_box'. "
             "Use the returned center as the click target instead of guessing pixel coordinates from a screenshot. "
             "The App's window is brought to the foreground first (so coordinates reflect what's currently visible). "
-            "Available (app, region) pairs are listed in the system prompt under 'Available region(...) lookups'."
+            "Available (app, region) pairs are listed in the system prompt under 'Available region(...) lookups'. "
+            "Pass `window_index` (default 0) to target the Nth visible window when an app has multiple windows "
+            "open (e.g. Teams chat pop-outs)."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "app": {"type": "string", "description": "App slug (same as `launch_app`)."},
                 "name": {"type": "string", "description": "Region name within that App."},
+                "window_index": {
+                    "type": "integer",
+                    "description": "0-based index when the app has multiple visible windows. Default 0 (main window).",
+                    "default": 0,
+                    "minimum": 0,
+                },
             },
             "required": ["app", "name"],
         },
@@ -970,7 +978,11 @@ def dispatch_meta_tool(
         name = (args.get("name") or "").strip()
         if not app or not name:
             return ToolResult(error="app and name required")
-        result = regions_mod.region(cfg.regions, cfg.launchers, app, name)
+        try:
+            window_index = int(args.get("window_index") or 0)
+        except (TypeError, ValueError):
+            window_index = 0
+        result = regions_mod.region(cfg.regions, cfg.launchers, app, name, window_index=window_index)
         if isinstance(result, dict):  # error
             return ToolResult(error=result.get("message", "region lookup failed"))
         d = result.to_dict()

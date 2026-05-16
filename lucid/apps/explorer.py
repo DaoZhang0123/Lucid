@@ -30,3 +30,30 @@ LAUNCHER = {
     "exe": "explorer",
     "process": "explorer.exe",
 }
+
+
+# Region calibration spec — see Docs/regions.md §10 (v2.3). Modern Explorer
+# (Win11) uses XAML controls with stable AutomationIds, so AutomationId is
+# strongly preferred. Name candidates are listed as a fallback for older shells.
+REGIONS_UIA_SPEC = {
+    "navigation_pane": {
+        "automation_id": "NavigationView",
+        "description": "Left navigation tree (Quick access / This PC / Network / drives).",
+    },
+    "content_pane": {
+        "automation_id": "ItemsView",
+        "description": "Right file/folder grid showing the contents of the current folder.",
+    },
+    "toolbar": {
+        "automation_id": "ToolbarWindow32",
+        "description": "Top toolbar (cut/copy/paste/rename/share/sort/view).",
+    },
+    "address_bar": {
+        "name_candidates": [
+            "\u5730\u5740",       # 地址
+            "Address",
+            "Adresse",
+        ],
+        "description": "Breadcrumb / address bar at the top.",
+    },
+}

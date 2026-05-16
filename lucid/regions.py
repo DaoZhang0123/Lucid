@@ -173,48 +173,172 @@ def list_apps_with_regions(cfg: RegionsConfig) -> list[dict[str, Any]]:
 
 
 def calibrate(cfg: RegionsConfig, launcher_cfg, app: str) -> dict[str, Any]:
-    """Write a default region file for ``app`` based on its current window size.
+    """Write a region file for ``app`` based on its currently visible window.
 
-    Falls back to {1920, 1080} if the window can't be located.
+    Strategy resolution order (best-effort, falls back silently):
+
+    1. **UIA**: if ``lucid.apps.<slug>`` exports ``REGIONS_UIA_SPEC``, ask
+       Windows UI Automation for each named element's BoundingRectangle and
+       convert to (x_pct, y_pct, w_pct, h_pct) of the client area. Misses
+       (control not found / UIA unavailable) fall through to the next
+       strategy for the same region name.
+    2. **Percent heuristic**: ``DEFAULT_LAYOUTS[slug]`` provides static
+       fractional rects per region — equivalent to the v0 behaviour, used
+       both as standalone fallback and to cover regions the UIA spec
+       didn't enumerate.
+
+    The merged result records the resolution method per region in
+    ``regions[name]["resolved_by"]`` ("uia" / "percent") and the overall
+    ``calibration_strategy`` field is "uia" if **any** region was resolved by
+    UIA, else "percent".
     """
     slug = _slugify(app)
     layout = _resolve_layout(slug)
-    if layout is None:
-        return {"ok": False, "message": f"no default layout for {slug!r}; manual calibration required"}
+    uia_spec = _load_uia_spec(slug)
+    if layout is None and not uia_spec:
+        return {"ok": False, "message": f"no default layout or UIA spec for {slug!r}; manual calibration required"}
     win = launchers_mod.find_app_window(launcher_cfg, slug)
     w_h = (1920, 1080)
     title = ""
+    client_origin = (0, 0)
     if win is not None and sys.platform == "win32":
         try:
-            import ctypes
-            from ctypes import wintypes
-
-            user32 = ctypes.windll.user32
-            rect = wintypes.RECT()
-            user32.GetClientRect(win.hwnd, ctypes.byref(rect))
-            w_h = (max(1, rect.right - rect.left), max(1, rect.bottom - rect.top))
+            cx, cy, cw, ch = _client_to_screen(win.hwnd)
+            w_h = (cw, ch)
+            client_origin = (cx, cy)
             title = win.title
         except Exception:
             pass
-    data = {
-        "version": 1,
-        "app": slug,
-        "calibrated_at": datetime.now().isoformat(timespec="seconds"),
-        "window_size": {"w": w_h[0], "h": w_h[1]},
-        "window_title_sample": title,
-        "regions": {
-            name: {
+
+    # Try UIA first per region name.
+    uia_resolved: dict[str, dict[str, Any]] = {}
+    if uia_spec and win is not None and sys.platform == "win32":
+        # Bring window to foreground so UIA's accessible tree is up to date
+        # (some apps lazily build the tree only when focused).
+        try:
+            launchers_mod._force_foreground(win.hwnd)  # noqa: WPS437
+            time.sleep(0.10)
+        except Exception:
+            pass
+        try:
+            from . import uia as _uia
+        except Exception:
+            _uia = None  # type: ignore[assignment]
+        if _uia is not None:
+            cw = max(1, w_h[0])
+            ch = max(1, w_h[1])
+            ox, oy = client_origin
+            for region_name, spec in uia_spec.items():
+                rect = None
+                aid = spec.get("automation_id")
+                names = spec.get("name_candidates") or []
+                # AutomationId first when supplied — most stable across UI locales.
+                if aid:
+                    rect = _uia.find_first_by_automation_id(int(win.hwnd), str(aid))
+                if rect is None and names:
+                    rect = _uia.find_first_by_name(int(win.hwnd), list(names))
+                if rect is None:
+                    continue
+                left, top, right, bottom = rect
+                # Convert screen-space rect to client-relative percentages.
+                x_pct = max(0.0, min(1.0, (left - ox) / cw))
+                y_pct = max(0.0, min(1.0, (top - oy) / ch))
+                w_pct = max(0.001, min(1.0, (right - left) / cw))
+                h_pct = max(0.001, min(1.0, (bottom - top) / ch))
+                hint: dict[str, Any] = {}
+                if aid:
+                    hint["automation_id"] = aid
+                if names:
+                    hint["name_candidates"] = list(names)
+                uia_resolved[region_name] = {
+                    "x_pct": round(x_pct, 4),
+                    "y_pct": round(y_pct, 4),
+                    "w_pct": round(w_pct, 4),
+                    "h_pct": round(h_pct, 4),
+                    "description": spec.get("description") or "",
+                    "resolved_by": "uia",
+                    "uia_hint": hint,
+                }
+
+    # Merge UIA hits with percent-heuristic layout (UIA wins).
+    regions: dict[str, dict[str, Any]] = {}
+    if layout is not None:
+        for name, spec in layout.items():
+            regions[name] = {
                 "x_pct": round(spec[0], 4),
                 "y_pct": round(spec[1], 4),
                 "w_pct": round(spec[2], 4),
                 "h_pct": round(spec[3], 4),
                 "description": spec[4],
+                "resolved_by": "percent",
             }
-            for name, spec in layout.items()
-        },
+    regions.update(uia_resolved)
+
+    strategy = "uia" if uia_resolved else "percent"
+    data = {
+        "version": 2,
+        "app": slug,
+        "calibrated_at": datetime.now().isoformat(timespec="seconds"),
+        "calibration_strategy": strategy,
+        "window_size": {"w": w_h[0], "h": w_h[1]},
+        "window_title_sample": title,
+        "regions": regions,
     }
     p = save_app_regions(cfg, slug, data)
-    return {"ok": True, "slug": slug, "regions": list(data["regions"].keys()), "file": str(p), "window_size": data["window_size"]}
+    return {
+        "ok": True,
+        "slug": slug,
+        "regions": list(regions.keys()),
+        "uia_resolved": list(uia_resolved.keys()),
+        "calibration_strategy": strategy,
+        "file": str(p),
+        "window_size": data["window_size"],
+    }
+
+
+def _load_uia_spec(slug: str) -> dict[str, dict[str, Any]] | None:
+    """Return ``REGIONS_UIA_SPEC`` from ``lucid.apps.<slug>`` if defined."""
+    try:
+        import importlib
+
+        mod = importlib.import_module(f"lucid.apps.{slug}")
+    except Exception:
+        return None
+    spec = getattr(mod, "REGIONS_UIA_SPEC", None)
+    if not isinstance(spec, dict) or not spec:
+        return None
+    return spec
+
+
+# v2.1 — Signature drift detection. The cached percentages are only meaningful
+# if the live client area is roughly the same shape & size as at calibration
+# time. If the user dragged a sidebar way out, switched to a tablet-mode
+# layout, or moved the window across DPI boundaries, the percentages no longer
+# point at the right control. Rather than silently returning a wrong rect,
+# refuse and tell the agent to recalibrate.
+_DRIFT_RATIO_THRESHOLD = 0.25  # >25% relative size change on either edge
+
+
+def _signature_drift_message(data: dict[str, Any], cw: int, ch: int) -> str | None:
+    sig = data.get("window_size") or {}
+    try:
+        sw = int(sig.get("w") or 0)
+        sh = int(sig.get("h") or 0)
+    except Exception:
+        sw = sh = 0
+    if sw <= 0 or sh <= 0 or cw <= 0 or ch <= 0:
+        return None  # missing baseline → don't block
+    dw = abs(cw - sw) / sw
+    dh = abs(ch - sh) / sh
+    if dw <= _DRIFT_RATIO_THRESHOLD and dh <= _DRIFT_RATIO_THRESHOLD:
+        return None
+    slug = data.get("app") or "<app>"
+    return (
+        f"window for {slug!r} resized since calibration "
+        f"(was {sw}x{sh}, now {cw}x{ch} — drift "
+        f"{int(max(dw, dh) * 100)}%); call regions_calibrate(app={slug!r}) "
+        f"to refresh the percentages, or pick coordinates from a fresh screenshot."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -259,10 +383,21 @@ def _client_to_screen(hwnd: int) -> tuple[int, int, int, int]:
     return int(pt.x), int(pt.y), w, h
 
 
-def region(cfg: RegionsConfig, launcher_cfg, app: str, name: str) -> ResolvedRegion | dict[str, Any]:
+def region(
+    cfg: RegionsConfig,
+    launcher_cfg,
+    app: str,
+    name: str,
+    *,
+    window_index: int = 0,
+) -> ResolvedRegion | dict[str, Any]:
     """Resolve a named region to **screen** coordinates.
 
     Returns a ``ResolvedRegion`` on success, or an ``{ok: False, message}`` dict on failure.
+
+    ``window_index`` (v3.4) selects which matching window to resolve against when
+    an app has multiple visible windows (e.g. Teams chat pop-outs). Default 0
+    (main window). If the index is out of range an error dict is returned.
     """
     slug = _slugify(app)
     data = load_app_regions(cfg, slug)
@@ -279,13 +414,30 @@ def region(cfg: RegionsConfig, launcher_cfg, app: str, name: str) -> ResolvedReg
             "ok": False,
             "message": f"region {name!r} not found in {slug!r}; available: {sorted(regions.keys())}",
         }
-    win = launchers_mod.find_app_window(launcher_cfg, slug)
-    if win is None or sys.platform != "win32":
+    if sys.platform != "win32":
         return {"ok": False, "message": f"window for {slug!r} not currently visible; launch_app first"}
+    wins = launchers_mod.find_app_windows(launcher_cfg, slug)
+    if not wins:
+        return {"ok": False, "message": f"window for {slug!r} not currently visible; launch_app first"}
+    if window_index < 0 or window_index >= len(wins):
+        titles = [w.title for w in wins]
+        return {
+            "ok": False,
+            "message": (
+                f"window_index={window_index} out of range for {slug!r} "
+                f"(found {len(wins)} window(s): {titles}); pass 0..{len(wins) - 1}"
+            ),
+        }
+    win = wins[window_index]
     # Make sure foreground (some apps use overlays that change layout when bg)
     launchers_mod._force_foreground(win.hwnd)  # noqa: WPS437
     time.sleep(0.05)
     left, top, cw, ch = _client_to_screen(win.hwnd)
+    # Signature drift: if the live client area is dramatically different from
+    # the size at calibration time, the cached percentages are likely wrong.
+    drift = _signature_drift_message(data, cw, ch)
+    if drift:
+        return {"ok": False, "message": drift, "slug": slug, "name": name}
     x = int(round(left + cw * float(spec.get("x_pct", 0))))
     y = int(round(top + ch * float(spec.get("y_pct", 0))))
     w = max(1, int(round(cw * float(spec.get("w_pct", 0)))))
@@ -319,7 +471,73 @@ def regions_for_prompt(cfg: RegionsConfig) -> str:
         "\n## Available `region(app, name)` lookups\n"
         "Use `region(app=\"<slug>\", name=\"<region>\")` to convert a known UI region of an app's window into "
         "**screen coordinates** (returns center + bounding rect). The app's window must be focusable. Use this "
-        "instead of guessing pixel coordinates from a screenshot.\n"
+        "instead of guessing pixel coordinates from a screenshot. "
+        "Pass `window_index=N` (default 0) to target a specific window when an app has multiple visible "
+        "windows (e.g. Teams chat pop-outs).\n"
         + "\n".join(lines)
         + "\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# v3.3 — Background auto-recalibration (called from DozeWorker idle pass).
+# ---------------------------------------------------------------------------
+
+
+def auto_recalibrate_pass(cfg: RegionsConfig, launcher_cfg) -> dict[str, Any]:
+    """Scan all calibrated apps; for each one whose window is currently visible
+    AND whose live client area drifted past ``_DRIFT_RATIO_THRESHOLD``, run a
+    fresh ``calibrate(...)`` so the cached percentages stay accurate.
+
+    Returns a summary dict ``{ok, scanned, recalibrated, skipped, errors}``.
+    Caller (DozeWorker) is responsible for the OS-level "user idle" gating —
+    this function does NOT check input idleness; it just does the work.
+    """
+    if sys.platform != "win32":
+        return {"ok": False, "scanned": 0, "recalibrated": [], "skipped": [], "errors": ["non-win32"]}
+    items = list_apps_with_regions(cfg)
+    recalibrated: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for it in items:
+        slug = it.get("slug") or ""
+        if not slug:
+            continue
+        try:
+            data = load_app_regions(cfg, slug)
+            if not data:
+                continue
+            win = launchers_mod.find_app_window(launcher_cfg, slug)
+            if win is None:
+                skipped.append({"slug": slug, "reason": "window not visible"})
+                continue
+            try:
+                _left, _top, cw, ch = _client_to_screen(win.hwnd)
+            except Exception as exc:
+                errors.append(f"{slug}: client-rect: {type(exc).__name__}: {exc}")
+                continue
+            if _signature_drift_message(data, cw, ch) is None:
+                skipped.append({"slug": slug, "reason": "no drift"})
+                continue
+            # Drifted → recalibrate. Note: ``calibrate`` calls _force_foreground
+            # which briefly raises the window. The DozeWorker only invokes us
+            # when the OS reports the user has been idle for a while, so this
+            # is acceptable.
+            result = calibrate(cfg, launcher_cfg, slug)
+            if result.get("ok"):
+                recalibrated.append({
+                    "slug": slug,
+                    "old_size": data.get("window_size"),
+                    "new_size": result.get("window_size"),
+                })
+            else:
+                errors.append(f"{slug}: calibrate: {result.get('message', '?')}")
+        except Exception as exc:  # never crash the doze loop
+            errors.append(f"{slug}: {type(exc).__name__}: {exc}")
+    return {
+        "ok": True,
+        "scanned": len(items),
+        "recalibrated": recalibrated,
+        "skipped": skipped,
+        "errors": errors,
+    }

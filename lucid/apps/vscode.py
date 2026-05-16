@@ -18,3 +18,31 @@ LAUNCHER = {
     "process": "Code.exe",
     "window_title_re": r"Visual Studio Code",
 }
+
+
+# Region calibration spec — see Docs/regions.md §10 (v2.2). VS Code is
+# Electron + Chromium, so the most stable selector is AutomationId, which
+# doesn't change with UI locale. ``REGIONS_UIA_SPEC`` is consumed by
+# ``lucid.regions._calibrate_via_uia`` (AutomationId first, then name fallback).
+REGIONS_UIA_SPEC = {
+    "activity_bar": {
+        "automation_id": "workbench.parts.activitybar",
+        "description": "Left-edge vertical strip with explorer / search / git / extensions icons.",
+    },
+    "primary_sidebar": {
+        "automation_id": "workbench.parts.sidebar",
+        "description": "Primary sidebar (file explorer / search / etc.).",
+    },
+    "editor": {
+        "automation_id": "workbench.parts.editor",
+        "description": "Center editor area where files are open in tabs.",
+    },
+    "panel": {
+        "automation_id": "workbench.parts.panel",
+        "description": "Bottom panel (terminal / output / problems).",
+    },
+    "status_bar": {
+        "automation_id": "workbench.parts.statusbar",
+        "description": "Bottom status bar.",
+    },
+}

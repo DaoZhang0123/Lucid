@@ -197,3 +197,183 @@ def element_rect_at(x: int, y: int) -> Optional[Tuple[int, int, int, int]]:
             _release_unknown(elem_ptr.value)
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# find_first_by_name — locate a UIA element inside a window by Name property.
+#
+# Used by the region-calibration path (see lucid/regions.py + Docs/regions.md):
+# given a known compose-box / send-button name (e.g. "键入消息" / "Type a
+# message"), returns its screen-space BoundingRectangle.
+#
+# Implementation: IUIAutomation::ElementFromHandle(hwnd) → root element →
+# IUIAutomation::CreatePropertyCondition(UIA_NamePropertyId, VT_BSTR<name>) →
+# IUIAutomationElement::FindFirst(TreeScope_Subtree, condition).
+# All raw vtable indexing because we don't have IDL stubs.
+# ---------------------------------------------------------------------------
+
+# UIA property IDs (from UIAutomationClient.h).
+UIA_NamePropertyId = 30005
+UIA_AutomationIdPropertyId = 30011
+UIA_ClassNamePropertyId = 30012
+
+TreeScope_Subtree = 7
+VT_BSTR = 8
+
+
+def find_first_by_name(hwnd: int, name_candidates: list[str]) -> Optional[Tuple[int, int, int, int]]:
+    """Return the (left, top, right, bottom) of the first UIA element under
+    ``hwnd`` whose ``Name`` matches one of ``name_candidates`` (tried in order).
+    ``None`` on any failure or no match.
+
+    First call typically takes 100-500 ms on WebView-based apps (Teams, modern
+    Outlook) because UIA has to spin up the accessibility tree; subsequent
+    calls reuse the cached COM apartment and run in <50 ms. Designed to be
+    used at calibration time and the result cached as a percentage in
+    ``regions/<slug>.json``, NOT on every region lookup.
+    """
+    return _find_first_by_string_property(hwnd, UIA_NamePropertyId, name_candidates)
+
+
+def find_first_by_automation_id(hwnd: int, automation_id: str) -> Optional[Tuple[int, int, int, int]]:
+    """Same as :func:`find_first_by_name` but matches against ``AutomationId``.
+
+    AutomationId is the most stable selector for Electron / Chromium apps
+    (VS Code, Teams new client, Slack) because it doesn't change with UI
+    locale. Use this whenever the app exposes one.
+    """
+    if not automation_id:
+        return None
+    return _find_first_by_string_property(hwnd, UIA_AutomationIdPropertyId, [automation_id])
+
+
+def _find_first_by_string_property(
+    hwnd: int,
+    property_id: int,
+    candidates: list[str],
+) -> Optional[Tuple[int, int, int, int]]:
+    if not _ensure_init() or _uia is None:
+        return None
+    if not candidates:
+        return None
+    try:
+        import ctypes
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        # VARIANT — 24 bytes on 64-bit Windows. Pad the union to 16 bytes so
+        # the total matches the SDK layout regardless of which field we set.
+        class _VARIANT_UNION(ctypes.Union):
+            _fields_ = [
+                ("bstrVal", ctypes.c_void_p),  # we set BSTR manually via SysAllocString
+                ("lVal", ctypes.c_long),
+                ("_pad", ctypes.c_byte * 16),
+            ]
+
+        class VARIANT(ctypes.Structure):
+            _anonymous_ = ("u",)
+            _fields_ = [
+                ("vt", ctypes.c_ushort),
+                ("wReserved1", ctypes.c_ushort),
+                ("wReserved2", ctypes.c_ushort),
+                ("wReserved3", ctypes.c_ushort),
+                ("u", _VARIANT_UNION),
+            ]
+
+        oleaut = ctypes.windll.oleaut32
+        oleaut.SysAllocString.restype = ctypes.c_void_p
+        oleaut.SysAllocString.argtypes = [ctypes.c_wchar_p]
+        oleaut.SysFreeString.restype = None
+        oleaut.SysFreeString.argtypes = [ctypes.c_void_p]
+
+        uia_p = ctypes.c_void_p(_uia)
+        uia_vtbl = ctypes.cast(uia_p, ctypes.POINTER(ctypes.c_void_p))[0]
+
+        # IUIAutomation::ElementFromHandle is vtable slot 6.
+        ElementFromHandle_ptr = ctypes.cast(uia_vtbl, ctypes.POINTER(ctypes.c_void_p))[6]
+        ElementFromHandle = ctypes.WINFUNCTYPE(
+            ctypes.c_long,
+            ctypes.c_void_p,        # this
+            ctypes.c_void_p,        # HWND
+            ctypes.POINTER(ctypes.c_void_p),  # out IUIAutomationElement**
+        )(ElementFromHandle_ptr)
+
+        # IUIAutomation::CreatePropertyCondition is vtable slot 23.
+        # (After ElementFromIAccessible/9, GetFocusedElement/8 etc. — verified against UIAutomationClient.h.)
+        CreatePropertyCondition_ptr = ctypes.cast(uia_vtbl, ctypes.POINTER(ctypes.c_void_p))[23]
+        CreatePropertyCondition = ctypes.WINFUNCTYPE(
+            ctypes.c_long,
+            ctypes.c_void_p,        # this
+            ctypes.c_int,           # PROPERTYID
+            VARIANT,                # VARIANT (by value)
+            ctypes.POINTER(ctypes.c_void_p),  # out IUIAutomationCondition**
+        )(CreatePropertyCondition_ptr)
+
+        root_ptr = ctypes.c_void_p()
+        hr = ElementFromHandle(uia_p, ctypes.c_void_p(int(hwnd)), ctypes.byref(root_ptr))
+        if hr < 0 or not root_ptr.value:
+            return None
+
+        try:
+            # IUIAutomationElement::FindFirst is vtable slot 5.
+            elem_vtbl = ctypes.cast(root_ptr, ctypes.POINTER(ctypes.c_void_p))[0]
+            FindFirst_ptr = ctypes.cast(elem_vtbl, ctypes.POINTER(ctypes.c_void_p))[5]
+            FindFirst = ctypes.WINFUNCTYPE(
+                ctypes.c_long,
+                ctypes.c_void_p,    # this
+                ctypes.c_int,       # TreeScope
+                ctypes.c_void_p,    # IUIAutomationCondition*
+                ctypes.POINTER(ctypes.c_void_p),  # out IUIAutomationElement**
+            )(FindFirst_ptr)
+
+            for value in candidates:
+                bstr = oleaut.SysAllocString(value)
+                if not bstr:
+                    continue
+                v = VARIANT()
+                v.vt = VT_BSTR
+                v.bstrVal = bstr
+                cond_ptr = ctypes.c_void_p()
+                hr = CreatePropertyCondition(uia_p, property_id, v, ctypes.byref(cond_ptr))
+                # CreatePropertyCondition copies the BSTR; we always free ours.
+                oleaut.SysFreeString(bstr)
+                if hr < 0 or not cond_ptr.value:
+                    continue
+                found_ptr = ctypes.c_void_p()
+                try:
+                    hr = FindFirst(root_ptr, TreeScope_Subtree, cond_ptr, ctypes.byref(found_ptr))
+                finally:
+                    _release_unknown(cond_ptr.value)
+                if hr < 0 or not found_ptr.value:
+                    continue
+                try:
+                    found_vtbl = ctypes.cast(found_ptr, ctypes.POINTER(ctypes.c_void_p))[0]
+                    BoundingRect_ptr = ctypes.cast(found_vtbl, ctypes.POINTER(ctypes.c_void_p))[43]
+                    GetBounds = ctypes.WINFUNCTYPE(
+                        ctypes.c_long,
+                        ctypes.c_void_p,
+                        ctypes.POINTER(RECT),
+                    )(BoundingRect_ptr)
+                    r = RECT()
+                    hr = GetBounds(found_ptr, ctypes.byref(r))
+                    if hr < 0:
+                        continue
+                    left, top, right, bottom = int(r.left), int(r.top), int(r.right), int(r.bottom)
+                    if right <= left or bottom <= top:
+                        continue
+                    return (left, top, right, bottom)
+                finally:
+                    _release_unknown(found_ptr.value)
+            return None
+        finally:
+            _release_unknown(root_ptr.value)
+    except Exception:
+        return None
+
+

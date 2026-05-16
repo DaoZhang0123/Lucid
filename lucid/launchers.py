@@ -736,3 +736,11 @@ def find_app_window(cfg: LaunchersConfig, app: str) -> WindowMatch | None:
         return None
     wins = _find_windows(spec)
     return wins[0] if wins else None
+
+
+def find_app_windows(cfg: LaunchersConfig, app: str) -> list[WindowMatch]:
+    """Return ALL visible windows matching the launcher spec (for pop-out / multi-instance)."""
+    spec = get_launcher(cfg, app)
+    if spec is None:
+        return []
+    return _find_windows(spec)

@@ -35,6 +35,7 @@ from .config import Config
 from . import memory as memory_mod
 from . import tooltips as tooltips_mod
 from . import meta_tools as meta_tools_mod
+from . import regions as regions_mod
 from .runlog import ThreadLog, resolve_logs_root, resolve_threads_root
 from .llm_client import LLMClient
 
@@ -670,6 +671,12 @@ class DozeWorker:
             did_taskbar = self._maybe_run_taskbar_learn_pass()
             if did_taskbar and self._cancel.is_set():
                 return
+        # v3.3 — region auto-recalibration. Cheap (no LLM, no foreground unless
+        # a window has actually drifted). Gated below on OS input idleness so we
+        # never raise a window in front of the user mid-keystroke.
+        self._maybe_run_regions_recalibrate_pass()
+        if self._cancel.is_set():
+            return
         if thread is None:
             return
         self._cancel.clear()
@@ -874,6 +881,69 @@ class DozeWorker:
         finally:
             self._running = False
         return True
+
+    # ---- v3.3: regions auto-recalibration ----
+
+    # Minimum OS-level input idle (no keystroke / mouse movement) before we
+    # dare bring an app window to the foreground for recalibration.
+    _RECALIBRATE_OS_IDLE_SEC = 60
+
+    @staticmethod
+    def _os_input_idle_sec() -> float:
+        """Seconds since the user last touched keyboard or mouse, system-wide.
+
+        Uses Win32 ``GetLastInputInfo``. Returns 0.0 on any failure (which
+        causes the caller to skip recalibration — fail-safe).
+        """
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class LASTINPUTINFO(ctypes.Structure):
+                _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+            lii = LASTINPUTINFO()
+            lii.cbSize = ctypes.sizeof(LASTINPUTINFO)
+            if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+                return 0.0
+            now = ctypes.windll.kernel32.GetTickCount()
+            return max(0.0, (now - lii.dwTime) / 1000.0)
+        except Exception:
+            return 0.0
+
+    def _maybe_run_regions_recalibrate_pass(self) -> bool:
+        """If regions are enabled AND the user has been input-idle for a while,
+        scan calibrated apps and refresh those whose window has drifted."""
+        regions_cfg = getattr(self.cfg, "regions", None)
+        launcher_cfg = getattr(self.cfg, "launchers", None)
+        if regions_cfg is None or launcher_cfg is None:
+            return False
+        if not getattr(regions_cfg, "enabled", False):
+            return False
+        os_idle = self._os_input_idle_sec()
+        if os_idle < self._RECALIBRATE_OS_IDLE_SEC:
+            return False
+        try:
+            summary = regions_mod.auto_recalibrate_pass(regions_cfg, launcher_cfg)
+        except Exception as exc:
+            self._last_error = f"regions_recalibrate: {type(exc).__name__}: {exc}"
+            _append_log(self.cfg, f"[{_now_iso()}] regions recalibrate error: {self._last_error}")
+            return False
+        recal = summary.get("recalibrated") or []
+        if not recal and not summary.get("errors"):
+            return False
+        _append_log(
+            self.cfg,
+            f"[{_now_iso()}] regions recalibrate scanned={summary.get('scanned')} "
+            f"recalibrated={[r.get('slug') for r in recal]} errors={summary.get('errors') or []}",
+        )
+        if recal:
+            self._event_sink({
+                "event": "region_recalibrated",
+                "apps": recal,
+                "os_idle_sec": int(os_idle),
+            })
+        return bool(recal)
 
     # ---- LLM round ----
 
