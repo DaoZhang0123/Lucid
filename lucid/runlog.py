@@ -29,6 +29,31 @@ from typing import Any
 
 from .config import LoggingConfig
 
+
+def _empty_system_clipboard() -> None:
+    """Best-effort wipe of the Windows clipboard. Silent on failure / non-Windows.
+
+    Used at task_close to prevent one task's clipboard residue (typically a
+    formula like ``=137*24+9`` from an A-class calculation task) from leaking
+    into the next task's first paste in Excel / PowerPoint, where it auto-
+    evaluates and corrupts the cell.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        for _ in range(3):
+            if user32.OpenClipboard(None):
+                try:
+                    user32.EmptyClipboard()
+                finally:
+                    user32.CloseClipboard()
+                return
+            time.sleep(0.05)
+    except Exception:
+        return
+
 _TEXT_LEVELS: dict[str, int] = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "OFF": 100}
 _IMAGE_LEVELS: dict[str, int] = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "OFF": 100}
 
@@ -299,6 +324,14 @@ class ThreadLog:
         if final_text:
             self._write_text("INFO", f"final: {final_text}")
         self.append_event({"event": "task_close", "status": status, "final_text": final_text})
+        # Cross-task clipboard hygiene: many tasks paste an answer or formula
+        # via the clipboard (`type` action) and leave it sitting there. The
+        # next task — especially Excel / PowerPoint cells that auto-evaluate
+        # `=...` strings — picks up the residue and produces wrong results
+        # (E2E run 20260515-223342 A1→O3/P4 chain: cell shows 3297 from
+        # `=137*24+9`). Empty the system clipboard at every task_close as a
+        # cheap belt-and-braces cleanup.
+        _empty_system_clipboard()
 
     # ---------- listing / deletion ----------
 

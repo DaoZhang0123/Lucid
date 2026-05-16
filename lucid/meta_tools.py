@@ -1394,6 +1394,22 @@ def _dispatch_run_shell(args: dict[str, Any], cfg: Config) -> ToolResult:
         timeout = float(cfg.shell.timeout_s)
     timeout = max(0.5, min(timeout, 120.0))  # hard cap
 
+    # Detached-launch guard: a `start <exe>` (cmd) or `Start-Process <exe>`
+    # (PowerShell) is supposed to be non-blocking, but we've seen cases where
+    # it wedges the entire run_shell call (mspaint / outlook cold-start that
+    # opens a modal license / first-run dialog the parent shell waits on),
+    # which then hits the 120s hard cap and looks like a sidecar hang. Cap
+    # such commands at 10s — by then the child either painted a window
+    # (success) or is stuck behind a modal we can't dismiss anyway.
+    cmd_stripped = cmd.strip().lower()
+    looks_like_detached_launch = (
+        cmd_stripped.startswith("start ")
+        or cmd_stripped.startswith('start "')
+        or cmd_stripped.startswith("start-process ")
+    )
+    if looks_like_detached_launch and timeout > 10.0:
+        timeout = 10.0
+
     # CREATE_NO_WINDOW = 0x08000000 — hides any console window the child would
     # otherwise spawn. On Windows only; harmless flag elsewhere.
     creationflags = 0x08000000 if os.name == "nt" else 0

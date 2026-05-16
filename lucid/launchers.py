@@ -197,7 +197,16 @@ def _title_matches(spec: dict[str, Any], title: str) -> bool:
     if pat is not None:
         return bool(pat.search(title or ""))
     if title_sub:
-        return str(title_sub) in (title or "")
+        # Word-boundary match (case-insensitive). Plain `in` substring is too
+        # loose — e.g. focus_window("Lucid") was matching OneNote pages whose
+        # title happened to contain the word "Lucid". Anchoring to non-word
+        # chars avoids those false positives while still allowing matches like
+        # "Microsoft Lucid - Demo" or "Lucid 1.2.3".
+        try:
+            return bool(re.search(r"(?:^|\W)" + re.escape(str(title_sub)) + r"(?:\W|$)",
+                                   title or "", re.IGNORECASE))
+        except re.error:
+            return str(title_sub).lower() in (title or "").lower()
     return False
 
 
@@ -626,7 +635,22 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
     if exe:
         try:
             subprocess.Popen(exe, shell=True)
-            wins2 = _wait_for_windows(spec, timeout=_launch_timeout(spec, 2.0))
+            wait_s = _launch_timeout(spec, 2.0)
+            wins2 = _wait_for_windows(spec, timeout=wait_s)
+            # Cold-start retry: many Office / Paint / browser binaries fail to
+            # produce a top-level window on the FIRST `Popen` (App Paths alias
+            # resolves but the splash never paints — user sees nothing happen).
+            # A second spawn after a 1s breather almost always works. Cheap to
+            # try; saves the model from manually falling back to `run_shell start`.
+            if not wins2:
+                running, _pid = _is_running_by_name(spec.get("process") or "")
+                if not running:
+                    time.sleep(1.0)
+                    try:
+                        subprocess.Popen(exe, shell=True)
+                    except Exception:
+                        pass
+                    wins2 = _wait_for_windows(spec, timeout=wait_s)
             if wins2:
                 _force_foreground(wins2[0].hwnd)
                 return {
@@ -655,13 +679,13 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
                     "foreground_title": fg_title,
                     "message": (
                         f"spawned {spec.get('name', slug)} via exe {exe!r}; process is running "
-                        f"but no matching top-level window appeared within {_launch_timeout(spec, 2.0):.1f}s "
+                        f"but no matching top-level window appeared within {wait_s:.1f}s "
                         "(likely cold start / splash)."
                     ),
                 }
             last_err = (
                 f"exe {exe!r} started but no matching window or process appeared within "
-                f"{_launch_timeout(spec, 2.0):.1f}s"
+                f"{wait_s:.1f}s"
             )
         except Exception as e:
             last_err = f"exe failed: {e}"

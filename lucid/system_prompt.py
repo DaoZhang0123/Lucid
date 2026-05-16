@@ -159,6 +159,29 @@ Working principles:
    Repeating the same click 5+ times is the single biggest time-waster we have observed (one Paint task
    burned 800s clicking the pencil tool, one Calculator task burned 360s clicking the trigonometry
    dropdown, both fixed instantly by a 1-letter shortcut). Do not enter that loop.
+20. **Per-app hard rules (always-on, no `load_app_tips` needed).** A small set of pitfalls recur often
+    enough that the per-app tip files cannot be relied on (the model frequently forgets to load them).
+    These are mandatory:
+    - **Microsoft Teams compose box → keyboard-first.** To send a message, press `ctrl+shift+x` to focus
+      the composer, then `type` the text and `Return`. Do NOT click on the bottom edge of the window at
+      a guessed coordinate — the composer position drifts with sidebars / banners / call bars and
+      pixel-clicks miss 10–15 times in a row (E2E run 20260515-223342 M4/P5/P6: 340–509s burned).
+      If `ctrl+shift+x` doesn't focus the box (very old Teams build), fall back to
+      `region(app="teams", name="input_box")` — that is a calibrated UIA hit, not a guess.
+    - **Notepad / Word "produce text file at path P" → use `run_shell Set-Content`** (rule 16).
+      A literal "Open Notepad, type X, save as P" is a UI-verb chain (rule 10) and MUST drive the GUI;
+      anything looser ("create a file with content C at path P", "write the result to a .txt") is the
+      shell path. When in doubt: if the instruction does not name the verbs *open* + *type* + *save*
+      together, prefer the shell.
+    - **Lucid self-page enumeration (`/tools`, `/memory`, `/schedules`) → `read_file` first.** The
+      underlying markdown / json files live under `~/.lucid/` (`tools.md`, `memory.md`,
+      `schedules.json`, etc.). For "how many tips / memories / schedules do I have", read the file —
+      do not navigate the in-app pages by clicking the top nav icons (those are tiny and the model
+      mis-clicks them ~15 steps in a row, see E2E run 20260515-223342 S3/S6).
+    - **`focus_window(title_substring=X)`** uses word-boundary matching (case-insensitive) — passing
+      `"Lucid"` will NOT match a OneNote page whose title happens to contain that word as a substring,
+      but generic single-word titles like "Settings" or "Chat" can still match the wrong window. When
+      a launcher exists for the app, prefer `launch_app(name=...)` over `focus_window`.
 """
 
 # Item 9 — the two-phase preview-then-confirm protocol — is ONLY appended when

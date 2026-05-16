@@ -38,18 +38,36 @@ Exceptions (keep these in English even inside Chinese prose):
 
 **Every thread with a `thread_dir` must be judged by a subagent before
 `report.md` is written.** No inline judgement, no "assumed pass", no
-sampling, no cost-saving carve-outs. The only skip is `thread_dir ==
-null` (verdict is `no-data`, no signal to mine).
+sampling, no cost-saving carve-outs, **no asking the user whether to
+do a partial audit**. The only skip is `thread_dir == null` (verdict
+is `no-data`, no signal to mine).
 
 Rationale: the goal layer needs `context.log` + screenshots to catch
 claim-vs-reality mismatches; `final_text` alone is not enough. Cutting
 corners here is exactly how a thread that says "task complete" but
 actually clicked the wrong window slips through as `pass`.
 
-If the user explicitly says they only want a partial audit (e.g.
-"只看失败的" / "only check the failures"), confirm with them and add a
-big caveat box at the top of `report.md`. Default behaviour is
-fan-out-everything.
+**Do NOT ask the user "全量还是部分审核?" / "should I only check the
+failures?" before kicking off Step 2.** The default — and only
+behaviour absent an explicit upfront user instruction — is
+fan-out-everything. A 60-thread run takes time; that's expected and
+budgeted. The user already paid for the run by executing it; skipping
+audit just to save subagent calls would silently downgrade the report
+to "mechanical layer only" and hide regressions. If the user is
+unavailable to respond, default to full fan-out.
+
+The **only** path to a partial audit is the user explicitly stating
+the scope upfront in their initial request, e.g. "只看失败的" /
+"only audit the failures" / "skip the fast passes". When that
+happens:
+
+1. Honor the requested scope verbatim.
+2. Add a **bold caveat box at the very top of `report.md`** that
+   names which threads were skipped and why ("user requested
+   failures-only audit; 52/64 threads marked `pass` from mechanical
+   layer alone"). Use `> ⚠️ **本轮采用部分审核模式**：…`.
+3. In `iteration-plan.md` §概要 line, surface the audit coverage
+   ratio (`审核覆盖：12 / 64`).
 
 ---
 
@@ -95,12 +113,13 @@ Note: there is **no `expect_signal`** field. The skill no longer relies
 on a brittle substring match against `final_text` — instead the **goal
 layer** below is judged by reading the `instruction` + `final_text` and
 asking "does the model's claim plausibly match the asked-for goal?".
-For fast-pass rows the main agent does this inline; for non-pass / slow
-rows a subagent does it with screenshots + context.log in hand. This
-avoids paraphrase traps (e.g. the model says "in Scientific mode"
-instead of the literal phrase "scientific mode confirmed") and
-unavailable-fallback traps (e.g. the model says "excel unavailable" but
-the prompt's literal expect signal was `3297`).
+This judgement is **always** delegated to a per-thread subagent (see
+§2) so it can cross-check `context.log` + screenshots; the main agent
+never judges the goal layer inline. This avoids paraphrase traps (e.g.
+the model says "in Scientific mode" instead of the literal phrase
+"scientific mode confirmed") and unavailable-fallback traps (e.g. the
+model says "excel unavailable" but the prompt's literal expect signal
+was `3297`).
 
 `status` and `final_text` are backfilled at end-of-run. If `status` is
 `null`, the task did not produce a `task_close` event — likely killed by
@@ -117,10 +136,9 @@ A query is `pass` only if **all three** layers agree:
 
 1. **Run layer** (manifest, mechanical): `status == "ok"`.
 2. **Goal layer** (AI judgement on `instruction` + `final_text`):
-   reports `goal_met: pass | fail | partial`. For `status=="ok"` fast
-   rows the main agent judges this inline (one cheap reasoning step per
-   row); for non-pass and slow rows a subagent judges it with
-   `context.log` + screenshots in hand. Replaces the old brittle
+   reports `goal_met: pass | fail | partial`. **Always** judged by a
+   per-thread subagent with `context.log` + screenshots in hand —
+   never inline by the main agent. Replaces the old brittle
    `expect_signal` substring match.
 3. **Deliverables layer** (`expect_files`, mechanical, when present):
    every entry passes its file check on disk.
@@ -142,8 +160,7 @@ verdict =
   no-data      if status is null
 ```
 
-**Goal-layer rubric** (applies whether you're judging inline or via
-subagent):
+**Goal-layer rubric** (applied by the per-thread subagent):
 
 - `goal_met: pass` — the `final_text` (cross-checked against
   `context.log` / step screenshots if anything looks suspicious)
@@ -243,6 +260,12 @@ an app-spec seed tip.
   For runs with > 30 threads, expect this step to dominate wall-time;
   proceed anyway — that's the point. **Do NOT short-circuit by
   judging fast passes inline.**
+- **Do NOT ask the user to confirm scope before fanning out.** No
+  "want me to do all 64 or just the failures?" question. Just go.
+  The only valid skip rule is `thread_dir == null`. If the user
+  pre-stated a partial scope in their initial request, honor it
+  silently and emit the caveat box (see §"Subagent fan-out is
+  mandatory"); otherwise fan out everything.
 
 For each selected query call `runSubagent`:
 
