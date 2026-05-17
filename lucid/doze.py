@@ -279,6 +279,40 @@ def _summarise_event(evt: dict[str, Any], max_chars: int) -> str | None:
         return f"TOOL_RESULT: {body}"
     if et == "task_close":
         return f"TASK_CLOSE status={evt.get('status')} final={(evt.get('final_text') or '')[:200]}"
+    if et == "visual_notify_trigger":
+        # The taskbar-monitor confirmed an auto-reply trigger and the sidecar
+        # copied the originating icon-strip frames into this thread's
+        # ``trigger-captures/`` dir. Surfacing the paths + LLM reason lets the
+        # reflector say things like "the green dot at x=420 means WeChat had a
+        # new message" without having to dig through ``taskbar-monitor/key/``
+        # (which may have rolled away).
+        apps = evt.get("apps") or []
+        reason = (evt.get("reason") or "").strip()
+        conf = evt.get("confidence")
+        focus = evt.get("focus_crops") or []
+        cur = evt.get("current")
+        prv = evt.get("previous")
+        focus_bits: list[str] = []
+        for fc in focus[:6]:
+            if not isinstance(fc, dict):
+                continue
+            focus_bits.append(
+                f"focus[{fc.get('index')}@x{fc.get('x0')}-{fc.get('x1')}]: "
+                f"now={fc.get('current')} was={fc.get('previous')}"
+            )
+        head = (
+            f"VISUAL_NOTIFY_TRIGGER apps={apps} confidence={conf} reason={reason[:300]!r}"
+        )
+        tail_bits = []
+        if cur:
+            tail_bits.append(f"strip_now={cur}")
+        if prv:
+            tail_bits.append(f"strip_was={prv}")
+        tail_bits.extend(focus_bits)
+        s = head
+        if tail_bits:
+            s += " | " + "; ".join(tail_bits)
+        return s[:max_chars]
     if et == "final":
         return f"FINAL: {(evt.get('text') or '')[:max_chars]}"
     if et == "error":
@@ -298,14 +332,48 @@ def _digest(text: str, max_lines: int) -> str:
 def build_user_prompt(cfg: Config, thread: dict[str, Any]) -> str:
     events = thread.get("events") or []
     summarised: list[str] = []
+    apps_seen: list[str] = []
+    apps_seen_set: set[str] = set()
     for evt in events:
         line = _summarise_event(evt, cfg.doze.max_event_text_chars)
         if line:
             summarised.append(line)
+            # Cheaply mine app slugs the model has been hinted at this run, so
+            # we can pre-load their per-app tips into the digest below. Without
+            # this the reflector only sees global tools.md and routinely
+            # re-writes a near-identical per-app tip pass after pass.
+            if isinstance(evt, dict):
+                args = evt.get("arguments") or evt.get("args") or {}
+                if isinstance(args, dict):
+                    for k in ("app", "name"):
+                        v = str(args.get(k) or "").strip().lower()
+                        if v and v not in apps_seen_set and len(apps_seen) < 6:
+                            apps_seen.append(v)
+                            apps_seen_set.add(v)
     timeline = "\n".join(summarised) if summarised else "(no actionable events)"
 
     tips_text = tooltips_mod.read_tools(cfg.tools) if cfg.tools.enabled else ""
     mem_text = memory_mod.read_memory(cfg.memory) if cfg.memory.enabled else ""
+
+    # Per-app tips digest — only for apps actually referenced in this thread,
+    # so the reflector can dedupe against them too (the prompt previously
+    # only carried the global tools.md, so per-app duplicates slipped past).
+    per_app_blocks: list[str] = []
+    if cfg.tools.enabled:
+        for slug in apps_seen:
+            try:
+                body = tooltips_mod.read_app_tips(cfg.tools, slug)
+            except Exception:
+                body = ""
+            body = (body or "").strip()
+            if not body:
+                continue
+            digest = _digest(body, cfg.doze.max_tips_digest_lines)
+            per_app_blocks.append(f"### app `{slug}`\n{digest}")
+    per_app_section = (
+        "\n".join(per_app_blocks) if per_app_blocks
+        else "(no per-app tips for the apps mentioned in this thread)"
+    )
 
     return (
         f"## Thread\n"
@@ -313,6 +381,8 @@ def build_user_prompt(cfg: Config, thread: dict[str, Any]) -> str:
         f"title: {thread.get('title')}\n"
         f"\n## Existing global tips digest (do not duplicate)\n"
         f"{_digest(tips_text, cfg.doze.max_tips_digest_lines)}\n"
+        f"\n## Existing per-app tips for apps referenced in this thread (do not duplicate)\n"
+        f"{per_app_section}\n"
         f"\n## Existing memory digest (do not duplicate)\n"
         f"{_digest(mem_text, cfg.doze.max_memory_digest_lines)}\n"
         f"\n## Event timeline\n"

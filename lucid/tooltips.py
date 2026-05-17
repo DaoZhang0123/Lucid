@@ -50,6 +50,8 @@ _SEED_BODY = """\
 - [seed · process-list] To check whether a process is running, prefer `Get-Process <name> -ErrorAction SilentlyContinue` (PowerShell) or `(Get-Process <name>).MainWindowTitle` for the title. **Avoid `tasklist /V`** — on Windows 11 it routinely takes 60-300 s because it walks every process's window-title via WMI; a single call can blow your shell timeout and effectively kill the turn. `Get-Process` returns in well under a second.
 - [seed · taskbar-enum] **Don't hover-and-zoom over tiny taskbar / tray icons.** At 4K / 3440 widths each icon is a few pixels and L3 tiles rarely contain readable text. To list **pinned** taskbar apps: `run_shell powershell -c "Get-ChildItem $env:APPDATA\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar -Filter *.lnk | Select-Object -ExpandProperty BaseName"`. To list **currently-running** windows with their titles: `run_shell powershell -c "Get-Process | Where-Object MainWindowTitle | Select-Object ProcessName,MainWindowTitle"`. A single fullscreen screenshot to confirm icons are visually present is fine; never hover-enumerate. Once the shell output has the answer, the **same turn** must emit `task complete:` — no more screenshots.
 - [seed · windows-version] To read the Windows build / version string, use `Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion' | Select-Object ProductName, DisplayVersion, CurrentBuild, UBR` — milliseconds, no admin needed. Do **not** use `Get-ComputerInfo` (multi-second WMI roundtrip) or `winver` (opens a GUI window) for this.
+- [seed · run-shell-dollar] **`run_shell` strips bare `$` from inline PowerShell command strings**, so any one-liner containing `$var`, `$env:XXX`, `$_`, `$PSItem`, automatic vars, or `${name}` will reach PowerShell with the leading `$` removed and either error out or silently use the wrong identifier. **Hard rule:** the moment your PS command needs a `$`, switch from inline `run_shell powershell -c "..."` to a script-file path — `write_file` a `.ps1` with the full body (free to use `$` everywhere), then `run_shell powershell -NoProfile -ExecutionPolicy Bypass -File "<path>.ps1"`. The script file's content survives byte-for-byte. (cmd.exe variables `%VAR%` are not affected — only PowerShell's `$`.)
+- [seed · weather-wttr] For quick "what's the weather in X" / "X 天气" queries without opening a browser, prefer `Invoke-RestMethod 'http://wttr.in/<City>?format=j1'` (PowerShell) over `read_webpage` of any weather site — returns JSON in 1-2 s, no ads, no DOM scraping. **Schema gotchas** (the agent has burned a turn on each of these): (a) human-readable description is at `.current_condition[0].weatherDesc[0].value` for **now**, and at `.weather[n].hourly[m].weatherDesc[0].value` for **forecast hours** — NOT at the day level `.weather[n].weatherDesc` (which doesn't exist). (b) `.weather[0]` = today, `.weather[1]` = tomorrow, `.weather[2]` = day-after. (c) Each `.weather[n].hourly[]` has 8 entries (3-hour buckets at 0/3/6/.../21). (d) For PowerShell array indexing wrap in `@(...)` because single-element responses come back as scalars: `@($d.weather[0].hourly)[0]`. (e) Chinese fields (`.lang_zh`) may be `$null` even when English ones aren't — always read `.value` from `weatherDesc[0]`. (f) City names: English (`Suzhou`, `Kunshan`) or pinyin work; Chinese characters URL-encode fine too. Combine with the `[seed · run-shell-dollar]` rule — wttr.in calls almost always need `$` access, so write a `.ps1` and run with `-File`.
 """
 
 # Per-app seed bodies are no longer hardcoded here — each App lives in its own
@@ -430,6 +432,35 @@ def app_tips_for_prompt(cfg: ToolsConfig, app: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _normalise_tip_body(text: str) -> str:
+    """Strip the ``- [TS · source · kind] `` prefix and normalise whitespace /
+    case so two entries that differ only in timestamp, casing, or punctuation
+    compare equal. Used by :func:`append_tip` for dedup.
+    """
+    s = (text or "").strip()
+    # Drop leading "- " bullet
+    if s.startswith("- "):
+        s = s[2:]
+    # Drop leading "[...] " bracket header (timestamp · source · kind)
+    if s.startswith("["):
+        end = s.find("]")
+        if end != -1:
+            s = s[end + 1:].lstrip()
+    s = s.lower()
+    s = re.sub(r"\s+", " ", s).strip()
+    # Drop trailing punctuation that doesn't change meaning
+    s = s.rstrip(".。!! ；;")
+    return s
+
+
+# Near-duplicate similarity threshold for :func:`append_tip`. Empirically 0.80
+# catches paraphrases like "WeChat: Ctrl+Alt+W opens the main window" vs
+# "WeChat: use Ctrl+Alt+W to open the main window" (ratio ~0.85) while
+# letting genuinely-different tips through ("WeChat: Ctrl+Alt+W opens the
+# main window" vs "WeChat: Ctrl+F searches the contact list" — ratio ~0.45).
+_DEDUP_RATIO_THRESHOLD = 0.80
+
+
 def append_tip(
     cfg: ToolsConfig,
     text: str,
@@ -439,6 +470,16 @@ def append_tip(
 ) -> bool:
     """Append a tip. ``app`` empty / None → global tools.md. Otherwise routed
     to ``tips/<slug>.md`` (created from seed if known, blank-with-header otherwise).
+
+    **Dedup**: if the target file already contains a line whose normalised body
+    (stripped of timestamp / source / kind prefix, lower-cased, whitespace-
+    collapsed) is equal to the new text — or has a difflib similarity ratio
+    >= ``_DEDUP_RATIO_THRESHOLD`` — the write is **skipped silently** and the
+    function returns ``False``. This guards against (a) the same doze pass
+    emitting two near-identical ``learn_tip`` calls, (b) successive doze
+    passes that didn't see the per-app tip file in their prompt digest, and
+    (c) the agent and the doze reflector both deciding to record the same
+    insight.
     """
     if not cfg.enabled:
         return False
@@ -465,6 +506,29 @@ def append_tip(
                 p.write_text(f"# Tips for {slug}\n\n", encoding="utf-8")
     else:
         p = _ensure_global_seeded(cfg)
+    # Server-side dedup — read the file and compare normalised bodies. Cheap
+    # because tip files are bounded to ``cfg.max_lines`` (default ~200) and
+    # rotation keeps them small.
+    new_norm = _normalise_tip_body(text)
+    if new_norm:
+        try:
+            existing_lines = p.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            existing_lines = []
+        from difflib import SequenceMatcher
+        for ln in existing_lines:
+            ls = ln.strip()
+            if not ls.startswith("- "):
+                continue
+            old_norm = _normalise_tip_body(ls)
+            if not old_norm:
+                continue
+            if old_norm == new_norm:
+                return False
+            # difflib is O(n*m) per pair but tip bodies are short (<400 chars
+            # after truncation) and file is bounded, so worst-case is fine.
+            if SequenceMatcher(None, old_norm, new_norm).ratio() >= _DEDUP_RATIO_THRESHOLD:
+                return False
     with p.open("a", encoding="utf-8") as f:
         f.write(entry)
     _rotate(cfg, p)

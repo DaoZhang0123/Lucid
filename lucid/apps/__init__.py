@@ -92,7 +92,8 @@ def _iter_module_names() -> list[str]:
     return [
         "browser", "calculator", "chrome", "cmd", "edge", "excel", "explorer",
         "mail", "notepad", "outlook", "photos", "powerpoint", "powershell", "run",
-        "save_dialog", "settings", "teams", "vscode", "wechat", "word", "wt",
+        "save_dialog", "settings", "snipping_tool", "teams", "vscode", "wechat",
+        "word", "wt",
     ]
 
 

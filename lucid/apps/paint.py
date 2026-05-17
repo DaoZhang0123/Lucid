@@ -6,6 +6,7 @@ TITLE = "Paint"
 TIPS = """\
 - [seed · launch] `launch_app(name='paint')` resolves the `mspaint` App Paths alias. Title bar substring "Paint" / "画图" = ready.
 - [seed · cold-start] First launch may take 1–3s for the canvas to render; the system already attaches one L2 after launch_app.
+- [seed · tool] default tool is Select; to draw freehand, click the Pencil icon in the 工具 (Tools) group first. Dragging without switching tools creates a selection box instead of a stroke.
 - [seed · tools-keyboard] **Two failed clicks on a toolbar tool → switch to single-letter keys** (rule 19). Pencil = `P`, Brush = `B`, Eraser = `E`, Fill = `K`, Text = `T`, Line = `L`, Rectangle = `R`. Ctrl+Z = undo. These NEVER miss — clicking the tiny ribbon icons does.
 - [seed · save-as] Ctrl+S on a fresh untitled doc opens Save As. Type the absolute path directly into the filename field; press Enter; verify with `run_shell Test-Path` BEFORE `task complete`. See save-dialog tips for filename-box pitfalls.
 """

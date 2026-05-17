@@ -535,10 +535,21 @@ instruction in this run.
                         "如果消息中提供了\"聚焦区域\"放大图，请以聚焦区域的对比结果为准。\n"
                         "唯一判定规则（满足才设 has_new_message=true）：\n"
                         "某个应用图标新增了红点 / 红色徽章 / 未读数字。\n"
+                        "形态对比（重要，避免误把下划线当徽章）：真正的红色徽章是"
+                        "**贴在图标上或紧贴下方的实心圆点 / 圆角小方块**，常含白色数字、"
+                        "占图标宽度的一小块；它与图标下方那条**横跨整个图标的细长下划线**"
+                        "形态完全不同——下划线再红也只是状态指示，不是徽章。\n"
                         "明确不算新消息的情况（看到这些一律设 false）：\n"
-                        "- 鼠标 hover 引起的浅灰高亮、背景变亮变暗、闪烁高亮；\n"
-                        "- 进度条、橙色下划线、图标动画、转场过渡；\n"
-                        "- 任务栏开关按钮（开始菜单、搜索、输入法、时钟分钟跳转等）变化；\n"
+                        "- 鼠标 hover / 焦点引起的**白色或粉色 / 淡红色 / 浅灰圆角矩形**"
+                        "背景出现或消失（这是 Windows 11 的标准 hover/active 高亮，"
+                        "即使颜色偏红也不是徽章）；\n"
+                        "- 图标下方**细长下划线**出现、消失或改色（蓝↔红↔橙），且图标本体"
+                        "没有新增红点 / 数字徽章（蓝色下划线 = 窗口聚焦；红 / 橙下划线 ="
+                        " Windows \"需要关注\"闪烁或运行 / 进度指示，都不是消息）；\n"
+                        "- 图标上叠加的**小图标 overlay**（齿轮、放大镜、spinner、小圆圈、"
+                        "对勾等），属于系统 / 更新 / 远程连接 / 后台任务状态，不是消息徽章；\n"
+                        "- 进度条、图标动画、转场过渡；\n"
+                        "- 任务栏开关按钮（开始菜单、搜索框文字、输入法、时钟分钟跳转等）变化；\n"
                         "- 某个 App 被打开 / 关闭导致图标新增或消失；\n"
                         "- 只是背景色调变动但未出现红点 / 未读数字 / 红色徽章。\n"
                         "只输出 JSON，包含三个字段："
@@ -770,6 +781,118 @@ instruction in this run.
                 "reason": f"llm confirm failed: {type(exc).__name__}",
             }
 
+    def _copy_visual_notify_captures_to_thread(
+        self,
+        thread: ThreadLog,
+        payload: dict[str, Any],
+        apps: list[str],
+    ) -> None:
+        """Copy the taskbar-monitor key frames that triggered this auto-reply
+        into the new thread's directory and write a ``visual_notify_trigger``
+        event pointing at them.
+
+        Layout under the thread:
+            <thread>/trigger-captures/current<ext>
+            <thread>/trigger-captures/previous<ext>
+            <thread>/trigger-captures/focus-NN-current<ext>
+            <thread>/trigger-captures/focus-NN-previous<ext>
+
+        The event payload carries:
+          - ``apps``           : the LLM-confirmed app candidates
+          - ``reason``         : the LLM's natural-language reason for confirming
+          - ``confidence``     : LLM confidence score
+          - ``diff_score``     : the pixel/dhash diff that originally tripped the detector
+          - ``current`` / ``previous`` / ``focus_crops`` : in-thread relative paths
+          - ``source_key_captures`` : original ``logs/taskbar-monitor/key/`` paths
+                                     (kept for traceability; may be pruned later)
+
+        Doze's per-thread reflector pass can read ``events.jsonl`` for this
+        record, load the in-thread images directly, and emit ``learn_tip`` /
+        icon proposals tied to ``apps``.
+        """
+        if thread is None or getattr(thread, "run_dir", None) is None:
+            return
+        src_key = payload.get("key_captures") or {}
+        if not isinstance(src_key, dict) or not src_key:
+            return
+        import shutil
+        dst_dir = thread.run_dir / "trigger-captures"
+        try:
+            dst_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+
+        def _copy(src_str: Any, stem: str) -> str | None:
+            if not isinstance(src_str, str) or not src_str:
+                return None
+            try:
+                src = Path(src_str)
+                if not src.is_file():
+                    return None
+                dst = dst_dir / f"{stem}{src.suffix.lower()}"
+                shutil.copy2(src, dst)
+                return f"trigger-captures/{dst.name}"
+            except OSError:
+                return None
+
+        copied: dict[str, Any] = {}
+        cur_rel = _copy(src_key.get("current"), "current")
+        if cur_rel:
+            copied["current"] = cur_rel
+        prv_rel = _copy(src_key.get("previous"), "previous")
+        if prv_rel:
+            copied["previous"] = prv_rel
+        focus_out: list[dict[str, Any]] = []
+        for fc in (src_key.get("focus_crops") or []):
+            if not isinstance(fc, dict):
+                continue
+            idx = int(fc.get("index", 0) or 0)
+            x0 = int(fc.get("x0", 0) or 0)
+            x1 = int(fc.get("x1", 0) or 0)
+            entry: dict[str, Any] = {"index": idx, "x0": x0, "x1": x1}
+            cc = _copy(fc.get("current"), f"focus-{idx:02d}-x{x0}-{x1}-current")
+            if cc:
+                entry["current"] = cc
+            pp = _copy(fc.get("previous"), f"focus-{idx:02d}-x{x0}-{x1}-previous")
+            if pp:
+                entry["previous"] = pp
+            if "current" in entry or "previous" in entry:
+                focus_out.append(entry)
+        if focus_out:
+            copied["focus_crops"] = focus_out
+        if not copied:
+            return
+
+        try:
+            thread.append_event({
+                "event": "visual_notify_trigger",
+                "apps": list(apps or []),
+                "reason": str(payload.get("reason") or ""),
+                "confidence": float(payload.get("confidence") or 0.0),
+                "diff_score": payload.get("diff_score"),
+                "strip_rect": payload.get("strip_rect"),
+                "current": copied.get("current"),
+                "previous": copied.get("previous"),
+                "focus_crops": copied.get("focus_crops") or [],
+                "source_key_captures": {
+                    "current": src_key.get("current"),
+                    "previous": src_key.get("previous"),
+                    "focus_crops": [
+                        {
+                            "index": int(fc.get("index", 0) or 0),
+                            "x0": int(fc.get("x0", 0) or 0),
+                            "x1": int(fc.get("x1", 0) or 0),
+                            "current": fc.get("current"),
+                            "previous": fc.get("previous"),
+                        }
+                        for fc in (src_key.get("focus_crops") or [])
+                        if isinstance(fc, dict)
+                    ],
+                },
+            })
+        except Exception:
+            pass
+
     def _on_taskbar_notify_confirmed(self, payload: dict[str, Any]) -> None:
         """Strict mode: LLM-confirmed task always queues with deduplication.
         
@@ -860,6 +983,15 @@ instruction in this run.
             vn_thread = ThreadLog.create(
                 self.cfg.logging, f"🔔{title_apps} {base_instruction[:32]}"
             )
+            # Copy the originating taskbar key frames (current / previous /
+            # focus crops, as preserved by the LLM-confirm step) into the
+            # auto-reply thread's own directory and record an event pointing
+            # at them. Doze later scans this thread and learns the icon
+            # signature for the apps that triggered the reply — without this
+            # copy the source files live under ``logs/taskbar-monitor/key/``
+            # which rolls at ``key_screenshot_keep`` (~200) and gets evicted
+            # long before the doze reflector picks the thread up.
+            self._copy_visual_notify_captures_to_thread(vn_thread, payload, apps)
             res = self._rpc_start_task({
                 "instruction": instruction,
                 "priority": 2,
