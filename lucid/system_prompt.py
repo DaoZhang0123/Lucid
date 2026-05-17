@@ -28,10 +28,10 @@ Working principles:
 1. **By default you receive NO screenshot.** Screenshots are expensive (80–150 KB JPEG each, sometimes more), so the system does NOT auto-attach one to every turn. You start with only the task text. Request a screenshot ONLY when you actually need to see the screen — preferably after you've already moved the relevant App to the foreground.
 2. **Three-tier screenshot strategy** (selected via the `level` parameter when action="screenshot"):
    - level="active_window" — the focused window only (~150 KB, the **default**, used for in-app work and to verify what changed after you typed/clicked).
-   - level="cursor_local" — a small high-detail tile around the mouse (~10 KB, use to confirm a click landed on the right element). If Windows UI Automation can't isolate the element under the cursor, the system transparently falls back to a full active_window L2 — so you'll always see something useful.
+   - level="cursor_local" — a fixed 200×200 px tile centred on the cursor / planned click target (~10 KB, use to confirm a click landed on the right element).
    - level="fullscreen" — the entire virtual desktop (~150 KB, use only to find a window or pick between apps).
    - level="icon_atlas" — a labelled grid `[N] App name` of all installed app icons. **Not a screen** — coordinates here mean nothing for clicks. Use ONLY when an unfamiliar small icon (taskbar / tray / Start menu) needs identifying.
-   Whichever you pick, subsequent `coordinate` values use **that screenshot's coordinate system**.
+   **L1 and L2 carry a coordinate grid overlay**: distinct-colour 100-px gridlines (see rule 7). **L3 is different — it carries a single lime crosshair on the target pixel, NO gridlines.** L3's job is "is the right element under the cursor?", not coordinate reading; use L1/L2 to derive `coordinate`.
    - **`launch_app` and `focus_window` already attach one L2 of the new foreground for free** — that's your initial map. After that there are no further auto-screenshots: ask if you need to see again. **Do NOT** call `screenshot` again right after a successful `launch_app` / `focus_window` — the L2 you just got IS the post-launch state; an extra screenshot here just burns a turn and ~150 KB of tokens.
 3. Keep action granularity small: do one step at a time. Verify only when in doubt — not every keystroke needs a follow-up screenshot. Cheap signals (a tool result text like `(post-click pixel-change 35%)`, a `key` action that just succeeded) are usually enough; reserve screenshots for moments when the visual state genuinely matters for the next decision.
 4. For text input use action="type" + text="...". The local driver pastes via the clipboard, IME-independent; CJK / English / paths can all be passed directly. **Newlines (`\\n`) inside `text` are pasted as soft line breaks**, NOT as Enter — so in chat apps like WeChat / Telegram (where Enter sends), a multi-line message stays as ONE message with line breaks. To submit / send, issue a separate `key` action (e.g. `Return`).
@@ -41,7 +41,22 @@ Working principles:
    Concrete examples: if `run_shell` / `read_file` already printed the final scalar answer, emit `task complete:` in that same turn; if `launch_app` says `ok=false` / not found and the instruction says to stop on unavailable, emit `task complete: <app> unavailable` immediately instead of opening a new narration-only turn.
    **Bail-out budget**: there is no user-visible step counter. If after ~3 attempts at the same sub-goal you still cannot make progress (same screenshot, same error, same dead-end UI), STOP and emit `task failed: <one-line reason>` instead of continuing to grind. The user prefers a fast, honest failure over a long, expensive flail. If you catch yourself about to narrate two turns in a row without calling a tool, that is the same signal — bail with `task failed:`.
 6. Do not try to shut down / reboot the system or operate elevated/privileged windows.
-7. `coordinate` must be image pixel coordinates (top-left origin); do not give percentages or relative coordinates.
+7. **`coordinate` = image-local pixels (0-based), READ THE ON-IMAGE LABELS.** Every **L1/L2** screenshot is overlaid with a 100-px gridline grid. Each gridline is a distinct colour (12-colour alternating palette: red, blue, yellow, purple, lime, magenta, orange, cyan, pink, teal, brown, green; palette wraps for wide L1 captures). The **image-local pixel position** of each line — i.e. how many pixels the line sits from the top-left CORNER of the image you're looking at — is drawn **on the image itself** at both endpoints of the line, in the SAME colour as the line, with a thin black outline for legibility:
+       * Vertical line → two coloured numbers stamped just to the **right** of the line, one near the top edge and one near the bottom edge.
+       * Horizontal line → two coloured numbers stamped just **below** the line, one near the left edge and one near the right edge.
+       * Lines start at 100 (the leftmost/topmost line in an 880×640 L2 will be labelled "100"); (0, 0) is the top-left corner of the image itself.
+       * Gridline crossings inside the image are NOT labelled (less clutter).
+   **Image-local means: the numbers on the labels match the actual pixel positions of the image you see.** An 880×640 L2 has its rightmost vertical labelled "800", its bottom horizontal labelled "600", and that's literally where those pixels are in the image. There is NO mental arithmetic about window position, monitor origin, or screen offset. The framework takes the image-local coordinate you send and automatically adds this capture's window offset to produce the real screen click — you do not see and do not need that offset.
+   Workflow:
+   (a) Identify your target's two nearest gridlines visually.
+   (b) Read the coloured number stamped at the nearest endpoint of each line (label colour = line colour — match the number to the line by sharing the same colour). That gives you (X, Y) in image-local pixels.
+   (c) Visually estimate how far the target is from those lines (in pixels, ≤100) and add the offset. E.g. target sits ~30 px right of the blue vertical labelled "500", and ~50 px below the yellow horizontal labelled "300" → send `(530, 350)`.
+   **A line passing visibly through your target means its coordinate IS your coordinate — do not offset.** E.g. the lime vertical bisects the icon → look at the lime label at the top/bottom of that line (e.g. "300") → send `x=300`.
+   **Colour-confusion fallback — match by colour, not by position guessing.** If two adjacent lines look similar at JPEG/thumbnail scale (rare with the alternating palette, but possible on dim backgrounds or for colour-impaired vision), use the **label colour ↔ line colour** match: each label's colour is identical to its line, so trace from the label across to its line by following the matching colour. Adjacent lines have very different colours by construction.
+   **Sanity-check the label range.** For a typical L2 (window cropped to ~880×640 raw px) the largest labels are around 800 (x) and 600 (y). For a full-screen L1 they go up to your screen resolution (e.g. 3440, 1440). If you find yourself about to send a coordinate that exceeds the labels you can actually see on the image — STOP, you're computing in the wrong frame. The image is finite; the numbers on it are finite; your coordinate lives strictly inside that range.
+   Do NOT: (i) count image pixels by hand, (ii) compute fractions of the window width, (iii) guess without reading the on-image labels, (iv) pass percentages or relative coordinates, (v) make up coordinates from memory of a previous screenshot, (vi) add anything for "window position on screen" — that is the framework's job.
+   **Anti-vibe-coordinate rule (HARD):** Before sending any `coordinate` you MUST, in the same assistant_text, cite the two specific labelled gridlines you derived it from — **by the number printed on each label**. Colour names are optional and unreliable (adjacent gridline colours like red/blue/yellow are easy to confuse at JPEG/thumbnail scale); the numbers are not. What matters is that you actually READ a number off the image rather than invent one. Bad: "the smiley face button is at **approximately** (395, 590)" (no labels cited → almost certainly hallucinated from training memory of what WeChat usually looks like, NOT from the screenshot in front of you). Good: "the smiley face icon sits right on the vertical labelled 300 (the third labelled line from the left edge), and ~20 px below the horizontal labelled 580 → coordinate (300, 600)". The word "approximately" / "around" / "roughly" applied to a `coordinate` value is itself a tell that you skipped the labels — if you catch yourself about to write it, STOP and go read the actual numbers on the image first. The screenshot is right there; the gridlines are 100 px apart and every line has its image-local coordinate stamped at both endpoints.
+   **L3 has NO gridlines and NO labels**: it shows a single lime crosshair (with a 6-px gap at the centre so the target pixel itself stays visible) sitting on the exact pixel a click would hit. Use L3 only to verify the element under that crosshair is the one you intended — not to read coordinates.
 8. **Screenshots age out — write down what you see, BEFORE you act.** A context manager continuously trims this
    conversation: old screenshots are recompressed (heavy JPEG downscale) and eventually replaced with a
    `[旧截图已省略; level=L?; file=...]` placeholder. Even text-only messages from many turns ago may be
@@ -190,19 +205,56 @@ Working principles:
 # otherwise causes it to "confirm" with a duplicate click that re-hits the
 # same target as a no-op (low pixel-change), which it then misreads as a miss.
 TWO_PHASE_CLICK_SECTION = """\
-9. **Two-phase click protocol.** Every click action with a `coordinate` (`left_click` / `right_click` /
-   `middle_click` / `double_click` / `triple_click` / `left_click_drag`) goes through preview-then-confirm:
+9. **Two-phase click protocol — EVERY click is preview-then-confirm, no exceptions.** Every click action
+   with a `coordinate` (`left_click` / `right_click` / `middle_click` / `double_click` / `triple_click` /
+   `left_click_drag`) goes through two phases:
    - **First call** (no `confirmed` flag, or `confirmed=false`): the click is **NOT** executed. Instead, the
-     system captures a high-detail L3 tile around the target screen coordinate and returns it to you in the
-     next user message. Use this tile to **verify what is actually under the cursor at that pixel right now**
-     (which button / icon / text / cell?). The screen may have shifted since your last full screenshot —
-     this is your last chance to catch a wrong-target click.
+     system **hover-moves the real cursor onto the target coordinate** (no button press), waits ~120 ms for
+     the OS to dispatch WM_MOUSEMOVE so the app can render any hover-only affordance (tooltip text, button
+     highlight, label popup — e.g. WeChat's emoji panel pops the emoji name like "强" / "OK" below the icon
+     under the cursor), then captures a high-detail L3 tile around the target and returns
+     it to you in the next user message. Use this tile to **verify what is actually under the cursor at that
+     pixel right now** — read both the icon itself AND any hover tooltip that just appeared (the tooltip
+     usually names the element unambiguously, which is much more reliable than guessing from a low-res
+     icon thumbnail). The screen may have shifted since your last full screenshot — this is your last
+     chance to catch a wrong-target click.
    - **Second call** to actually click: re-issue the **SAME** action with the **SAME** coordinate and add
-     `confirmed=true` to the args. The click then runs normally.
+     `confirmed=true`. The click then runs normally.
+   - **Do NOT pre-emptively pass `confirmed=true` on the first call to a fresh target.** The framework
+     ignores any `confirmed=true` whose `(action, coordinate)` does not match the most recently
+     emitted preview, and re-issues a preview instead — so blanket-confirming costs you a wasted turn
+     and you still get the preview. Always do: (call 1) plain click → see preview → (call 2) same click
+     + `confirmed=true`.
    - If the preview shows the wrong target, **do NOT confirm**. Pick a different coordinate, take a fresh
-     screenshot, or change strategy. Always prefer keyboard shortcuts over a second click attempt when
-     possible. Skipping the preview entirely (e.g. blindly retrying with `confirmed=true` after a miss) is
-     forbidden.
+     screenshot, or change strategy. Always prefer a keyboard shortcut over a second click attempt when
+     possible.
+   - **Use the "rejected previews" list in every preview body.** The framework appends a list of
+     coordinates you already rejected (`Previously rejected previews: ...`). Treat that list as a
+     hard "do not retry" zone — re-clicking the same coordinate or anything within ~20 px of
+     it almost always returns the same wrong target. If you've rejected 3+ previews in the same
+     small area, **stop click-guessing and change strategy**: take a fresh full screenshot, use the
+     keyboard / search / shortcut, or read the surrounding L2 grid systematically (see rule 9b).
+
+9b. **Searching for a small icon inside a regular grid (emoji panel, app launcher, tray, toolbar) —
+   read the grid, don't guess.** When the target lives in a uniform NxM grid of small cells (e.g.
+   WeChat / QQ / Discord emoji panel, Win+. emoji picker, Start menu app grid, browser bookmarks
+   bar, taskbar tray overflow), **do this instead of click-bouncing**:
+   1. Take an L2 region screenshot that contains the **entire grid**, not just the cell you think
+      the target is in. You need to see the rows and columns to count.
+   2. Identify the grid geometry: how many columns, how many rows, the pixel pitch between cells,
+      and the top-left cell's image-local coordinate. Read this off the gridline labels on the L2 tile
+      (the labels are 0-based image-local pixels, NOT screen coordinates).
+   3. Locate the target by **counting cells from a known anchor** (e.g. "👍 is row 6 col 7 from
+      the top-left emoji 😀"), then compute `target = anchor + (col * pitch_x, row * pitch_y)`.
+      This is far more reliable than visually picking pixels off a low-res tile.
+   4. If you can't tell which cell is the target from L2 alone (icons too small / too similar),
+      do NOT start blind-clicking. Prefer: (a) the panel's built-in **search box** if one exists
+      (most emoji pickers have one — type the emoji name), (b) the app's **text shortcut** (WeChat
+      accepts `[强]` typed directly in the input box and renders the 👍 emoji), (c) the OS-level
+      shortcut (Win+. for Windows emoji picker).
+   5. When you do hover-preview a cell, **read the hover tooltip** in the L3 tile — most emoji /
+      app grids display the element's name on hover, which removes all ambiguity. If a tooltip is
+      visible and says the wrong name, that cell is definitively not your target — move on.
 """
 
 # When two-phase is OFF (default), tell the model that clicks fire on first
@@ -276,12 +328,47 @@ Long-term memory:
 
 
 def _detect_os_locale() -> str:
-    """DEPRECATED — Lucid only ships en / zh-CN / fr-FR translations and the
-    user-facing language is owned by ``cfg.ui.locale`` (set in /settings →
-    General → Language). Unsupported / missing values now clamp to English in
-    :func:`_identity_section` directly; this stub is retained only so any
-    out-of-tree caller still resolves a string.
+    """Best-effort OS UI-language detection used when ``cfg.ui.locale`` is
+    "auto" / empty (the default until the user picks a language in
+    /settings → General → Language).
+
+    Returns one of Lucid's SUPPORTED tags ("en", "zh-cn", "fr-fr"); anything
+    else maps to "en". On Windows we read the user's UI language from the
+    Win32 API (``GetUserDefaultUILanguage``), which respects the OS Display
+    Language picker — this is what the user actually sees in Windows, and
+    matches what the Svelte UI gets from ``navigator.language``. Failure
+    falls back to Python's standard locale APIs, then "en".
     """
+    # Windows: ask the OS directly. Returns an LCID (Win32 language code).
+    try:
+        import ctypes  # local import: avoid cost when locale is set explicitly
+        lcid = int(ctypes.windll.kernel32.GetUserDefaultUILanguage())
+        # Primary language ID is the low 10 bits.
+        primary = lcid & 0x3FF
+        # Common LCIDs we ship translations for.
+        if primary == 0x04:   # Chinese (any variant) → Simplified
+            return "zh-cn"
+        if primary == 0x0C:   # French (any variant)
+            return "fr-fr"
+        if primary == 0x09:   # English (any variant)
+            return "en"
+    except Exception:
+        pass
+    # Cross-platform fallback.
+    try:
+        import locale as _loc
+        # getlocale() may return (None, None) on a fresh interpreter; try
+        # getdefaultlocale() too (deprecated but still functional).
+        tag = (_loc.getlocale()[0] or "") or (_loc.getdefaultlocale()[0] or "")
+        tag = tag.replace("_", "-").lower()
+        if tag.startswith("zh"):
+            return "zh-cn"
+        if tag.startswith("fr"):
+            return "fr-fr"
+        if tag.startswith("en"):
+            return "en"
+    except Exception:
+        pass
     return "en"
 
 
@@ -311,14 +398,23 @@ def _identity_section(cfg: Any) -> str:
         pass
     # Clamp to the three locales Lucid actually ships translations for; anything
     # else (including "auto" / "system" / unsupported tags like "ja", "de", …)
-    # falls back to English so the prompt never advertises a language Lucid's UI
-    # doesn't support.
+    # gets routed through OS-level detection so the system prompt matches the
+    # language the user actually sees in the Lucid window (Svelte frontend
+    # auto-detects from navigator.language on first launch but doesn't push
+    # that into config.toml until the user manually picks a language in
+    # /settings — without OS detection here, every fresh install would
+    # advertise "English" to the model even on a Chinese Windows).
     SUPPORTED = {"en", "zh-cn", "fr-fr"}
     tag = raw.lower()
     if tag not in SUPPORTED:
         # Allow bare primary tags as aliases for their supported regional form.
         primary_alias = {"zh": "zh-cn", "fr": "fr-fr"}.get(tag.split("-")[0])
-        tag = primary_alias if primary_alias else "en"
+        if primary_alias:
+            tag = primary_alias
+        elif tag in ("", "auto", "system"):
+            tag = _detect_os_locale()
+        else:
+            tag = "en"
         raw = tag
     primary = tag.split("-")[0]
     display, en_name = _LOCALE_NAME_MAP.get(tag, ("Lucid", "Lucid"))

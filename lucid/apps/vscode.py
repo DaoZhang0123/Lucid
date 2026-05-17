@@ -20,29 +20,28 @@ LAUNCHER = {
 }
 
 
-# Region calibration spec — see Docs/regions.md §10 (v2.2). VS Code is
-# Electron + Chromium, so the most stable selector is AutomationId, which
-# doesn't change with UI locale. ``REGIONS_UIA_SPEC`` is consumed by
-# ``lucid.regions._calibrate_via_uia`` (AutomationId first, then name fallback).
+# Region spec for live UIA lookup (lucid.regions.region).
+#
+# VS Code is Electron + Chromium. By default the web-app's a11y tree is NOT
+# exposed through UIA (RootWebArea sits under Chrome_WidgetWin_1 but has no
+# children unless `--force-renderer-accessibility` or a screen reader is
+# active). That means the workbench parts (`workbench.parts.activitybar`
+# /sidebar/editor/panel) historically advertised here never actually resolved
+# — they returned no match and the model wasted a click. Removed.
+#
+# Prefer keyboard:
+#   Ctrl+Shift+P    command palette (anything reachable)
+#   Ctrl+P          quick-open file
+#   Ctrl+B          toggle primary sidebar
+#   Ctrl+`          toggle terminal panel
+#   Ctrl+Shift+E/F/G/X   focus explorer / search / git / extensions
+#
+# `status_bar` is kept because it does resolve (matches the Chromium widget's
+# bottom strip, ~22 px high) and is occasionally useful for OCR-ing the
+# branch / line-col indicator.
 REGIONS_UIA_SPEC = {
-    "activity_bar": {
-        "automation_id": "workbench.parts.activitybar",
-        "description": "Left-edge vertical strip with explorer / search / git / extensions icons.",
-    },
-    "primary_sidebar": {
-        "automation_id": "workbench.parts.sidebar",
-        "description": "Primary sidebar (file explorer / search / etc.).",
-    },
-    "editor": {
-        "automation_id": "workbench.parts.editor",
-        "description": "Center editor area where files are open in tabs.",
-    },
-    "panel": {
-        "automation_id": "workbench.parts.panel",
-        "description": "Bottom panel (terminal / output / problems).",
-    },
     "status_bar": {
         "automation_id": "workbench.parts.statusbar",
-        "description": "Bottom status bar.",
+        "description": "Bottom status bar (branch, line/col, language, problems count).",
     },
 }

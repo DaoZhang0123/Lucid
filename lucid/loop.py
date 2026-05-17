@@ -104,6 +104,20 @@ class Agent:
         # 最近一次发给模型的 L1 / L2 / L3 截图原始 PNG 字节，
         # 供 remember_icon 工具按图片像素坐标裁剪图标用。
         self._last_png_by_level: dict[str, bytes] = {}
+        # 最近一次 two-phase click preview 的 (action, screen_x, screen_y)；
+        # 仅当模型下一次 click 的 (action, 解析后屏幕坐标) 与之完全一致时，
+        # ``confirmed=true`` 才生效。否则忽略 confirmed 标记，强制再走一次
+        # preview——防止模型预先盲发 confirmed=true 跳过 L3 校验。
+        self._last_preclick_preview: tuple[str, int, int] | None = None
+        # Rolling list of recently-shown previews that the model REJECTED
+        # (i.e. did not follow up with confirmed=true). We surface these in
+        # the text body of every fresh preview so the model has an explicit
+        # "已排除区域" map and stops re-trying coordinates it already
+        # decided weren't the target — see WeChat emoji-panel thread
+        # 20260517-170209 where the model bounced between x=1465..1900 for
+        # 14+ turns without remembering which cells it had already vetoed.
+        # Entries: (step, action, sx, sy). Capped at 8 entries.
+        self._rejected_preclick_previews: list[tuple[int, str, int, int]] = []
 
     # 事件上报：sidecar 模式下避免使用 rich 控制台（会污染 stdout JSONRPC 通道）
     def _emit(self, kind: str, **payload: Any) -> None:
@@ -388,11 +402,6 @@ class Agent:
         coord = args.get("coordinate")
         if not (isinstance(coord, (list, tuple)) and len(coord) == 2):
             return None
-        # Model has explicitly confirmed after seeing the preview → let it click.
-        if bool(args.get("confirmed", False)):
-            # Strip the flag so it's not forwarded to the actual driver call.
-            args.pop("confirmed", None)
-            return None
         ref_cap = self.tool.last_capture
         if ref_cap is None:
             return None
@@ -402,7 +411,56 @@ class Agent:
             return None
 
         sx, sy = ref_cap.model_to_screen(cx_img, cy_img)
+        # Model has explicitly confirmed AFTER seeing a preview for THIS exact
+        # (action, screen_xy) → let it click. We do NOT accept a pre-emptive
+        # ``confirmed=true`` on the first call to a fresh target; the model
+        # must actually see the L3 preview tile first. This forecloses the
+        # loophole where the model blanket-passes ``confirmed=true`` and skips
+        # the safety check entirely (see WeChat thread 20260517-143017 where
+        # 3 clicks on small icons all fired without L3 confirmation).
+        if bool(args.get("confirmed", False)):
+            prev = self._last_preclick_preview
+            if prev is not None and prev == (action, sx, sy):
+                args.pop("confirmed", None)
+                self._last_preclick_preview = None
+                # Confirmed → clear the rejected-history so we don't keep
+                # surfacing stale rejections in unrelated future previews.
+                self._rejected_preclick_previews.clear()
+                return None
+            # Stale / mismatched confirm → fall through to a fresh preview.
+            args.pop("confirmed", None)
+        # Record the previous (un-confirmed) preview as a rejection so the
+        # model sees its own "已排除区域" map in the next preview body.
+        if self._last_preclick_preview is not None:
+            prev_action, prev_sx, prev_sy = self._last_preclick_preview
+            # Skip exact-duplicate retry of the same coord (model is asking
+            # for the same preview again — not a rejection).
+            if (prev_action, prev_sx, prev_sy) != (action, sx, sy):
+                self._rejected_preclick_previews.append(
+                    (self._current_step, prev_action, prev_sx, prev_sy)
+                )
+                # Cap history at 8 entries to keep the prompt body short.
+                if len(self._rejected_preclick_previews) > 8:
+                    self._rejected_preclick_previews = self._rejected_preclick_previews[-8:]
         radius_screen = max(8, int(self.cfg.safety.verify_click_target_radius_px))
+
+        # Hover-move the real cursor onto the target before grabbing the L3
+        # tile, so any hover-only UI affordances (tooltip labels — e.g.
+        # WeChat emoji-panel pops "强" / "OK" below the icon under the
+        # cursor; button hover highlights; menu hover states) are visible
+        # in the preview the model uses to confirm. Without this the preview
+        # captures the *previous* cursor position's pixels and the model
+        # can't distinguish visually-similar icons (WeChat emoji-panel
+        # thread 20260517-170209 burnt 14+ clicks failing to find 👍).
+        try:
+            self.driver.mouse_move(int(sx), int(sy))
+            # Small settle window so the OS dispatches WM_MOUSEMOVE and the
+            # app renders the hover state / tooltip before mss grabs the
+            # bitmap. 120 ms is enough for WeChat / Edge / native Win32
+            # tooltips in practice; bumping higher just slows every click.
+            time.sleep(0.12)
+        except Exception as e:
+            log.warning(f"pre-click preview: hover move failed: {e}; continuing without hover")
 
         try:
             live = self.sensor.capture_around(sx, sy, radius_screen)
@@ -431,19 +489,68 @@ class Agent:
             screen=[sx, sy],
             radius=radius_screen,
         )
-        v_ox, v_oy = live.offset
+        # Record this preview so the next call's ``confirmed=true`` is only
+        # honoured if it matches this exact (action, screen_xy).
+        self._last_preclick_preview = (action, sx, sy)
         v_rw, v_rh = live.raw_size
         v_sw, v_sh = live.sent_size
+        # Cheat-sheet of the active macro frame's colour↔coord mapping, so the
+        # model can cross-check colour identification (vision models routinely
+        # misname adjacent gridline colours like red/blue/yellow off-by-one).
+        # The numbers stamped on the L2 image are ground truth; this legend is
+        # the inverse lookup.
+        from .screen import palette_legend as _palette_legend
+        ref_rw_pl, ref_rh_pl = ref_cap.raw_size
+        legend_text = _palette_legend(ref_rw_pl, ref_rh_pl)
+        legend_blurb = (
+            f" Active macro-frame colour↔coord legend (cross-check before you cite a colour): "
+            f"{legend_text}." if legend_text else ""
+        )
+        rejected_blurb = ""
+        if self._rejected_preclick_previews:
+            # Project each rejected screen-coord back into THIS preview's
+            # macro frame (ref_cap is the L1/L2 the model is currently
+            # reading labels off) so the numbers match the on-image labels
+            # the model is about to use. If a rejected coord falls outside
+            # the current frame, mark it as such (it was for a different
+            # capture and is informational only).
+            ref_ox, ref_oy = ref_cap.offset if ref_cap.offset is not None else (0, 0)
+            ref_rw, ref_rh = ref_cap.raw_size
+            parts: list[str] = []
+            for st, a, rx, ry in self._rejected_preclick_previews:
+                ix = rx - ref_ox
+                iy = ry - ref_oy
+                if 0 <= ix < ref_rw and 0 <= iy < ref_rh:
+                    parts.append(f"step{st}:{a}@img({ix},{iy})")
+                else:
+                    parts.append(f"step{st}:{a}@<other-frame>")
+            rej = ", ".join(parts)
+            rejected_blurb = (
+                f" Previously rejected previews (you saw L3 of these and chose NOT to confirm — "
+                f"do NOT re-try the same coordinate hoping for a different result; pick a clearly "
+                f"different cell, or switch strategy): {rej}."
+            )
         return ToolResult(
             image_png=live_png,
             output=(
                 f"[pre-click preview, NOT clicked yet] {action} would land at "
-                f"image-coord ({cx_img},{cy_img}) → screen ({sx},{sy}). "
-                f"Attached: a {v_sw}x{v_sh} L3 tile (raw {v_rw}x{v_rh}) centred on the target, "
-                f"screen-rect (left={v_ox}, top={v_oy}, right={v_ox + v_rw}, bottom={v_oy + v_rh}). "
-                f"Inspect this tile carefully. If the target really is what you intended to click, "
+                f"image-coord ({cx_img},{cy_img}) in the macro frame (the L1/L2 you read "
+                f"the labels off). The framework will convert this to a screen click "
+                f"automatically — you do not need to track the screen coords. "
+                f"Cursor has been hover-moved onto this point (no click) so any hover tooltip / "
+                f"highlight is visible in the tile — READ THE TOOLTIP TEXT if one appeared, it "
+                f"usually names the element unambiguously. "
+                f"Attached: a {v_sw}x{v_sh} L3 tile (raw {v_rw}x{v_rh}) centred on the target. "
+                f"**The click will land EXACTLY at the green crosshair / ring at the centre of the tile — "
+                f"NOT at any neighbouring icon visible in the tile.** Before confirming, identify the "
+                f"element DIRECTLY under the crosshair (not the closest recognisable icon, the one the "
+                f"crosshair is ON). If the crosshair is sitting on the wrong icon — even by a few pixels — "
+                f"DO NOT confirm; compute a fresh coordinate offset and re-preview. "
+                f"Only when the element under the crosshair is exactly what you intended to click, "
                 f"re-issue the SAME action with the SAME coordinate AND add `confirmed=true` to actually click. "
                 f"If the target is wrong, choose a different action instead — do NOT confirm."
+                f"{legend_blurb}"
+                f"{rejected_blurb}"
             ),
         )
 
@@ -495,10 +602,18 @@ class Agent:
         """
         # 在发送前记一笔完整 context（图片用文件名代替）便于 debug
         self._dump_context(messages, tools, self._current_step)
+        # 普通连接/HTTP 错误：快重试两次即可，再多就是浪费时间。
+        # no-choices（Copilot content filter / upstream 空 choices）单独走更长
+        # 的退避——这种错误通常是上游 vision filter 抖动，常常等十几秒后同样的
+        # payload 就能过；run 20260517-183302 三次 1.5/3.0s 全失败放弃，但实际
+        # 等 20s 再发就过了。所以给它独立的、更耐心的退避序列。
         backoff = [1.5, 3.0]
+        backoff_no_choices = [3.0, 8.0, 20.0, 30.0]
         last_exc: Exception | None = None
+        no_choices_attempts = 0
         wall_timeout = float(getattr(self.cfg.llm, "chat_wall_timeout_sec", 180.0))
-        for attempt in range(len(backoff) + 1):
+        attempt = 0
+        while True:
             result_box: dict[str, Any] = {}
 
             def _runner() -> None:
@@ -538,18 +653,27 @@ class Agent:
                 elif isinstance(exc, RuntimeError) and "no choices" in str(exc):
                     # Upstream returned 200 but with an empty `choices` list
                     # (Copilot content filter, transient model rejection, etc.)
-                    # Retry — same backoff as a connection error.
+                    # These almost always pass on a later retry with longer
+                    # waits — see backoff_no_choices above.
                     last_exc = exc
                     kind = "no-choices"
                 else:
                     raise exc
             else:
                 return result_box["value"]
-            if attempt >= len(backoff):
-                break
-            wait = backoff[attempt]
+            # Pick the right backoff schedule for this error kind.
+            if kind == "no-choices":
+                if no_choices_attempts >= len(backoff_no_choices):
+                    break
+                wait = backoff_no_choices[no_choices_attempts]
+                no_choices_attempts += 1
+            else:
+                if attempt >= len(backoff):
+                    break
+                wait = backoff[attempt]
+                attempt += 1
             log.warning(f"chat retry due to {kind}: {last_exc!r}; sleeping {wait}s")
-            self._emit("warning", message=f"连接抖动，{wait}s 后第 {attempt + 2} 次重试…")
+            self._emit("warning", message=f"连接抖动，{wait}s 后重试…")
             time.sleep(wait)
         assert last_exc is not None
         raise last_exc
@@ -673,8 +797,6 @@ class Agent:
         # Hard safety cap: 200 steps. The system prompt tells the model to
         # bail out itself when it can't make progress (`task failed: ...`).
         hard_cap = HARD_STEP_CAP
-        consecutive_narration = 0
-        NARRATION_LIMIT = 3
         for step in range(hard_cap):
             self._check_cancel()
             self._current_step = step + 1
@@ -769,13 +891,6 @@ class Agent:
                     return final
                 # 不调工具又没说完成：温和提醒一下，继续走下一步。
                 log.warning("assistant returned text without tool_call; reminding to continue")
-                consecutive_narration += 1
-                if consecutive_narration >= NARRATION_LIMIT:
-                    final = (f"task failed: narration_loop ({consecutive_narration} consecutive assistant-only turns)")
-                    log.error(final)
-                    log.close(status="narration_loop", final_text=final)
-                    self._emit("final", status="error", text=final)
-                    return final
                 messages.append({
                     "role": "user",
                     "content": (
@@ -786,7 +901,6 @@ class Agent:
                 continue
 
             # 派发每个 tool_call
-            consecutive_narration = 0
             had_screenshot = False
             # The Capture returned by this step's most recent screenshot tool
             # call (None if the step contained no screenshot). Used by the
@@ -854,6 +968,7 @@ class Agent:
                     )
                     if tr is None:
                         tr = ToolResult(error=f"unknown tool: {fn_name}")
+                    is_preclick_preview = False
                 else:
                     tr = self._maybe_pre_click_verify(action, args, log)
                     if tr is not None and tr.image_png:
@@ -861,6 +976,9 @@ class Agent:
                         # actual click. Stash the tile so the post-step user
                         # message includes it for the model to inspect.
                         step_preview_pngs.append(tr.image_png)
+                        is_preclick_preview = True
+                    else:
+                        is_preclick_preview = False
                     if tr is None:
                         tr = self.tool.dispatch(action, args)
 
@@ -890,7 +1008,19 @@ class Agent:
                 # R2 / R3 follow-up image (e.g. launch_app L2, click-verify L2 on
                 # suspected miss). For action='screenshot' the image already
                 # rides via the post-step capture path below; skip duplicates.
-                if tr.image_png and action != "screenshot" and not tr.error:
+                # Also skip when ``tr`` is a pre-click preview — it was already
+                # attached via ``step_preview_pngs`` above with the proper
+                # "[pre-click preview ...]" text part; re-attaching it here as a
+                # "post-click follow-up" would double-render the same L3 tile
+                # AND mislabel it (WeChat thread 20260517-195211 burnt several
+                # turns because the misleading sibling label "low pixel-change
+                # → likely miss" convinced the model the click failed).
+                if (
+                    tr.image_png
+                    and action != "screenshot"
+                    and not tr.error
+                    and not (fn_name == "computer" and is_preclick_preview)
+                ):
                     if fn_name == "launch_app":
                         label = f"launch_app({args.get('name','?')}) L2"
                         save_tag = f"step-{step + 1:03d}-launch_app-l2"
@@ -901,7 +1031,23 @@ class Agent:
                         label = tr.output or f"load_local_images({args.get('path','?')})"
                         save_tag = f"step-{step + 1:03d}-load_local_images"
                     elif fn_name == "computer":
-                        label = f"{action} post-click L3 around cursor (low pixel-change → likely miss; coordinate frame unchanged)"
+                        label = (
+                            f"{action} post-click L3 around cursor (informational only — "
+                            f"this tile shows only the pixels AROUND the cursor position; "
+                            f"many successful clicks produce zero visible change here because "
+                            f"the UI effect happens elsewhere on screen (e.g. picking an "
+                            f"emoji inserts it in the text input box far from the cursor; "
+                            f"clicking a contact opens the chat view to the right; clicking a "
+                            f"menu item closes the menu and acts on the host window). DO NOT "
+                            f"infer 'miss' from a static-looking L3 — the post-click L3 is "
+                            f"reliable ONLY for clicks whose visual effect is local to the "
+                            f"cursor (toggling a checkbox right under the pointer, opening a "
+                            f"dropdown that pops adjacent to the cursor). For everything else, "
+                            f"trust the click landed (the pre-click L3 already confirmed the "
+                            f"target was under the crosshair) and verify via a fresh "
+                            f"`screenshot(level=\"active_window\")` if you must see the outcome. "
+                            f"coordinate frame unchanged.)"
+                        )
                         save_tag = f"step-{step + 1:03d}-{action}-postverify-l3"
                     else:
                         label = f"{fn_name} follow-up image"
@@ -1018,14 +1164,14 @@ class Agent:
                            thread_id=log.id if log else None,
                            phase="post")
                 post_for_record = post
-                p_ox, p_oy = post.offset  # type: ignore[misc]
                 p_rw, p_rh = post.raw_size
                 p_sw, p_sh = post.sent_size
                 content.append({"type": "text", "text": (
                     f"[level={level_tag}] 模型请求的截图 ({post.level.value})："
-                    f"发送尺寸 {p_sw}x{p_sh}（原始 {p_rw}x{p_rh}）；"
-                    f"在屏幕坐标系中位于 (left={p_ox}, top={p_oy}, right={p_ox + p_rw}, bottom={p_oy + p_rh})；"
-                    f"图片内 (px,py) → 屏幕坐标 ({p_ox}+px*{p_rw / p_sw:.3f}, {p_oy}+py*{p_rh / p_sh:.3f})。"
+                    f"发送尺寸 {p_sw}x{p_sh}（原始 {p_rw}x{p_rh}）。"
+                    f"图像本地坐标范围 x=0..{p_rw - 1}, y=0..{p_rh - 1}。"
+                    + ("\n" + post.grid_legend if post.grid_legend else "")
+                    + "\n`coordinate` 参数请直接传**图像本地像素坐标**（从 0 开始、以该图左上角为原点）：图中每根彩色网格线在两端用同色数字标出了其图像本地位置，定位最近的网格线再目测偏移即可。框架会自动加上窗口在屏幕中的偏移生成真实点击坐标。"
                 )})
                 post_block, post_sent = self._capture_image_part(post)
                 self._record_img(post_sent, saved_name)
@@ -1051,14 +1197,13 @@ class Agent:
             # self.tool.last_capture during dispatch).
             for label, meta_png, meta_cap in step_meta_pngs:
                 if meta_cap is not None and meta_cap.offset is not None:
-                    m_ox, m_oy = meta_cap.offset
                     m_rw, m_rh = meta_cap.raw_size
                     m_sw, m_sh = meta_cap.sent_size
                     coord_text = (
-                        f"[follow-up image] {label}: 发送尺寸 {m_sw}x{m_sh}（原始 {m_rw}x{m_rh}）；"
-                        f"在屏幕坐标系中位于 (left={m_ox}, top={m_oy}, right={m_ox + m_rw}, bottom={m_oy + m_rh})；"
-                        f"图片内 (px,py) → 屏幕坐标 ({m_ox}+px*{m_rw / m_sw:.3f}, {m_oy}+py*{m_rh / m_sh:.3f})。"
-                        f"**这张图是当前活动的坐标参考系**——下一步 `coordinate` 必须按这张图的像素来给。"
+                        f"[follow-up image] {label}: 发送尺寸 {m_sw}x{m_sh}（原始 {m_rw}x{m_rh}）。"
+                        f"图像本地坐标范围 x=0..{m_rw - 1}, y=0..{m_rh - 1}。"
+                        + ("\n" + meta_cap.grid_legend if meta_cap.grid_legend else "")
+                        + "\n**这张图是当前活动的坐标参考系**——下一步 `coordinate` 从图中彩色网格线两端的同色数字读出最近的**图像本地坐标**值（从 0 开始、以该图左上角为原点），再目测偏移。框架会自动加上窗口在屏幕中的偏移生成真实点击坐标。"
                     )
                 else:
                     coord_text = f"[follow-up image] {label}"

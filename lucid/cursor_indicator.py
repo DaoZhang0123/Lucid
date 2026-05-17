@@ -37,6 +37,38 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Dedicated debug-log file
+# ---------------------------------------------------------------------------
+# The bundled exe has no root logging handler, so stdlib logger.* calls in
+# this module vanish silently. We append a few key signals to a dedicated
+# file under ~/.lucid/logs/cursor-debug.log so we can confirm — without
+# adding any new logging machinery — whether the user-click watcher fires
+# and what _user_pulse_async decides.
+_DEBUG_LOG_PATH: Optional[Path] = None
+try:
+    _DEBUG_LOG_PATH = Path.home() / ".lucid" / "logs" / "cursor-debug.log"
+    _DEBUG_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+except Exception:
+    _DEBUG_LOG_PATH = None
+
+
+def _debug(msg: str) -> None:
+    """Append a line to the cursor-debug log. Never raises."""
+    if _DEBUG_LOG_PATH is None:
+        return
+    try:
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        with _DEBUG_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
+
+_debug("cursor_indicator module loaded")
+
 # OCR_* system cursor IDs (from WinUser.h). We override every visible cursor
 # kind so the crab is consistent regardless of which UI element the pointer
 # happens to hover over while Lucid is acting.
@@ -210,43 +242,26 @@ def _ensure_safety_hooks() -> None:
 
 
 # ---------------------------------------------------------------------------
-# User-click hook — pulse the claw closed when the human (not Lucid) clicks
+# User-click watcher — pulse the claw closed when the human (not Lucid) clicks
 # ---------------------------------------------------------------------------
-# Low-level mouse hook detects every system-wide mouse event. We filter
-# ``LLMHF_INJECTED`` so Lucid's own SendInput/mouse_event clicks (which
-# already get the explicit ``pulse_click()`` from ``tools.dispatch``) don't
-# double-trigger. Hook callback runs on the dedicated pump thread; the
-# pulse itself is dispatched to a tiny worker thread so we don't block
-# Windows' input pipeline.
-_WH_MOUSE_LL = 14
-_WM_QUIT = 0x0012
-_WM_LBUTTONDOWN = 0x0201
-_WM_RBUTTONDOWN = 0x0204
-_WM_MBUTTONDOWN = 0x0207
-_WM_XBUTTONDOWN = 0x020B
-_LLMHF_INJECTED = 0x00000001
-_LLMHF_LOWER_IL_INJECTED = 0x00000002
-_USER_CLICK_DOWNS = {
-    _WM_LBUTTONDOWN, _WM_RBUTTONDOWN, _WM_MBUTTONDOWN, _WM_XBUTTONDOWN,
-}
+# Originally implemented as a WH_MOUSE_LL low-level mouse hook. That approach
+# was fragile: low-level hooks can be silently dropped by Windows when the
+# foreground window runs at higher integrity (UIPI), and the HOOKPROC
+# callback's ctypes signature is easy to get wrong on x64 (LRESULT vs c_long).
+# We don't get any visible failure mode — the claw simply never closes.
+#
+# Replacement: a daemon thread that polls ``GetAsyncKeyState`` every 30 ms
+# for the mouse buttons. ``GetAsyncKeyState`` works regardless of UIPI /
+# foreground window / message pump state, and we can detect button edges
+# trivially. Lucid's own ``SendInput`` clicks ALSO show up via this API,
+# so we suppress overlapping pulses by checking ``_active_kind`` — when
+# Lucid is mid-click, ``pulse_click()`` has already set it to "closed", so
+# we don't fire a redundant pulse.
+_VK_BUTTONS = (0x01, 0x02, 0x04, 0x05, 0x06)  # L, R, M, X1, X2
 
-_hook_thread: Optional[threading.Thread] = None
-_hook_thread_id: int = 0
-_hook_handle: int = 0
-# Keep a strong reference to the ctypes callback so it isn't GC'd.
-_hook_proc_ref = None
-_pulse_active = False  # debounce: skip overlapping user pulses
-
-
-class _MSLLHOOKSTRUCT(ctypes.Structure):
-    _fields_ = [
-        ("pt_x", ctypes.c_long),
-        ("pt_y", ctypes.c_long),
-        ("mouseData", ctypes.c_ulong),
-        ("flags", ctypes.c_ulong),
-        ("time", ctypes.c_ulong),
-        ("dwExtraInfo", ctypes.c_void_p),
-    ]
+_watch_thread: Optional[threading.Thread] = None
+_watch_stop = threading.Event()
+_pulse_active = False  # set while a user-pulse is holding the closed frame
 
 
 class _POINT(ctypes.Structure):
@@ -258,20 +273,46 @@ def _force_cursor_redraw() -> None:
 
     ``SetSystemCursor`` updates the system cursor table but the on-screen
     pointer only refreshes when something dispatches ``WM_SETCURSOR`` —
-    typically a mouse-move. When the user clicks without moving (very
-    common — they aim, then click) the visible cursor stays stale even
-    though our state changed.
+    typically a mouse-move that crosses a hit-test boundary. When the user
+    clicks without moving the mouse (very common — they aim, then click),
+    the visible cursor stays stale even though our state changed.
 
-    Trick: post a 0-pixel injected ``MOUSEEVENTF_MOVE`` via ``mouse_event``.
-    Windows treats this as a no-op for position but still walks the cursor
-    refresh path, so the new system cursor becomes visible immediately.
-    The injected event carries ``LLMHF_INJECTED`` so our own hook ignores it.
+    A bare ``mouse_event(MOUSEEVENTF_MOVE, 0, 0, ...)`` does NOT trigger a
+    WM_SETCURSOR re-dispatch on modern Windows — Windows short-circuits
+    zero-delta moves. We need to actually shift the cursor by ≥1 pixel.
+
+    Workaround: ``GetCursorPos`` → ``SetCursorPos(x, y)`` (same position)
+    is also short-circuited. Instead, jiggle by exactly 1 px and snap back:
+
+        SetCursorPos(x+1, y)   → forces a real move + WM_SETCURSOR
+        SetCursorPos(x,   y)   → snaps back
+
+    Both calls are synchronous and complete in <1 ms; the human eye can't
+    see a 1-pixel oscillation but the cursor bitmap is now refreshed.
+
+    Note: ``SetCursorPos`` is NOT marked LLMHF_INJECTED, but it doesn't
+    generate WM_*BUTTONDOWN messages so our low-level click hook ignores it
+    naturally (it only listens for button-downs, not moves).
     """
     if not _IS_WINDOWS:
         return
     try:
-        # MOUSEEVENTF_MOVE = 0x0001
-        ctypes.windll.user32.mouse_event(0x0001, 0, 0, 0, 0)
+        user32 = ctypes.windll.user32
+        # IMPORTANT: do NOT set ``user32.GetCursorPos.argtypes`` /
+        # ``user32.SetCursorPos.argtypes`` here. ``ctypes.windll.user32`` is
+        # a process-wide cached proxy — mutating an argtypes list rebinds
+        # the signature for *every* caller in the process. Other modules
+        # (input_driver.py, window.py, uia.py) pass their own POINT subclass
+        # via ``byref``; if we declare argtypes=[POINTER(_POINT)] here, those
+        # callers blow up with `expected LP__POINT instance instead of
+        # pointer to POINT`. ctypes accepts ``byref(struct)`` for any
+        # pointer parameter when argtypes is unset, and the integer overload
+        # of SetCursorPos works with default int marshalling — so just call.
+        pt = _POINT()
+        if not user32.GetCursorPos(ctypes.byref(pt)):
+            return
+        user32.SetCursorPos(pt.x + 1, pt.y)
+        user32.SetCursorPos(pt.x, pt.y)
     except Exception:
         pass
 
@@ -281,15 +322,31 @@ def _user_pulse_async() -> None:
 
     Unlike the ``pulse_click`` context manager (which wraps a Lucid action),
     this just shows the closed jaw for ~``_PULSE_MIN_HOLD_SEC`` then flips
-    back to open, all on a worker thread so the LL hook callback returns
-    immediately (Windows kills hooks that block the input pipeline).
+    back to open.
+
+    **The swap to closed must happen synchronously inside the hook callback.**
+    If we defer it to a worker thread, by the time the thread acquires the
+    lock and calls ``SetSystemCursor``, the target window has already
+    processed the click's ``WM_SETCURSOR`` against the OLD (open) cursor
+    table — visible result is no perceptible change. ``SetSystemCursor``
+    itself is fast (microseconds per ID, ~14 IDs total = well under 1 ms),
+    far below the LowLevelHooks timeout (5 s on modern Windows).
+
+    Only the ``sleep + restore-to-open`` half runs on the worker thread,
+    because we must NOT block the input pipeline for hundreds of ms.
     """
     global _pulse_active
     with _lock:
         if _pulse_active or _active_count == 0 or _active_kind != "open":
+            _debug(
+                f"user-pulse skipped: pulse_active={_pulse_active} "
+                f"active_count={_active_count} active_kind={_active_kind}"
+            )
             return
         if not _apply_kind("closed"):
+            _debug("user-pulse: _apply_kind('closed') FAILED")
             return
+        _debug("user-pulse: applied closed")
         _pulse_active = True
     # Force the visible cursor to repaint right now (user clicked without
     # moving → no natural WM_SETCURSOR).
@@ -310,93 +367,70 @@ def _user_pulse_async() -> None:
 
 
 def _start_user_click_hook() -> None:
-    """Spin up a daemon thread that owns a low-level mouse hook + msg pump."""
-    global _hook_thread, _hook_thread_id, _hook_handle, _hook_proc_ref
-    if not _IS_WINDOWS or _hook_thread is not None:
+    """Spin up a daemon thread that polls mouse buttons via GetAsyncKeyState.
+
+    Replaces the previous WH_MOUSE_LL implementation. Polling at 30 ms is
+    well under human reaction time and avoids all the LL-hook footguns
+    (UIPI silently dropping callbacks, HOOKPROC ctypes signature on x64,
+    Windows killing slow hooks). Lucid's own clicks fire here too, but
+    `_user_pulse_async` short-circuits when `_active_kind != "open"` (i.e.
+    when pulse_click() has already swapped to closed).
+    """
+    global _watch_thread
+    if not _IS_WINDOWS or _watch_thread is not None:
         return
 
-    user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
+    # Use a fresh WinDLL instance (NOT ctypes.windll.user32) so any argtypes
+    # we set here can't leak to other modules' GetAsyncKeyState callers via
+    # the process-wide cached proxy. See the comment in _force_cursor_redraw
+    # for the same footgun we hit with GetCursorPos/SetCursorPos.
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
 
-    HOOKPROC = ctypes.WINFUNCTYPE(
-        ctypes.c_long, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p,
-    )
+    _watch_stop.clear()
 
-    def _proc(nCode, wParam, lParam):
+    def _watch() -> None:
+        _debug(f"user-click poller started (interval=30ms, buttons={[hex(b) for b in _VK_BUTTONS]})")
+        # Track previous "currently down" state for each button so we only
+        # pulse on the down-edge, not while the button is held.
+        prev_down = {vk: False for vk in _VK_BUTTONS}
+        # Drain any stale "was pressed since last call" bit at startup.
+        for vk in _VK_BUTTONS:
+            user32.GetAsyncKeyState(vk)
         try:
-            if nCode == 0 and int(wParam) in _USER_CLICK_DOWNS:
-                info = ctypes.cast(lParam, ctypes.POINTER(_MSLLHOOKSTRUCT)).contents
-                injected = bool(info.flags & (_LLMHF_INJECTED | _LLMHF_LOWER_IL_INJECTED))
-                if not injected:
-                    _user_pulse_async()
-        except Exception:
-            pass
-        return user32.CallNextHookEx(None, nCode, wParam, lParam)
-
-    cb = HOOKPROC(_proc)
-
-    ready = threading.Event()
-
-    def _pump() -> None:
-        global _hook_thread_id, _hook_handle
-        _hook_thread_id = kernel32.GetCurrentThreadId()
-        try:
-            user32.SetWindowsHookExW.restype = ctypes.c_void_p
-            user32.SetWindowsHookExW.argtypes = [
-                ctypes.c_int, HOOKPROC, ctypes.c_void_p, ctypes.c_uint,
-            ]
-            hmod = kernel32.GetModuleHandleW(None)
-            handle = user32.SetWindowsHookExW(_WH_MOUSE_LL, cb, hmod, 0)
-            if not handle:
-                return
-            _hook_handle = handle
+            while not _watch_stop.is_set():
+                for vk in _VK_BUTTONS:
+                    state = user32.GetAsyncKeyState(vk)
+                    is_down = (state & 0x8000) != 0
+                    if is_down and not prev_down[vk]:
+                        _debug(f"user-click down vk=0x{vk:02x}")
+                        try:
+                            _user_pulse_async()
+                        except Exception as e:
+                            _debug(f"user-pulse exception: {e!r}")
+                    prev_down[vk] = is_down
+                # 30 ms poll → user perceives the closed jaw within one frame
+                # at 60 Hz. Event.wait lets us exit promptly on stop.
+                if _watch_stop.wait(0.030):
+                    break
         finally:
-            ready.set()
-        # Standard PeekMessage/GetMessage pump. PostThreadMessage(WM_QUIT)
-        # from _stop_user_click_hook will break us out.
-        msg = ctypes.create_string_buffer(64)  # MSG fits in 48B on x64; round up
-        try:
-            while user32.GetMessageW(msg, None, 0, 0) > 0:
-                user32.TranslateMessage(msg)
-                user32.DispatchMessageW(msg)
-        except Exception:
-            pass
-        try:
-            if _hook_handle:
-                user32.UnhookWindowsHookEx(_hook_handle)
-        except Exception:
-            pass
+            _debug("user-click poller stopped")
 
-    _hook_proc_ref = cb  # prevent GC
-    _hook_thread = threading.Thread(target=_pump, name="crab-mouse-hook", daemon=True)
-    _hook_thread.start()
-    ready.wait(timeout=2.0)
-    if not _hook_handle:
-        # Failed to install hook — drop references so we can retry next time.
-        _hook_thread = None
-        _hook_thread_id = 0
-        _hook_proc_ref = None
+    _watch_thread = threading.Thread(target=_watch, name="crab-user-watch", daemon=True)
+    _watch_thread.start()
 
 
 def _stop_user_click_hook() -> None:
-    global _hook_thread, _hook_thread_id, _hook_handle, _hook_proc_ref
-    if not _IS_WINDOWS or _hook_thread is None:
+    global _watch_thread
+    if not _IS_WINDOWS or _watch_thread is None:
         return
+    _watch_stop.set()
     try:
-        if _hook_thread_id:
-            ctypes.windll.user32.PostThreadMessageW(
-                _hook_thread_id, _WM_QUIT, 0, 0,
-            )
+        _watch_thread.join(timeout=1.0)
     except Exception:
         pass
-    try:
-        _hook_thread.join(timeout=1.0)
-    except Exception:
-        pass
-    _hook_thread = None
-    _hook_thread_id = 0
-    _hook_handle = 0
-    _hook_proc_ref = None
+    _watch_thread = None
 
 
 # ---------------------------------------------------------------------------
@@ -439,8 +473,9 @@ class CrabCursor(AbstractContextManager):
         if self._applied_here and _active_count == 1:
             try:
                 _start_user_click_hook()
-            except Exception:
-                pass
+            except Exception as e:
+                _debug(f"start_user_click_hook exception: {e!r}")
+        _debug(f"CrabCursor entered active_count={_active_count} active_kind={_active_kind}")
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -457,8 +492,9 @@ class CrabCursor(AbstractContextManager):
         if stopped:
             try:
                 _stop_user_click_hook()
-            except Exception:
-                pass
+            except Exception as e:
+                _debug(f"stop_user_click_hook exception: {e!r}")
+            _debug("CrabCursor exited (last)")
         return None
 
 

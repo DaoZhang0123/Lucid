@@ -122,24 +122,65 @@ def is_app_disabled(cfg: ToolsConfig, app: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _is_seed_line(ln: str) -> bool:
+    """Heuristic: an entry line is a seed if its tag prefix is ``[seed · ...]``.
+
+    Learned tips use ``[<YYYY-MM-DD HH:MM> · agent · ...]`` and never start
+    with ``seed`` after the opening bracket.
+    """
+    s = ln.lstrip()
+    if not s.startswith("- ["):
+        return False
+    # "- [seed · ...]" or "- [seed·...]" — any whitespace inside.
+    return s[3:].lstrip().lower().startswith("seed")
+
+
+def _merge_seeds_into(existing: str, fresh_seed_body: str) -> str:
+    """Return ``existing`` with ALL seed entry-lines replaced by ``fresh_seed_body``.
+
+    Learned tips (every ``- [...]`` line that isn't a seed) are preserved in
+    their original order, appended after the fresh seed block. Header lines
+    and prose around the entries are kept as-is.
+    """
+    lines = existing.splitlines()
+    # Find header / prose prefix — everything before the first "- [" entry.
+    head_end = 0
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith("- ["):
+            head_end = i
+            break
+    else:
+        # No entry lines at all — just append fresh seeds.
+        head = existing.rstrip() + ("\n\n" if existing.strip() else "")
+        return head + fresh_seed_body
+    head = "\n".join(lines[:head_end]).rstrip()
+    learned = [ln for ln in lines[head_end:] if ln.lstrip().startswith("- [") and not _is_seed_line(ln)]
+    parts: list[str] = []
+    if head:
+        parts.append(head)
+        parts.append("")
+    parts.append(fresh_seed_body.rstrip())
+    if learned:
+        parts.append("\n".join(learned))
+    return "\n".join(parts) + "\n"
+
+
 def _ensure_global_seeded(cfg: ToolsConfig) -> Path:
     p = tools_path(cfg)
     if not p.is_file():
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(_HEADER + "\n" + _SEED_BODY, encoding="utf-8")
         return p
-    # Pristine-refresh: if every entry line is still a seed entry (user hasn't
-    # learned anything new globally), refresh from the in-code _SEED_BODY so
-    # updates to the seed propagate to existing installs without manual reset.
+    # Always refresh seed entries from the in-code _SEED_BODY (preserving any
+    # learned tips). Updates to the seed propagate to existing installs without
+    # manual reset.
     try:
         existing = p.read_text(encoding="utf-8")
     except OSError:
         return p
-    entry_lines = [ln for ln in existing.splitlines() if ln.lstrip().startswith("- [")]
-    if entry_lines and all(("[seed " in ln or "· seed " in ln) for ln in entry_lines):
-        fresh = _HEADER + "\n" + _SEED_BODY
-        if existing.strip() != fresh.strip():
-            p.write_text(fresh, encoding="utf-8")
+    merged = _merge_seeds_into(existing, _SEED_BODY)
+    if merged.strip() != existing.strip():
+        p.write_text(merged, encoding="utf-8")
     return p
 
 
@@ -172,15 +213,16 @@ def _ensure_app_seeded(cfg: ToolsConfig, app_slug: str) -> Path | None:
             existing = p.read_text(encoding="utf-8")
         except OSError:
             existing = ""
-        # "Pristine" = every entry line is a seed entry. If so, refresh from
-        # the registry. Non-entry lines (header, blank lines, prose) are
-        # ignored when classifying.
-        entry_lines = [ln for ln in existing.splitlines() if ln.lstrip().startswith("- [")]
-        if entry_lines and all(("[seed " in ln or "· seed " in ln) for ln in entry_lines):
-            title, body = seed
-            fresh = f"# {title}\n\n{body}"
-            if existing.strip() != fresh.strip():
-                p.write_text(fresh, encoding="utf-8")
+        # Always refresh seed entries from the registry, preserving learned
+        # tips. New seeds reach existing installs even after agents have
+        # appended `learn_tip` entries.
+        title, body = seed
+        # If the file has no header, force the canonical one.
+        if not existing.lstrip().startswith("# "):
+            existing = f"# {title}\n\n{existing.lstrip()}"
+        merged = _merge_seeds_into(existing, body)
+        if merged.strip() != existing.strip():
+            p.write_text(merged, encoding="utf-8")
     return p
 
 

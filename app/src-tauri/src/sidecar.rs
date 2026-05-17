@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use once_cell::sync::OnceCell;
@@ -28,6 +28,15 @@ pub struct Sidecar {
     stdin: Mutex<Option<ChildStdin>>,
     next_id: AtomicU64,
     pending: Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>,
+    /// PID of the currently spawned child (0 == none). Stored separately from
+    /// the `Child` handle (which lives inside the spawn future) so the
+    /// shutdown path can force-kill the whole process tree via `taskkill`
+    /// even if the supervise task is blocked.
+    child_pid: AtomicU32,
+    /// Set when the app is on its way out — `supervise()` checks this between
+    /// respawn attempts so we don't immediately relaunch the sidecar after
+    /// killing it during shutdown.
+    shutting_down: AtomicBool,
 }
 
 impl Sidecar {
@@ -36,6 +45,8 @@ impl Sidecar {
             stdin: Mutex::new(None),
             next_id: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
+            child_pid: AtomicU32::new(0),
+            shutting_down: AtomicBool::new(false),
         }
     }
 
@@ -199,13 +210,22 @@ fn configure_common(cmd: &mut Command, cfg_path: &str) {
 pub fn supervise(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
+            if instance().shutting_down.load(Ordering::SeqCst) {
+                log::info!("supervise: shutting_down flag set; exiting loop");
+                break;
+            }
             match spawn_once(&app).await {
                 Ok(code) => {
                     let _ = app.emit(
                         EVENT_SIDECAR,
                         json!({"kind": "exit", "code": code}),
                     );
-                    log::warn!("sidecar exited code={code:?}, respawning in 1s");
+                    log::warn!("sidecar exited code={code:?}");
+                    if instance().shutting_down.load(Ordering::SeqCst) {
+                        log::info!("supervise: clean exit during shutdown; not respawning");
+                        break;
+                    }
+                    log::warn!("respawning sidecar in 1s");
                 }
                 Err(e) => {
                     let _ = app.emit(
@@ -213,6 +233,9 @@ pub fn supervise(app: AppHandle) {
                         json!({"kind": "spawn_error", "message": e.to_string()}),
                     );
                     log::error!("sidecar spawn failed: {e}");
+                    if instance().shutting_down.load(Ordering::SeqCst) {
+                        break;
+                    }
                 }
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -228,6 +251,9 @@ async fn spawn_once(app: &AppHandle) -> Result<Option<i32>, String> {
     );
     log::info!("spawning sidecar: {exe_desc}");
     let mut child: Child = cmd.spawn().map_err(|e| format!("spawn {exe_desc}: {e}"))?;
+    let pid = child.id().unwrap_or(0);
+    instance().child_pid.store(pid, Ordering::SeqCst);
+    log::info!("sidecar pid = {pid}");
     let stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let stderr = child.stderr.take().ok_or("no stderr")?;
@@ -280,12 +306,133 @@ async fn spawn_once(app: &AppHandle) -> Result<Option<i32>, String> {
     let status = child.wait().await.map_err(|e| format!("wait: {e}"))?;
     // Drop stdin so caller knows we're disconnected; clear pending requests.
     *sidecar.stdin.lock().await = None;
+    sidecar.child_pid.store(0, Ordering::SeqCst);
     let mut pending = sidecar.pending.lock().await;
     for (_, tx) in pending.drain() {
         let _ = tx.send(Err("sidecar terminated".into()));
     }
     Ok(status.code())
 }
+
+/// Best-effort full shutdown of the sidecar, called from the Tauri exit path
+/// (tray "退出", `RunEvent::Exit`, etc.). Synchronous + blocking so the
+/// Tauri process doesn't terminate before this returns and orphan the child.
+///
+/// Steps:
+///   1. Mark `shutting_down` so `supervise()` won't respawn after the child
+///      exits.
+///   2. Send a `shutdown` JSON-RPC (graceful — gives Python a chance to fire
+///      atexit hooks, which restore the system cursor).
+///   3. Wait up to ~2.5s for the child PID to disappear.
+///   4. If still alive, `taskkill /F /T /PID <pid>` to kill the whole tree.
+///   5. As a belt-and-suspenders for the cursor (in case Python was killed
+///      before its atexit fired), call `SystemParametersInfoW(SPI_SETCURSORS)`
+///      from Rust to reload the user's configured cursor scheme.
+pub fn shutdown_blocking() {
+    let sidecar = instance();
+    sidecar.shutting_down.store(true, Ordering::SeqCst);
+    let pid = sidecar.child_pid.load(Ordering::SeqCst);
+    log::info!("shutdown_blocking: sidecar pid={pid}");
+
+    // Graceful shutdown RPC on a tiny temporary tokio runtime — we may be
+    // called outside any existing async context (e.g. from RunEvent::Exit on
+    // the Tauri main thread).
+    if pid != 0 {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        if let Ok(rt) = rt {
+            let _ = rt.block_on(async {
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(1500),
+                    sidecar.request("shutdown", json!({})),
+                )
+                .await
+            });
+        }
+    }
+
+    // Wait briefly for the OS to reap the process.
+    if pid != 0 {
+        for _ in 0..10 {
+            if !pid_is_alive(pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+    // Force-kill the whole tree if still alive (covers cases where the
+    // graceful shutdown deadlocked on an in-progress task / blocking I/O).
+    if pid != 0 && pid_is_alive(pid) {
+        log::warn!("sidecar pid {pid} still alive after graceful shutdown; force-killing tree");
+        #[cfg(windows)]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        #[cfg(unix)]
+        {
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+        }
+    }
+
+    // Final belt-and-suspenders: restore system cursors. If the Python child
+    // got force-killed, its atexit hook never ran and the crab claw would
+    // remain until next logon. SPI_SETCURSORS reloads the registry scheme.
+    restore_system_cursors();
+}
+
+#[cfg(windows)]
+fn pid_is_alive(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let h = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        if h.is_invalid() {
+            return false;
+        }
+        let mut code: u32 = 0;
+        let ok = GetExitCodeProcess(h, &mut code).is_ok();
+        let _ = CloseHandle(h);
+        ok && code as i32 == STILL_ACTIVE.0
+    }
+}
+
+#[cfg(not(windows))]
+fn pid_is_alive(pid: u32) -> bool {
+    // POSIX: kill(pid, 0) returns 0 if process exists.
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[cfg(windows)]
+fn restore_system_cursors() {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_SETCURSORS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    };
+    unsafe {
+        let _ = SystemParametersInfoW(
+            SPI_SETCURSORS,
+            0,
+            None,
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn restore_system_cursors() {}
 
 // ---------- Tauri commands exposed to the frontend ----------
 

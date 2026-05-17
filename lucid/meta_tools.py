@@ -882,19 +882,13 @@ def dispatch_meta_tool(
                     attached_l2 = l2
                     out_lines.append("")
                     out_lines.append(
-                        f"  region: x={rx} y={ry} w={rw} h={rh} (L2 attached as user message; this is the active coordinate frame for your next click against this app. By default no further screenshots will be auto-attached — call action='screenshot' yourself when you need to see the screen again.)"
+                        f"  image rect: {rw}x{rh} (image-local coords 0..{rw - 1}, 0..{rh - 1}; L2 attached as user message; this is the active coordinate frame for your next click against this app — read the on-image gridline labels and send those numbers directly, the framework adds the window's screen offset for you. By default no further screenshots will be auto-attached — call action='screenshot' yourself when you need to see the screen again.)"
                     )
-                    # Persist to region store as __main_window for next launch.
-                    try:
-                        if getattr(cfg, "regions", None):
-                            data = regions_mod.load_app_regions(cfg.regions, slug) or {}
-                            regions = dict(data.get("regions") or {})
-                            regions["__main_window"] = {"x": rx, "y": ry, "w": rw, "h": rh}
-                            data["regions"] = regions
-                            data.setdefault("slug", slug)
-                            regions_mod.save_app_regions(cfg.regions, slug, data)
-                    except Exception:
-                        pass  # cache best-effort, never break the dispatch
+                    # Note: previous versions cached this rect as ``__main_window``
+                    # in ``~/.lucid/regions/<slug>.json``. As of 2026-05-17 region
+                    # lookups are live UIA queries, ``__main_window`` is resolved
+                    # via GetClientRect on every call, and there is no cache to
+                    # write here.
                 except Exception as e:
                     image_png = None
                     out_lines.append(

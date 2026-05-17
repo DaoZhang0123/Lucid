@@ -402,6 +402,14 @@
   async function refreshCopilotStatus() {
     try {
       copStatus = (await invoke("copilot_status")) as CopStatus;
+      // Stale-error clear: if the backend now reports a valid login (whether
+      // because the just-finished poll succeeded, or because a sidecar restart
+      // dropped an in-flight `_pending` device flow that the frontend then
+      // wrongly read as "no pending login"), wipe any leftover copError so the
+      // UI doesn't keep showing a contradictory red banner next to "✓ 已登录".
+      if (copStatus.logged_in) {
+        copError = "";
+      }
     } catch (e) {
       copError = String(e);
     }
@@ -429,6 +437,22 @@
             await save();
           } else if (r.status === "error") {
             if (copPollTimer) { clearInterval(copPollTimer); copPollTimer = null; }
+            // If sidecar was restarted mid-flow (typical trigger: user hit
+            // Save in this same Settings page, which hot-reloads sidecar and
+            // wipes the in-memory `_pending`), poll will start returning
+            // "no pending login; call begin_login first" forever. Before
+            // surfacing it, check whether we're actually already logged in —
+            // if so, this error is stale; just clear and refresh status.
+            const isStalePending = (r.error || "").indexOf("no pending login") >= 0;
+            if (isStalePending) {
+              await refreshCopilotStatus();
+              if (copStatus.logged_in) {
+                copDevice = null;
+                copBusy = false;
+                copError = "";
+                return;
+              }
+            }
             copError = r.error || $_("settings.copilot_login_failed_default");
             copDevice = null;
             copBusy = false;

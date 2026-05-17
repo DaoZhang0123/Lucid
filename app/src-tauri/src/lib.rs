@@ -195,12 +195,14 @@ pub fn run() {
                         });
                     }
                     "quit" => {
-                        // Try graceful shutdown of sidecar then exit.
+                        // Full shutdown: stop the supervise loop, send
+                        // shutdown RPC, wait briefly, force-kill the process
+                        // tree if necessary, restore the system cursor.
+                        // Run on a worker thread so we don't block the menu
+                        // event handler.
                         let app_h = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let _ = sidecar::instance()
-                                .request("shutdown", serde_json::json!({}))
-                                .await;
+                        std::thread::spawn(move || {
+                            sidecar::shutdown_blocking();
                             app_h.exit(0);
                         });
                     }
@@ -250,6 +252,22 @@ pub fn run() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            // Catch-all shutdown: whatever path triggered the exit (tray
+            // "退出", `app.exit()`, OS logoff, Task Manager soft-close,
+            // unhandled panic — anything that drives `RunEvent::Exit`),
+            // make sure the Python sidecar child is killed and the system
+            // cursor is restored before we let the Tauri process die.
+            // `shutdown_blocking` is idempotent and cheap when there's no
+            // child running, so it's safe to call here even if the tray
+            // "quit" handler already did it.
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                sidecar::shutdown_blocking();
+            }
+        });
 }

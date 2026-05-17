@@ -101,10 +101,11 @@ class ComputerTool:
             "function": {
                 "name": "computer",
                 "description": (
-                    f"Control the Windows desktop. The default screenshots you receive are {screen_w}x{screen_h} pixels (level=fullscreen); "
-                    "use that coordinate space when specifying `coordinate`. You can request a more detailed screenshot by calling "
+                    f"Control the Windows desktop. The default screenshots you receive are {screen_w}x{screen_h} pixels (level=fullscreen). "
+                    "Every screenshot is overlaid with a colour-coded gridline grid whose labels are **image-local pixel coordinates** (0-based, origin at the top-left of that image); read those numbers and pass them as `coordinate`. The framework adds the window's screen offset automatically. "
+                    "You can request a more detailed screenshot by calling "
                     "action='screenshot' with level='active_window' (the focused window only) or level='cursor_local' (a small patch around the mouse). "
-                    "Coordinates you give afterwards are interpreted in the most recent screenshot's coordinate space."
+                    "Coordinates you give afterwards are interpreted in the most recent screenshot's image-local frame."
                 ),
                 "parameters": {
                     "type": "object",
@@ -148,12 +149,15 @@ class ComputerTool:
                             "minItems": 2,
                             "maxItems": 2,
                             "description": (
-                                "[x, y] in the most recent screenshot's pixel coordinates. "
-                                "For `left_click_drag` this is the DESTINATION of the drag — the cursor's "
-                                "CURRENT position is used as the start, so you MUST issue a `mouse_move` "
-                                "(or a left_click that lands you on the start) just before the drag; calling "
-                                "`left_click_drag` without first moving the cursor will silently drag from "
-                                "wherever the cursor happens to be (often nowhere useful)."
+                                "[x, y] in **image-local pixel coordinates** (0-based, origin at the top-left of the most recent screenshot) — read directly off the coloured gridline labels stamped on that image. "
+                                "Find the nearest coloured gridline, read its 0-based pixel number from its on-image label (gridlines are 100 image px apart), then visually estimate the offset to your target. "
+                                "The framework adds this capture's window offset to produce the real screen click — you do NOT add the window's screen position yourself."
+                                "\nFor `left_click_drag` this is the DESTINATION of the drag — the "
+                                "cursor's CURRENT position is used as the start, so you MUST issue "
+                                "a `mouse_move` (or a left_click that lands you on the start) just "
+                                "before the drag; calling `left_click_drag` without first moving "
+                                "the cursor will silently drag from wherever the cursor happens "
+                                "to be (often nowhere useful)."
                             ),
                         },
                         "text": {
@@ -173,7 +177,7 @@ class ComputerTool:
                                 "(left_click / right_click / middle_click / double_click / triple_click / left_click_drag) "
                                 "when a `coordinate` is supplied. Default false. "
                                 "When false (or omitted), the click is NOT performed; instead, the system captures a high-detail L3 "
-                                "(`cursor_local`) tile around the target screen coordinate and returns it as the tool result, so you can "
+                                "(`cursor_local`) tile around the target and returns it as the tool result, so you can "
                                 "verify what is actually under the cursor at that pixel right now. After inspecting the tile, if you still "
                                 "want to click, re-issue the SAME action with the SAME coordinate and `confirmed=true` to actually perform the click. "
                                 "If the area is wrong, change your plan instead."
@@ -255,34 +259,12 @@ class ComputerTool:
 
     @staticmethod
     def _maybe_unscreen_coord(cap: "Capture", ix: int, iy: int) -> tuple[int, int] | None:
-        """If ``(ix, iy)`` looks like **screen-pixel** coordinates that fall
-        inside the capture's screen rect, translate them back into image
-        pixel coordinates and return the adjusted ``(px, py)``. Returns
-        ``None`` if the point is not inside the screen rect or already a
-        valid in-image coordinate.
+        """Legacy no-op kept so any old callers don't break.
 
-        Why: the model is told to give image-pixel coords, but it sometimes
-        slips and gives the corresponding screen coords (e.g. for an L2 of
-        an active window with offset (1224, 375), it might say ``(1420, 556)``
-        which is screen-frame, when the in-image equivalent is ``(196, 181)``).
-        Both forms unambiguously identify the same pixel — accept either.
+        Since v2.2 the ``coordinate`` parameter is virtual-screen coords
+        directly (read off the gridline labels), so there is no image-pixel
+        vs screen-pixel ambiguity to resolve. Always returns ``None``.
         """
-        ox, oy = cap.offset
-        rw, rh = cap.raw_size
-        sw, sh = cap.sent_size
-        # Already a valid in-image coord? Don't touch.
-        if 0 <= ix < sw and 0 <= iy < sh:
-            return None
-        # Falls inside the capture's screen rect? Treat as screen coord.
-        if ox <= ix < ox + rw and oy <= iy < oy + rh:
-            scale_x = sw / rw if rw else 1.0
-            scale_y = sh / rh if rh else 1.0
-            px = int(round((ix - ox) * scale_x))
-            py = int(round((iy - oy) * scale_y))
-            # Clamp to image bounds (rounding can land on the edge).
-            px = max(0, min(sw - 1, px))
-            py = max(0, min(sh - 1, py))
-            return px, py
         return None
 
     # Click actions also accept "no coordinate = use current cursor pos", so
@@ -305,75 +287,51 @@ class ComputerTool:
                 "no screenshot taken yet; call action='screenshot' first so coordinates "
                 "have a known reference frame."
             ))
-        sw, sh = cap.sent_size
-        if not (0 <= ix < sw and 0 <= iy < sh):
-            # Tolerance: accept screen-pixel coords if they fall inside the
-            # capture's screen rect — see ``_maybe_unscreen_coord`` docstring.
-            adj = self._maybe_unscreen_coord(cap, ix, iy)
-            if adj is not None:
-                params["coordinate"] = [adj[0], adj[1]]
-                # Breadcrumb: the model gave screen-pixel coords; we
-                # silently translated them to image-pixel. Surface this
-                # in stderr (-> run.log) so a stale-local-variable
-                # regression like the 20260511 WeChat click bug is
-                # caught at a glance instead of needing math.
-                print(
-                    f"[coord_unscreened] {action} ({ix},{iy}) screen-pixel "
-                    f"-> ({adj[0]},{adj[1]}) image-pixel "
-                    f"(cap level={cap.level.value} sent={cap.sent_size} "
-                    f"raw={cap.raw_size} offset={cap.offset})",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                return None
-            # L3 cursor_local fallback: a tiny verification tile must NOT
-            # shrink the accepted coordinate domain. If the click doesn't
-            # fit the L3 frame, transparently retry against the most
-            # recent L1/L2 capture — that's almost always what the model
-            # was actually targeting (it took the L3 just to "look at the
-            # cursor", not to redefine where it can click).
+        # v2.3: coordinate is **image-local** raw pixels, read off the
+        # 0-based gridline labels on the L1/L2 image. The framework adds
+        # this capture's screen offset when the click fires
+        # (Capture.model_to_screen). Validate the point lies inside the
+        # image rect.
+        ox, oy = cap.offset  # type: ignore[misc]
+        rw, rh = cap.raw_size
+        in_rect = (0 <= ix < rw) and (0 <= iy < rh)
+        if not in_rect:
+            # L3 fallback: a tiny verification tile must NOT shrink the
+            # accepted coordinate domain. If the click doesn't fit the L3
+            # image rect, check whether it fits the most recent L1/L2
+            # capture's image rect instead — that's almost always the real
+            # target (model read the macro labels, not the L3 tile).
             macro = self.last_macro_capture
             if (
                 cap.level is ScreenLevel.L3
                 and macro is not None
                 and macro is not cap
+                and macro.offset is not None
             ):
-                msw, msh = macro.sent_size
-                if 0 <= ix < msw and 0 <= iy < msh:
+                mrw, mrh = macro.raw_size
+                if 0 <= ix < mrw and 0 <= iy < mrh:
                     self.last_capture = macro
                     print(
-                        f"[coord_l3_fallback] {action} ({ix},{iy}) outside "
-                        f"L3 {cap.sent_size} but inside L{macro.level.value} "
-                        f"macro frame {macro.sent_size}; reverting active "
-                        f"frame to the macro capture.",
+                        f"[coord_l3_fallback] {action} image-coord ({ix},{iy}) "
+                        f"outside L3 image rect (w={rw},h={rh}) but inside "
+                        f"macro {macro.level.value} image rect (w={mrw},h={mrh}); "
+                        f"reverting active frame to the macro capture.",
                         file=sys.stderr,
                         flush=True,
                     )
                     return None
-                madj = self._maybe_unscreen_coord(macro, ix, iy)
-                if madj is not None:
-                    params["coordinate"] = [madj[0], madj[1]]
-                    self.last_capture = macro
-                    print(
-                        f"[coord_l3_fallback] {action} ({ix},{iy}) screen-pixel "
-                        f"-> ({madj[0]},{madj[1]}) image-pixel against macro "
-                        f"capture (level={macro.level.value} sent={macro.sent_size} "
-                        f"offset={macro.offset}).",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    return None
-            ox, oy = cap.offset
-            rw, rh = cap.raw_size
+            sw, sh = cap.sent_size
             return ToolResult(error=(
-                f"coordinate ({ix},{iy}) is outside the most recent screenshot "
-                f"({sw}x{sh}, level={cap.level.value}, screen rect "
-                f"left={ox}, top={oy}, right={ox + rw}, bottom={oy + rh}). "
-                f"Coordinates must be image-pixel (0..{sw - 1}, 0..{sh - 1}); "
-                f"screen-pixel coords inside the rect above are also accepted "
-                f"and auto-translated. If neither matches your target, take a "
-                f"fresh screenshot first (action='screenshot' with the appropriate "
-                f"level), then re-issue the action with coordinates inside the new image."
+                f"coordinate ({ix},{iy}) is outside the most recent screenshot's "
+                f"image rect (level={cap.level.value}, valid x=0..{rw - 1}, "
+                f"y=0..{rh - 1}; this image was sent at {sw}x{sh}). "
+                f"Coordinates must be **image-local pixels** (0-based) — read "
+                f"them straight off the colour-coded gridline labels stamped "
+                f"on the image. The framework adds the window's screen offset "
+                f"for you (this capture lives at screen origin ({ox},{oy})). "
+                f"If the target is outside this image, take a fresh screenshot "
+                f"first (action='screenshot' with the appropriate level), then "
+                f"re-issue the action with image-local coords inside the new image."
             ))
         # When a click coordinate is provided, also check it against the
         # **real-time** foreground window rect (Docs/screenshot.md v2 §4).

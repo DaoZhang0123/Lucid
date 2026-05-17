@@ -81,7 +81,7 @@ class ScreenshotConfig:
     # 发送到 LLM 的图像编码：L1/L2 大图默认 JPEG（压缩 ~10x），L3 小图保留 PNG（无损）。
     # 这是为了避免单条请求 body 过大（>1MB）导致 Copilot/openrouter 代理读 body 超时（408）。
     send_jpeg_for_l1_l2: bool = True
-    send_jpeg_quality: int = 80
+    send_jpeg_quality: int = 88
     # 对话历史里每个 level 保留最近 K 张截图（装入发给 LLM 的 prompt 里）。
     # 超出部分会被替换为占位文本（携带本地文件名/路径，需要时可反查）。
     keep_recent_l1: int = 1
@@ -99,13 +99,19 @@ class ScreenshotConfig:
     launch_wait_max_ms: int = 1500
     # Poll interval while waiting for the window.
     launch_wait_poll_ms: int = 80
-    # ---- L3 smart sizing via UIA (Snipaste-style) ----
-    # L3 cursor-local asks Windows UI Automation for the bounding rect of the
-    # smallest UI element under the cursor and crops to that. When UIA can't
-    # give a usable rect, L3 falls back to L2 (full active window) — see
-    # Docs/screenshot.md v2 §2.2.
-    l3_smart_padding_px: int = 16          # outset around the UIA rect
-    l3_smart_min_w: int = 160              # auto-grow rect to at least this size
+    # ---- L3 fixed-tile sizing ----
+    # L3 (cursor_local) is a fixed-size square tile centred on the cursor /
+    # click target. Earlier versions used UIA "smart sizing" to crop to the
+    # smallest element rect, but with gridlines now drawn on every L1/L2/L3
+    # (see screen._draw_grid) the model can read screen coordinates straight
+    # off the image — a fixed-pixel tile is simpler, works in non-UIA apps
+    # (WeChat, Electron, custom-drawn UIs), and gives the model a predictable
+    # context window around the click point.
+    l3_tile_size_px: int = 200
+    # ---- Deprecated UIA smart-sizing fields (kept so existing config.toml
+    # files don't fail to parse). No code reads these any more. ----
+    l3_smart_padding_px: int = 16
+    l3_smart_min_w: int = 160
     l3_smart_min_h: int = 80
 
 
@@ -115,12 +121,15 @@ class SafetyConfig:
     # 行为层：在保存/打开对话框里检测到“在左侧 25% 区域点击”时，注入一条
     # “请用文件名框/地址栏 type 路径”的纠正提示，避免模型去左侧导航树逐层点。
     save_dialog_sidebar_guard: bool = True
-    # 点击前预检：在执行 click 之前到目标 (x,y) 抓一张 L3 小图，与模型决策所
-    # 依据的“最近一次截图”同一区域做 dHash 对比；低于相似度阈值即取消本次
-    # click，把实时小图回送给模型让它重新看再决定。
-    # **2026-05 修订**：R3（点击后 pixel-diff 校验，见 §13.4）落地后默认关闭这条
-    # 强制 preview，改为事后判定；保守用户可手动 = true 回到强制 preview。
-    verify_click_target_before: bool = False
+    # 点击前预检（two-phase click protocol）：在执行 click 之前先到目标 (x,y) 抓
+    # 一张 L3 小图回送给模型，模型确认无误后再用同一 (action, coordinate)
+    # + ``confirmed=true`` 触发真正点击。loop._maybe_pre_click_verify 在初次
+    # 调用时**忽略**模型预先附带的 ``confirmed=true``——只有最近一次 preview
+    # 的 (action, screen_xy) 与本次一致时才视为有效确认，防止模型绕过 L3 校
+    # 验。
+    # **2026-05-17 修订**：用户反馈“所有点击都要确认”——重新默认开启。R3
+    # 事后 pixel-diff 校验依旧保留，作为冗余兜底。
+    verify_click_target_before: bool = True
     verify_click_target_radius_px: int = 60
 
 

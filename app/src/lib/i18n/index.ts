@@ -88,15 +88,21 @@ export function setupI18n(initialLocale?: string): void {
     return;
   }
   initialized = true;
-  const startLocale =
-    initialLocale ||
-    readStoredLocale() ||
-    (browser ? getLocaleFromNavigator() : null) ||
-    FALLBACK_LOCALE;
+  const stored = readStoredLocale();
+  const navLocale = browser ? getLocaleFromNavigator() : null;
+  const startLocale = initialLocale || stored || navLocale || FALLBACK_LOCALE;
   init({
     fallbackLocale: FALLBACK_LOCALE,
     initialLocale: startLocale,
   });
+  // If we picked the locale ourselves (no stored value, no explicit arg),
+  // mirror it into config.toml [ui].locale right away so the Python loop's
+  // system prompt advertises the right reply language. Without this the
+  // backend sees cfg.ui.locale = "auto" and would fall back to English even
+  // though the user is reading the app in Chinese (or French).
+  if (!initialLocale && !stored && startLocale) {
+    saveLocale(startLocale);
+  }
 }
 
 export { locale };
