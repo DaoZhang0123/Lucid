@@ -20,7 +20,9 @@
     "nav_doze": "Veille",
     "nav_skills": "Compétences",
     "nav_settings": "Paramètres",
-    "theme_toggle": "Basculer entre thème clair / sombre"
+    "theme_toggle": "Basculer entre thème clair / sombre",
+    "theme_to_light": "Passer au thème clair",
+    "theme_to_dark": "Passer au thème sombre"
   },
   "sidebar": {
     "heading": "Conversations",
@@ -182,7 +184,7 @@
   },
   "doze": {
     "page_title": "Lucid · Sommeil",
-    "hint": "Réflexion en temps libre : quand le sidecar est au repos, une passe en arrière-plan analyse vos threads passés et demande au LLM ce qui mérite d'être conservé comme astuce ou mémoire long terme.",
+    "hint": "Réflexion en temps libre : quand Lucid est au repos, une passe en arrière-plan analyse vos threads passés et demande au LLM ce qui mérite d'être conservé comme astuce ou mémoire long terme.",
     "info_scheduled": "planiﬁé — le prochain tick choisira un thread (statut bientôt mis à jour)",
     "info_cleared": "index traité vidé",
     "confirm_clear": "Vider l'index des threads déjà traités ? Tous seront re-analysés lors de la prochaine passe.",

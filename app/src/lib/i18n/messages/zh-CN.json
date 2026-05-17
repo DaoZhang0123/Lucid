@@ -20,7 +20,9 @@
     "nav_doze": "打盹",
     "nav_skills": "技能",
     "nav_settings": "设置",
-    "theme_toggle": "切换浅色 / 深色主题"
+    "theme_toggle": "切换浅色 / 深色主题",
+    "theme_to_light": "切换成浅色主题",
+    "theme_to_dark": "切换成深色主题"
   },
   "sidebar": {
     "heading": "对话",
@@ -183,7 +185,7 @@
   },
   "doze": {
     "page_title": "Lucid · 打盹",
-    "hint": "空闲反思：当 sidecar 闲置超过设定时间后，后台低优先级扫描历史 thread，让大模型判断是否有值得沉淀为 tools.md / memory.md 的提示。",
+    "hint": "空闲反思：当明眸闲置超过设定时间后，后台低优先级扫描历史 thread，让大模型判断是否有值得沉淀为 tools.md / memory.md 的提示。",
     "info_scheduled": "已排队——下一轮 tick 会选一个 thread处理（状态马上会刷新）",
     "info_cleared": "已重置已处理索引",
     "confirm_clear": "重置已处理 thread 索引？过去的 thread 会在下一轮全部重新学习。",

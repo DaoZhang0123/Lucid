@@ -20,7 +20,9 @@
     "nav_doze": "Doze",
     "nav_skills": "Skills",
     "nav_settings": "Settings",
-    "theme_toggle": "Toggle light / dark theme"
+    "theme_toggle": "Toggle light / dark theme",
+    "theme_to_light": "Switch to light theme",
+    "theme_to_dark": "Switch to dark theme"
   },
   "sidebar": {
     "heading": "Conversations",
@@ -182,7 +184,7 @@
   },
   "doze": {
     "page_title": "Lucid · Doze",
-    "hint": "Idle-time reflection: when the sidecar has been quiet for a while, a low-priority background pass scans your past threads and asks the LLM what's worth saving as long-term tips / memory.",
+    "hint": "Idle-time reflection: when Lucid has been quiet for a while, a low-priority background pass scans your past threads and asks the LLM what's worth saving as long-term tips / memory.",
     "info_scheduled": "scheduled — next tick will pick a thread (status will update shortly)",
     "info_cleared": "processed index cleared",
     "confirm_clear": "Clear the processed-thread index? Past threads will be re-learned next pass.",

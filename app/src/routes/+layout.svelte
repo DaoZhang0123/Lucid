@@ -120,6 +120,10 @@
   :global(html[data-theme="dark"] footer) { background: #111827 !important; border-top-color: #1f2937 !important; color: #e5e7eb !important; }
   :global(html[data-theme="dark"] form button.attach) { background: #1f2937 !important; color: #cbd5e1 !important; border-color: #334155 !important; }
   :global(html[data-theme="dark"] form button.attach:hover:not(:disabled)) { background: #334155 !important; color: #f1f5f9 !important; }
+  :global(html[data-theme="dark"] form button.mic) { background: #1f2937 !important; color: #cbd5e1 !important; border-color: #334155 !important; }
+  :global(html[data-theme="dark"] form button.mic:hover:not(:disabled)) { background: #334155 !important; color: #f1f5f9 !important; }
+  :global(html[data-theme="dark"] form button.mic.mic-recording) { background: #4c1010 !important; color: #fca5a5 !important; border-color: #7f1d1d !important; }
+  :global(html[data-theme="dark"] form button.mic.mic-transcribing) { background: #1e293b !important; color: #93c5fd !important; border-color: #1e40af !important; }
   :global(html[data-theme="dark"] .row) { background: #1f2937 !important; border-color: #334155 !important; color: #e5e7eb !important; }
   :global(html[data-theme="dark"] .row.active) { border-color: #3b82f6 !important; }
   :global(html[data-theme="dark"] .chip) { background: #1f2937 !important; border-color: #334155 !important; color: #e5e7eb !important; }

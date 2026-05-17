@@ -493,8 +493,8 @@
         </svg>
       </a>
       <button class="nav-icon theme-toggle" type="button"
-              data-tooltip={$_("header.theme_toggle")}
-              aria-label={$_("header.theme_toggle")}
+              data-tooltip={$theme === "dark" ? $_("header.theme_to_light") : $_("header.theme_to_dark")}
+              aria-label={$theme === "dark" ? $_("header.theme_to_light") : $_("header.theme_to_dark")}
               onclick={toggleTheme}>
         {#if $theme === "dark"}
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
