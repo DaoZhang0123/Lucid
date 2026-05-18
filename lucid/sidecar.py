@@ -1252,8 +1252,14 @@ instruction in this run.
         return voice_mod.download_voice_model(size, endpoint)
 
     def _rpc_transcribe_audio(self, params: dict[str, Any]) -> dict[str, Any]:
-        if not self.cfg.voice.enabled:
-            raise ValueError("voice disabled (set [voice].enabled=true in config)")
+        # NOTE: intentionally NOT gated by ``cfg.voice.enabled`` — that flag only
+        # controls the global push-to-talk hotkey (the long-press-space PTT
+        # state machine in voice.ts). The inline mic button on the main page
+        # is a self-contained click-to-dictate flow that should work whenever
+        # the user clicks it, regardless of PTT being on/off. The voice model
+        # is still lazily loaded by ``self._voice_transcriber()`` on first
+        # call, so disabling PTT incurs zero startup cost; pressing the inline
+        # mic is what triggers the load.
         b64 = (params.get("audio_b64") or params.get("b64") or "").strip()
         if not b64:
             raise ValueError("audio_b64 is required")

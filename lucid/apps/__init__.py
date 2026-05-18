@@ -91,9 +91,9 @@ def _iter_module_names() -> list[str]:
     # iter_modules AND the frozen TOC scan came up empty.
     return [
         "browser", "calculator", "chrome", "cmd", "edge", "excel", "explorer",
-        "mail", "notepad", "outlook", "photos", "powerpoint", "powershell", "run",
-        "save_dialog", "settings", "snipping_tool", "teams", "vscode", "wechat",
-        "word", "wt",
+        "lucid", "mail", "notepad", "outlook", "photos", "powerpoint",
+        "powershell", "run", "save_dialog", "settings", "snipping_tool",
+        "teams", "vscode", "wechat", "word", "wt",
     ]
 
 

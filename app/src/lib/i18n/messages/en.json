@@ -116,7 +116,7 @@
     "selfcheck_running_hint": "Running… (winr / click will press real keys; please don't interact in the foreground)",
     "voice_section_title": "Voice input",
     "voice_enabled_label": "Enable voice input",
-    "voice_enabled_hint": "Hold the hotkey, speak, release. Audio is transcribed locally — nothing is sent to an LLM unless you confirm. Requires the `voice` extra (faster-whisper).",
+    "voice_enabled_hint": "Controls the global push-to-talk hotkey ONLY (long-press the hotkey, speak, release). The inline mic button on the main page works independently and is always available. Audio is transcribed locally — nothing is sent to an LLM unless you confirm. Requires the `voice` extra (faster-whisper).",
     "voice_engine_label": "Engine",
     "voice_model_label": "Model",
     "voice_model_download_button": "Download model",

@@ -2,6 +2,8 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount, onDestroy } from "svelte";
   import { _ } from "svelte-i18n";
+  import { locale as i18nLocale } from "svelte-i18n";
+  import { get } from "svelte/store";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -168,7 +170,7 @@
       const buf = new Uint8Array(await blob.arrayBuffer());
       const b64 = uint8ToBase64Inline(buf);
       const result: { text?: string; filtered_reason?: string } = await invoke("sidecar_transcribe", {
-        args: { audioB64: b64, mime, uiLocale: typeof navigator !== "undefined" ? navigator.language || "" : "" },
+        args: { audioB64: b64, mime, uiLocale: get(i18nLocale) ?? "" },
       });
       if (result && result.text && !result.filtered_reason) {
         appendDictation(result.text.trim());

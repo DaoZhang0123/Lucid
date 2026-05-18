@@ -116,7 +116,7 @@
     "selfcheck_running_hint": "正在运行…（winr / click 会真按键，请别在前台干别的）",
     "voice_section_title": "语音输入",
     "voice_enabled_label": "启用语音输入",
-    "voice_enabled_hint": "按住快捷键说话，松开发送。本地转写，不到 LLM 那一步不会发送任何内容。需要 `voice` 可选依赖（faster-whisper）。",
+    "voice_enabled_hint": "仅控制全局语音快捷键（按住快捷键说话，松开发送）。主页面输入框旁边的麦克风按钮不受此开关控制，始终可用。本地转写，不到 LLM 那一步不会发送任何内容。需要 `voice` 可选依赖（faster-whisper）。",
     "voice_engine_label": "引擎",
     "voice_model_label": "模型",
     "voice_model_download_button": "下载模型",

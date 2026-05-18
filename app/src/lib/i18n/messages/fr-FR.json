@@ -116,7 +116,7 @@
     "selfcheck_running_hint": "Exécution… (winr / click pressent de vraies touches ; n'interagissez pas au premier plan)",
     "voice_section_title": "Entrée vocale",
     "voice_enabled_label": "Activer l'entrée vocale",
-    "voice_enabled_hint": "Maintenez la touche, parlez, relâchez. La transcription est locale — rien n'est envoyé à un LLM sans confirmation. Nécessite l'extra `voice` (faster-whisper).",
+    "voice_enabled_hint": "Contrôle UNIQUEMENT le raccourci push-to-talk global (maintenez la touche, parlez, relâchez). Le bouton micro intégré à la page principale fonctionne indépendamment et reste toujours disponible. La transcription est locale — rien n'est envoyé à un LLM sans confirmation. Nécessite l'extra `voice` (faster-whisper).",
     "voice_engine_label": "Moteur",
     "voice_model_label": "Modèle",
     "voice_model_download_button": "Télécharger le modèle",
