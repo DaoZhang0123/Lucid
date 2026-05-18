@@ -1457,10 +1457,42 @@ def _dispatch_run_shell(args: dict[str, Any], cfg: Config) -> ToolResult:
     combined, _ = _truncate_text(combined, max_chars)
 
     header = f"[run_shell shell={shell} exit_code={proc.returncode} timeout_s={timeout}]"
-    text = f"{header}\n{combined}"
     # exit code != 0 is informational, not necessarily an error worth signalling
-    # via tr.error (the model needs to see stdout/stderr to decide). We surface
-    # it via the header line.
+    # via tr.error (the model needs to see stdout/stderr to decide). But the model
+    # has been observed (E2E G2, 2026-05-17) to ignore a non-zero exit and pipe-
+    # through cmdlet errors, then confidently report a numeric "result" (e.g.
+    # `matches=0`) that's actually `Measure-Object` counting zero error objects
+    # from a `Select-String -Path <missing>` failure. Make the non-zero case
+    # impossible to miss with an explicit banner the model must read past, AND
+    # auto-detect the most common path-related errors so the model is told the
+    # exact remedy (verify with Test-Path before trusting the count).
+    warning = ""
+    if proc.returncode != 0:
+        # Heuristics on stderr to give the model an actionable hint.
+        err_l = err.lower()
+        hint = ""
+        if any(p in err_l for p in (
+            "cannot find path",
+            "does not exist",
+            "could not find",
+            "找不到路径",
+            "找不到文件",
+            "系统找不到",
+        )):
+            hint = (
+                " A path argument refers to a file/dir that does not exist. "
+                "DO NOT report a numeric/aggregated result from this output "
+                "(e.g. `matches=0`, `count=0`) — the count came from the failing "
+                "cmdlet's error stream, not from real data. Verify the path with "
+                "`Test-Path -LiteralPath '<P>'` first, then either fix the path "
+                "or emit `task failed: <P> does not exist`."
+            )
+        warning = (
+            f"**WARNING**: exit_code={proc.returncode} (non-zero). "
+            f"The command did NOT complete successfully — read stderr below "
+            f"before drawing any conclusion from stdout.{hint}\n"
+        )
+    text = f"{header}\n{warning}{combined}"
     return ToolResult(output=text)
 
 

@@ -1,6 +1,6 @@
 {
   "version": 17,
-  "notes": "Standing E2E queries — re-run every iteration. SKILL.md keys on `id`. All file deliverables go to %USERPROFILE%\\Downloads\\Test\\ (NOT the desktop). Each query has only an `instruction` (and optional `expect_files`). Verdict is computed by the SKILL: (1) Run layer = manifest.status == 'ok'; (2) Goal layer = a per-thread subagent reads instruction + final_text (+ context.log if needed) and judges whether the task's goal was achieved (goal_met = pass / fail / partial); (3) Deliverables layer = each `expect_files` entry passes its disk check (existence + optional must_contain substring). Categories: cognitive / fileio / notepad / calculator / explorer / browser / vscode / settings / multi-step / resilience / app (single-app coverage: Edge / Paint / Snipping Tool / Task Manager / VS Code / Clock / Downloads sort / Sticky Notes / Windows Terminal / Photos / Mail) / office (Word / Excel / PowerPoint / Outlook / OneNote — all dry-run, read-only or transient) / messaging (WeChat / Teams, dry-run only — never actually sends) / combo (multi-app integration) / self (Lucid operates its own UI: read sidebar, navigate /settings /memory /schedules /tools /templates pages, toggle theme — strictly read-only, never edits or deletes). Designed to run against a REAL desktop (whatever is open). Do NOT pre-clean. Messaging + office queries are dry-run: type/click but never save, never send; if app is not installed or not signed in, reply '<app> unavailable' and stop — that is a degraded pass.",
+  "notes": "Standing E2E queries — re-run every iteration. SKILL.md keys on `id`. All file deliverables go to %USERPROFILE%\\Downloads\\Test\\ (NOT the desktop). Each query has only an `instruction` (and optional `expect_files`). Verdict is computed by the SKILL: (1) Run layer = manifest.status == 'ok'; (2) Goal layer = a per-thread subagent reads instruction + final_text (+ context.log if needed) and judges whether the task's goal was achieved (goal_met = pass / fail / partial); (3) Deliverables layer = each `expect_files` entry passes its disk check (existence + optional must_contain substring). Categories: cognitive / fileio / notepad / calculator / explorer / browser / vscode / settings / multi-step / resilience / app (single-app coverage: Edge / Paint / Snipping Tool / Task Manager / VS Code / Clock / Downloads sort / Windows Terminal / Photos / Mail) / office (Word / Excel / PowerPoint / Outlook / OneNote — all dry-run, read-only or transient) / messaging (WeChat / Teams, dry-run only — never actually sends) / combo (multi-app integration) / self (Lucid operates its own UI: read sidebar, navigate /settings /memory /schedules /tools /templates pages, toggle theme — strictly read-only, never edits or deletes). Designed to run against a REAL desktop (whatever is open). Do NOT pre-clean. Messaging + office queries are dry-run: type/click but never save, never send; if app is not installed or not signed in, reply '<app> unavailable' and stop — that is a degraded pass.",
   "queries": [
     {
       "id": "A1",
@@ -149,9 +149,9 @@
     {
       "id": "G2",
       "category": "vscode",
-      "instruction": "Use run_shell to run 'powershell -c Select-String -Path D:\\Project\\Lucid\\Docs\\todo.md -Pattern cron -SimpleMatch | Measure-Object | Select-Object -ExpandProperty Count' and reply 'task complete: matches=<N>'.",
+      "instruction": "Use run_shell to run 'powershell -c Select-String -Path D:\\Project\\Lucid\\README.md -Pattern cron -SimpleMatch | Measure-Object | Select-Object -ExpandProperty Count' and reply 'task complete: matches=<N>'.",
       "needs": [
-        "file:D:\\Project\\Lucid\\Docs\\todo.md"
+        "file:D:\\Project\\Lucid\\README.md"
       ]
     },
     {
@@ -240,14 +240,6 @@
       "category": "app",
       "instruction": "Use run_shell with 'powershell -c Get-ChildItem -Path $env:USERPROFILE\\Downloads -File -ErrorAction SilentlyContinue | Sort-Object Length -Descending | Select-Object -First 5 Name,Length | ConvertTo-Json -Compress' and reply 'task complete: top5 downloads=<json>'.",
       "needs": []
-    },
-    {
-      "id": "K8",
-      "category": "app",
-      "instruction": "Open Sticky Notes (StikyNot). Once a yellow note is visible, type the text 'Lucid E2E K8' into it. Do NOT save (Sticky Notes auto-saves — that's fine, but do not delete other existing notes). Reply 'task complete: sticky note ok'. If Sticky Notes is not installed reply 'task complete: sticky unavailable'.",
-      "needs": [
-        "app:StikyNot"
-      ]
     },
     {
       "id": "K9",

@@ -7,6 +7,7 @@ TIPS = """\
 - [seed · launch] Prefer `launch_app(name="outlook")` — it tries `start outlook` (App Paths alias).
 - [seed · reply] Ctrl+R reply, Ctrl+Shift+R reply-all, Ctrl+N opens a new compose window, Ctrl+F forward, Ctrl+N new mail. Ctrl+Enter sends the current draft.
 - [seed · navigate] Ctrl+1 inbox, Ctrl+2 calendar, Ctrl+3 contacts; Ctrl+Y picks a folder by name.
+- [seed · truncated-subject] Inbox-row subjects are clipped to the column width with an ellipsis (…). To read the full subject, either (a) **hover** the row and wait ~200ms for the native tooltip then take ONE `screenshot(level="active_window")`, or (b) press `Enter` to open the message and read the title bar / header. Do NOT infer the trailing words from the visible prefix — you'll guess wrong for similar-prefix subjects (e.g. multiple "Re: Project update …" rows).
 """
 
 LAUNCHER = {

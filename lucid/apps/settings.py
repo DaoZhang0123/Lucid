@@ -7,6 +7,7 @@ TIPS = """\
 - [seed · launch] Prefer `launch_app(name="settings")` for generic Settings tasks.
 - [seed · about-page] For OS/version queries, use `launch_app(name="settings", page="about")` to deep-link directly to About (`ms-settings:about`) instead of navigating through the left rail.
 - [seed · verification] If the task asks for edition/version/build text, take one `screenshot(level="active_window")` on the About page and transcribe from that L2; avoid registry fallback for UI-verb tasks.
+- [seed · about-scroll] On smaller windows the About page opens scrolled to **Device specifications** (CPU / RAM); the **Windows specifications** block (edition / version / build) sits BELOW it but the **Display "current resolution"** sits **above** the fold. If the first L2 doesn't show what you need, do ONE `key("Home")` (jumps to top) or `key("End")` (jumps to bottom) and re-screenshot — do NOT mouse-wheel-poll in 100px increments.
 """
 
 LAUNCHER = {
