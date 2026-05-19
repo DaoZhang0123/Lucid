@@ -13,6 +13,23 @@ else:  # pragma: no cover
     import tomli as tomllib
 
 
+# Current default for visual_notify.auto_chat_instruction (used both by the
+# dataclass field and by the upgrade hook in load_config()).
+_DEFAULT_AUTO_CHAT_INSTRUCTION = (
+    "请打开对应的聊天工具，逐条阅读所有最近未读消息：对每条都要结合上下文给出自然、完整的回复；"
+    "若消息中包含可执行的任务，请先把任务实际完成（含必要的操作和结果），再把结果回复给对方。"
+    "所有消息和任务都处理完毕后才算本轮结束（监听会由调度器自动继续，不需要你留在循环里）。"
+)
+
+# Historical default strings that older builds shipped with. If a user-level
+# config.toml stored one of these verbatim (i.e. they never customised it),
+# silently upgrade to the current default at load time so existing installs
+# get prompt-policy fixes without forcing the user to re-edit config.toml.
+_STALE_AUTO_CHAT_INSTRUCTIONS = frozenset({
+    "请打开对应的聊天工具查看最近未读，结合上下文给出简短自然的回复后返回继续监听。",
+})
+
+
 @dataclass
 class ProxyConfig:
     base_url: str = "http://localhost:4000"
@@ -291,9 +308,7 @@ class VisualNotifyConfig:
     key_screenshot_keep: int = 200
     # 检测到新消息后，是否自动发起一轮任务（查看消息并回复）。
     auto_chat_enabled: bool = False
-    auto_chat_instruction: str = (
-        "请打开对应的聊天工具查看最近未读，结合上下文给出简短自然的回复后返回继续监听。"
-    )
+    auto_chat_instruction: str = _DEFAULT_AUTO_CHAT_INSTRUCTION
 
 
 @dataclass
@@ -492,6 +507,11 @@ def load_config(path: str | Path | None = None) -> Config:
     _apply(cfg.fileio, raw.get("fileio"))
     _apply(cfg.shell, raw.get("shell"))
     _apply(cfg.visual_notify, raw.get("visual_notify"))
+    # Auto-upgrade: if the saved auto_chat_instruction is a known-stale
+    # historical default, refresh it to the current default so older installs
+    # pick up the new prompt policy without manual config editing.
+    if cfg.visual_notify.auto_chat_instruction.strip() in _STALE_AUTO_CHAT_INSTRUCTIONS:
+        cfg.visual_notify.auto_chat_instruction = _DEFAULT_AUTO_CHAT_INSTRUCTION
     _apply(cfg.doze, raw.get("doze"))
     _apply(cfg.voice, raw.get("voice"))
     _apply(cfg.skills, raw.get("skills"))

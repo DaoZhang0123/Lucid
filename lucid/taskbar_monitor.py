@@ -359,13 +359,20 @@ class TaskbarMonitor:
         diff_score, diff_detail = self._diff_score(prev.image, current.image)
         threshold = float(self.cfg.diff_threshold)
         changed = diff_score >= threshold
-        self._log_step(
-            "tick_diff",
-            diff_method=self.cfg.diff_method,
-            diff_score=round(float(diff_score), 4),
-            diff_threshold=threshold,
-            changed=changed,
-        )
+        # Only log ticks that actually crossed the threshold — the no-op
+        # tick_diff lines (changed=False) ran every ~1s and bloated
+        # detector-YYYYMMDD.log past 100 MB/day with no debugging value.
+        # When something genuinely changes we still log it (and everything
+        # downstream — `taskbar_diff_detected`, LLM confirm, etc. — keeps
+        # logging unconditionally via `_emit`).
+        if changed:
+            self._log_step(
+                "tick_diff",
+                diff_method=self.cfg.diff_method,
+                diff_score=round(float(diff_score), 4),
+                diff_threshold=threshold,
+                changed=changed,
+            )
         if not changed:
             return
 
