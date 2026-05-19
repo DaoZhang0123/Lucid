@@ -261,6 +261,11 @@ class TaskbarMonitor:
         self._confirm_thread: threading.Thread | None = None
         self._last_frame: StripFrame | None = None
         self._last_confirm_ms: int = 0
+        # 最近被 LLM 拒绝的 x_projection 段：list of (x0, x1, ts_ms)。
+        # 用于在拒绝冷却窗口内跳过覆盖相同区域的 diff，
+        # 避免 hover / 聚焦下划线 / 运行状态变化反复触发昂贵的 LLM 调用。
+        self._rejected_segments: list[tuple[int, int, int]] = []
+        self._rejected_segments_lock = threading.Lock()
         self._capture_store = TaskbarCaptureStore(cfg, logging_cfg)
         # 异步确认队列：(current_image, prev_image, payload_dict)
         self._confirm_queue: queue.Queue[tuple[Image.Image, Image.Image | None, dict[str, Any]]] = queue.Queue(maxsize=50)
@@ -333,6 +338,34 @@ class TaskbarMonitor:
         if self._confirm_thread:
             self._confirm_thread.join(timeout=2)
         self._emit({"event": "taskbar_monitor_stopped"})
+
+    def bump_external_cooldown(
+        self,
+        reason: str,
+        app_candidates: list[str],
+        suppress_sec: float,
+    ) -> None:
+        """Called by an external channel (e.g. the UIA monitor) to suppress
+        the next ``suppress_sec`` worth of step-2 LLM calls on the visual
+        channel — we already know there's a real notification, no need to pay
+        for visual confirmation again."""
+        try:
+            now_ms = int(time.time() * 1000)
+            extra_ms = max(0, int(float(suppress_sec) * 1000))
+            current_cooldown_ms = int(
+                max(0.0, float(self.cfg.llm_confirm_cooldown_sec)) * 1000
+            )
+            # Push `_last_confirm_ms` forward enough that
+            # `now - _last_confirm_ms < cooldown_ms` stays true for suppress_sec.
+            self._last_confirm_ms = now_ms + extra_ms - current_cooldown_ms
+            self._emit({
+                "event": "taskbar_visual_suppressed_by_external",
+                "reason": reason,
+                "app_candidates": list(app_candidates or []),
+                "suppress_sec": float(suppress_sec),
+            })
+        except Exception:
+            pass
 
     def _run(self) -> None:
         interval = max(0.5, float(self.cfg.poll_interval_sec))
@@ -421,6 +454,18 @@ class TaskbarMonitor:
             })
             return
 
+        # 段落级拒绝冷却：若本次所有 x_projection 段都落在最近被 LLM 拒绝的
+        # 区域里（±pad px，且在 rejected_segment_cooldown_sec 秒内），跳过。
+        cur_segments = self._extract_segments(diff_detail)
+        if cur_segments and self._all_segments_recently_rejected(cur_segments, now_ms):
+            self._emit({
+                "event": "taskbar_llm_confirm_skipped_recent_rejection",
+                "strip_rect": current.rect,
+                "diff_score": diff_score,
+                "segments": [{"x0": x0, "x1": x1} for x0, x1 in cur_segments],
+            })
+            return
+
         self._last_confirm_ms = now_ms
         # 第一阶段就地裁剪聚焦区域（按 x_projection 的 segments），并落盘到 key/，
         # 让第二阶段（LLM 确认）只需消费已经准备好的图片 + 路径，避免把整幅细长 strip
@@ -494,9 +539,15 @@ class TaskbarMonitor:
                 # 构建结果事件
                 has_new = bool(result.get("has_new_message", False))
                 ev = "taskbar_notify_confirmed" if has_new else "taskbar_notify_rejected"
-                
+
+                # 拒绝时把本次 diff 涉及的 x_projection 段记入"最近被拒"列表，
+                # 让 _tick 在冷却窗口内跳过覆盖相同区域的新 diff。
+                if not has_new:
+                    self._record_rejected_segments(meta.get("diff_detail") or {})
+
                 emit_payload = {
                     "event": ev,
+                    "source": "visual",
                     "strip_rect": meta.get("strip_rect"),
                     "diff_score": meta.get("diff_score"),
                     "has_new_message": has_new,
@@ -572,6 +623,55 @@ class TaskbarMonitor:
                 })
                 time.sleep(1)  # 避免快速重复错误
 
+    @staticmethod
+    def _extract_segments(diff_detail: dict[str, Any] | None) -> list[tuple[int, int]]:
+        """从 diff_detail 中拿到 x_projection segments，归一化成 (x0, x1) 列表。"""
+        if not diff_detail:
+            return []
+        proj = diff_detail.get("projection") or {}
+        segs = proj.get("segments") or []
+        out: list[tuple[int, int]] = []
+        for s in segs:
+            try:
+                x0 = int(s.get("x0", 0) or 0)
+                x1 = int(s.get("x1", 0) or 0)
+                if x1 > x0:
+                    out.append((x0, x1))
+            except Exception:
+                continue
+        return out
+
+    def _record_rejected_segments(self, diff_detail: dict[str, Any] | None) -> None:
+        segs = self._extract_segments(diff_detail)
+        if not segs:
+            return
+        now_ms = int(time.time() * 1000)
+        ttl_ms = int(max(0.0, float(getattr(self.cfg, "rejected_segment_cooldown_sec", 30.0))) * 1000)
+        with self._rejected_segments_lock:
+            for x0, x1 in segs:
+                self._rejected_segments.append((x0, x1, now_ms))
+            cutoff = now_ms - ttl_ms
+            self._rejected_segments = [s for s in self._rejected_segments if s[2] >= cutoff][-64:]
+
+    def _all_segments_recently_rejected(
+        self, segments: list[tuple[int, int]], now_ms: int
+    ) -> bool:
+        if not segments:
+            return False
+        ttl_ms = int(max(0.0, float(getattr(self.cfg, "rejected_segment_cooldown_sec", 30.0))) * 1000)
+        if ttl_ms <= 0:
+            return False
+        pad = int(max(0, getattr(self.cfg, "rejected_segment_overlap_pad_px", 20) or 0))
+        with self._rejected_segments_lock:
+            rejected = [s for s in self._rejected_segments if now_ms - s[2] <= ttl_ms]
+            self._rejected_segments = rejected[-64:]
+            if not rejected:
+                return False
+            for x0, x1 in segments:
+                if not any((x0 >= rx0 - pad and x1 <= rx1 + pad) for rx0, rx1, _ in rejected):
+                    return False
+            return True
+
     def _capture_strip(self) -> StripFrame:
         with mss.mss() as sct:
             mon = sct.monitors[0]
@@ -580,9 +680,16 @@ class TaskbarMonitor:
             left = int(mon["left"])
             top = int(mon["top"])
             strip_h = self._strip_height_px  # 使用自动检测或配置的高度
-            center_ratio = min(1.0, max(0.1, float(self.cfg.strip_center_width_ratio)))
-            strip_w = int(sw * center_ratio)
-            strip_x = left + (sw - strip_w) // 2
+            left_skip = int(max(0, getattr(self.cfg, "strip_left_skip_px", 0) or 0))
+            right_skip = int(max(0, getattr(self.cfg, "strip_right_skip_px", 0) or 0))
+            if left_skip > 0 or right_skip > 0:
+                # 跳过像素模式：覆盖到屏幕左/右边缘并裁掉两端的跳过区。
+                strip_x = left + left_skip
+                strip_w = max(80, sw - left_skip - right_skip)
+            else:
+                center_ratio = min(1.0, max(0.1, float(self.cfg.strip_center_width_ratio)))
+                strip_w = int(sw * center_ratio)
+                strip_x = left + (sw - strip_w) // 2
             strip_y = top + max(0, sh - strip_h)
             region = {
                 "left": strip_x,

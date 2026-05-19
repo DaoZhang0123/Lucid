@@ -287,6 +287,13 @@ class VisualNotifyConfig:
     strip_height_px: int = 120
     auto_detect_taskbar_height: bool = True  # 自动检测系统任务栏高度，覆盖 strip_height_px
     strip_center_width_ratio: float = 0.50
+    # 如果 strip_left_skip_px / strip_right_skip_px 任一为正，则改用
+    # 跳过像素方式裁剪 strip（screen[left_skip : screen_w - right_skip]），
+    # 适合宽屏：避免居中比例把右侧系统托盘 / 通知中心切掉。
+    # 左侧默认跳过 100 px，覆盖 Win11 小组件（天气，频繁变化会触发恒定 diff）；
+    # 右侧默认跳过 120 px，覆盖时钟（每分钟跳秒同样恒定 diff）。
+    strip_left_skip_px: int = 100
+    strip_right_skip_px: int = 100
     diff_method: str = "dhash"         # dhash | pixel
     diff_threshold: float = 8.0
     # Step1 横向分段：基于像素差分在 x 轴投影自动切分候选区域，
@@ -303,12 +310,45 @@ class VisualNotifyConfig:
     llm_confirm_on_diff_only: bool = True
     llm_confirm_cooldown_sec: float = 5.0
     llm_confirm_max_tokens: int = 300
+    # LLM 拒绝后，记住被拒绝的 x_projection 段落多久（秒）。
+    # 在此窗口内，若新的 diff 段全部落在最近被拒区域里（±20 px），
+    # 直接跳过 LLM 调用（避免 hover/聚焦/运行下划线等同一图标反复噪声触发）。
+    rejected_segment_cooldown_sec: float = 30.0
+    rejected_segment_overlap_pad_px: int = 20
     save_screenshots: bool = True
     recent_screenshot_keep: int = 100
     key_screenshot_keep: int = 200
     # 检测到新消息后，是否自动发起一轮任务（查看消息并回复）。
     auto_chat_enabled: bool = False
     auto_chat_instruction: str = _DEFAULT_AUTO_CHAT_INSTRUCTION
+
+
+@dataclass
+class TaskbarUiaConfig:
+    """任务栏通知 UIA 通道配置。
+
+    UIA 通道是事件驱动 + 零 LLM 成本，覆盖了大部分应用（Teams / Outlook /
+    Slack / 微信 等）。它和 VisualNotifyConfig 是并行通道：UIA 优先；UIA 命中
+    会自动给视觉通道一个抑制窗口，避免重复触发昂贵的 step-2 确认。
+
+    哪些 App 走 UIA / 走视觉 / 都走，可由 doze 写到
+    ``~/.lucid/taskbar_sources.json``（见 :mod:`lucid.taskbar_sources`），这里
+    的配置只控制 UIA 通道本身是否启用 + 全局节流参数。
+    """
+    enabled: bool = True
+    # 单个 App 在多少秒内的重复 UIA 触发只算一次（仅影响 emit，不影响 raw 日志）
+    per_app_emit_cooldown_sec: float = 8.0
+    # UIA 命中后，让视觉通道抑制 step-2 LLM 调用多少秒
+    visual_suppress_after_uia_sec: float = 20.0
+    # v2: 周期性 UIA 全树快照间隔（秒）。这是 Win11 22H2+ XAML 任务栏上
+    # **实际能拿到通知的主路径**——UIA PropertyChanged 事件在该平台上对
+    # XAML 任务栏按钮不 dispatch（COM handler 挂上但永不回调），但属性
+    # 值本身是正确的，所以走轮询。500ms 与 packaging/poc_taskbar_uia_wechat.py
+    # 一致：walk ~十几个按钮 + 读两个属性是毫秒级 COM 调用，单核占用<1%；
+    # 间隔再短意义不大（auto-reply 不需要 100ms 级响应），再长会漏掉
+    # WeChat 的 ~1s flash 或 Teams 的更短 flash。sweep 内做边沿检测 + 复用
+    # per_app_emit_cooldown_sec 去重；0 = 关闭轮询（仅靠不可靠的事件流）。
+    snapshot_sweep_interval_sec: float = 0.5
 
 
 @dataclass
@@ -450,6 +490,7 @@ class Config:
     fileio: FileIOConfig = field(default_factory=FileIOConfig)
     shell: ShellConfig = field(default_factory=ShellConfig)
     visual_notify: VisualNotifyConfig = field(default_factory=VisualNotifyConfig)
+    taskbar_uia: TaskbarUiaConfig = field(default_factory=TaskbarUiaConfig)
     doze: DozeConfig = field(default_factory=DozeConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     skills: SkillsConfig = field(default_factory=SkillsConfig)
@@ -512,6 +553,7 @@ def load_config(path: str | Path | None = None) -> Config:
     # pick up the new prompt policy without manual config editing.
     if cfg.visual_notify.auto_chat_instruction.strip() in _STALE_AUTO_CHAT_INSTRUCTIONS:
         cfg.visual_notify.auto_chat_instruction = _DEFAULT_AUTO_CHAT_INSTRUCTION
+    _apply(cfg.taskbar_uia, raw.get("taskbar_uia"))
     _apply(cfg.doze, raw.get("doze"))
     _apply(cfg.voice, raw.get("voice"))
     _apply(cfg.skills, raw.get("skills"))

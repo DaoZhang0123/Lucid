@@ -101,9 +101,24 @@ strip_height_px = 120
 # 是否自动使用系统任务栏实际高度（开启后会覆盖 strip_height_px）
 auto_detect_taskbar_height = true
 strip_center_width_ratio = 0.50
+# 任一为正则改用「跳像素」裁剪，覆盖比 center_width_ratio 更宽、又能切掉两端噪声：
+#   - 左边默认 100 px：跳过 Win11 天气小组件（每分钟变化，否则恒定触发 diff）
+#   - 右边默认 100 px：跳过时钟 + 系统托盘（秒钟跳秒同样恒定 diff）
+strip_left_skip_px = 100
+strip_right_skip_px = 100
 # Step 1 diff：dHash 汉明距离超过此阈值才触发 Step 2（越小越灵敏，建议 6-12）
 diff_method = "dhash"
 diff_threshold = 8.0
+# 横向分段：基于像素差分在 x 轴投影自动切候选区域，再对每段算 diff 分数聚合（默认取最大），
+# 避免整条任务栏被时钟 / 托盘噪声干扰；同时段落信息会用于「段落级拒绝冷却」（见下）。
+x_projection_enabled = true
+x_projection_pixel_threshold = 20
+x_projection_active_ratio = 0.08
+x_projection_min_segment_width_px = 20
+x_projection_pad_px = 4
+x_projection_merge_gap_px = 4
+x_projection_max_segments = 10
+x_projection_score_agg = "max"  # max | sum_top2
 # Step 2 LLM 确认
 llm_confirm_enabled = true
 llm_confirm_on_diff_only = true
@@ -111,6 +126,11 @@ llm_confirm_on_diff_only = true
 llm_confirm_cooldown_sec = 5.0
 # LLM 确认最大输出 token
 llm_confirm_max_tokens = 300
+# 段落级拒绝冷却：LLM 判定「不是新消息」后，记住该段落 N 秒；这期间若新 diff 段全部
+# 落在最近被拒区域里（±overlap_pad_px），直接跳过 LLM 调用——避免 hover / 聚焦 /
+# 运行下划线等同一图标反复噪声反复触发 step-2。
+rejected_segment_cooldown_sec = 30.0
+rejected_segment_overlap_pad_px = 20
 # 是否保存监听截图；recent 目录只保留最近 N 张，key 目录保留触发时的关键截图
 save_screenshots = true
 recent_screenshot_keep = 100
@@ -118,6 +138,22 @@ key_screenshot_keep = 200
 # 确认有新消息后，是否自动发起一轮任务查看并回复
 auto_chat_enabled = true
 auto_chat_instruction = "请打开对应的聊天工具，逐条阅读所有最近未读消息：对每条都要结合上下文给出自然、完整的回复；若消息中包含可执行的任务，请先把任务实际完成（含必要的操作和结果），再把结果回复给对方。所有消息和任务都处理完毕后才算本轮结束（监听会由调度器自动继续，不需要你留在循环里）。"
+
+
+[taskbar_uia]
+# 任务栏通知 UIA 通道：事件驱动（监听 Shell_TrayWnd 子树的 Name + HelpText 变化），
+# 零 LLM 成本。覆盖大部分 App（Teams / Outlook / Slack 走 Name；微信 走 HelpText=
+# 「已请求注意」，由 FlashWindowEx 触发）。和 [visual_notify] 并行：UIA 命中后自动
+# 给视觉通道一个抑制窗口，避免重复触发昂贵的 step-2。
+#
+# 哪些 App 走 UIA / 走视觉 / 都走，由 doze 写到 ~/.lucid/taskbar_sources.json
+# （首次启动会自动种入 微信 / WeChat / Microsoft Teams 三个常见 App 的偏好）。
+enabled = true
+# 单个 App 在多少秒内的重复 UIA 触发只算一次（仅影响 emit，不影响 raw 日志）
+per_app_emit_cooldown_sec = 8.0
+# UIA 命中后，让视觉通道抑制 step-2 LLM 调用多少秒（够长以覆盖 Win11 任务栏徽章的
+# 异步刷新窗口；UIA 已经认定有新消息，视觉无需再花钱确认）
+visual_suppress_after_uia_sec = 20.0
 
 
 [doze]

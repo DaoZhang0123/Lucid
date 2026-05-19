@@ -297,7 +297,9 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
                  constraints: dict[str, Any] | None = None,
                  action: str | None = None,
                  auto_chat_apps: list[str] | None = None,
-                 auto_chat_extra: str | None = None) -> dict[str, Any]:
+                 auto_chat_extra: str | None = None,
+                 taskbar_allow_visual: bool | None = None,
+                 taskbar_allow_uia: bool | None = None) -> dict[str, Any]:
     name = (name or "").strip() or "未命名计划"
     instruction = (instruction or "").strip()
     schedule_action = str(action or "task").strip().lower() or "task"
@@ -340,6 +342,15 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
         "constraints": cons,
         "auto_chat_apps": _normalize_apps(auto_chat_apps),
         "auto_chat_extra": (auto_chat_extra or "").strip(),
+        # Per-schedule taskbar-listener channel toggles. **Soft-mutex default**:
+        # UIA on, visual off — UIA is event-driven (zero LLM cost, sub-100ms),
+        # while visual step-2 LLM costs tokens per diff hit and most "diffs"
+        # are not real notifications (mouse hover, focus, animations). Visual
+        # is left as an opt-in fallback for apps whose UIA signal is missing
+        # or unreliable; v2 doze loop watches for UIA misses (uia-misses.jsonl)
+        # and recommends turning visual back on per-app.
+        "taskbar_allow_visual": False if taskbar_allow_visual is None else bool(taskbar_allow_visual),
+        "taskbar_allow_uia": True if taskbar_allow_uia is None else bool(taskbar_allow_uia),
     }
     items.append(item)
     _save(items)
@@ -440,6 +451,10 @@ def update_schedule(sid: str, **fields: Any) -> dict[str, Any] | None:
                 it["auto_chat_apps"] = _normalize_apps(fields["auto_chat_apps"])
             if "auto_chat_extra" in fields and fields["auto_chat_extra"] is not None:
                 it["auto_chat_extra"] = str(fields["auto_chat_extra"] or "").strip()
+            if "taskbar_allow_visual" in fields and fields["taskbar_allow_visual"] is not None:
+                it["taskbar_allow_visual"] = bool(fields["taskbar_allow_visual"])
+            if "taskbar_allow_uia" in fields and fields["taskbar_allow_uia"] is not None:
+                it["taskbar_allow_uia"] = bool(fields["taskbar_allow_uia"])
             it["updated_ms"] = int(time.time() * 1000)
             _save(items)
             return it

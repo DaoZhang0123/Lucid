@@ -69,6 +69,7 @@ from . import launchers as launchers_mod
 from . import regions as regions_mod
 from . import launcher_icons as launcher_icons_mod
 from .taskbar_monitor import TaskbarMonitor
+from .taskbar_uia_monitor import TaskbarUiaMonitor
 from .doze import DozeWorker
 
 # rich 默认会写 stdout，会污染协议——sidecar 模式必须把 console 重定向到 stderr。
@@ -253,6 +254,7 @@ instruction in this run.
         self._queue_seq: int = 0
         self._scheduler = scheduler_mod.Scheduler(self._on_schedule_fire)
         self._taskbar_monitor: TaskbarMonitor | None = None
+        self._taskbar_uia_monitor: TaskbarUiaMonitor | None = None
         # Per-tick whitelist for visual_notify auto_chat (set right before
         # tick_once() fires; consumed by the LLM-confirm prompt and by the
         # taskbar_notify_confirmed enqueue gate). Empty = no filter (legacy).
@@ -261,6 +263,16 @@ instruction in this run.
         # Appended to the safety policy in extra_system when enqueueing the
         # auto-chat task. Empty = no extra preferences.
         self._visual_notify_extra_prompt: str = ""
+        # Per-tick taskbar-listener channel allow flags (stashed from the
+        # active visual_notify schedule). Default both True for widest
+        # coverage. UIA priority > visual; visual confirms cost LLM tokens.
+        # _on_taskbar_notify_confirmed gates payloads by their "source"
+        # field against these flags before enqueueing the auto-chat task.
+        # **Soft-mutex default**: UIA on, visual off. Visual can be re-enabled
+        # per-schedule from the UI when UIA misses (doze v2 watches
+        # uia-misses.jsonl and recommends turning it on per-app).
+        self._visual_notify_allow_visual: bool = False
+        self._visual_notify_allow_uia: bool = True
         self._doze = DozeWorker(
             self.cfg,
             llm_factory=lambda: _build_llm_client(self.cfg, None),
@@ -574,10 +586,49 @@ instruction in this run.
             "recommended_spec": {"kind": "secondly", "every": recommended_every},
         })
 
+        # 启动 UIA 通道 (按 优先级 uia > visual)。UIA 命中会通过
+        # `bump_external_cooldown` 帮视觉通道抑制双触发。
+        try:
+            if self.cfg.taskbar_uia.enabled and self._taskbar_uia_monitor is None:
+                self._taskbar_uia_monitor = TaskbarUiaMonitor(
+                    self.cfg.taskbar_uia,
+                    logging_cfg=self.cfg.logging,
+                    event_sink=sink,
+                    on_confirmed=self._on_taskbar_notify_confirmed,
+                    external_cooldown_bump=self._on_uia_bump_visual_cooldown,
+                )
+                self._taskbar_uia_monitor.start()
+                self._append_startup_log("taskbar_uia_monitor started")
+        except Exception as exc:
+            _writeln({"event": "taskbar_uia_start_failed",
+                      "message": f"{type(exc).__name__}: {exc}"})
+
     def _stop_taskbar_monitor(self) -> None:
+        if self._taskbar_uia_monitor is not None:
+            try:
+                self._taskbar_uia_monitor.stop()
+            except Exception:
+                pass
+            self._taskbar_uia_monitor = None
         if self._taskbar_monitor is None:
             return
+        try:
+            self._taskbar_monitor.stop()
+        except Exception:
+            pass
         self._taskbar_monitor = None
+
+    def _on_uia_bump_visual_cooldown(
+        self, reason: str, app_candidates: list[str], suppress_sec: float
+    ) -> None:
+        """Bridge: UIA monitor 命中 -> 视觉通道 cooldown。"""
+        mon = self._taskbar_monitor
+        if mon is None:
+            return
+        try:
+            mon.bump_external_cooldown(reason, app_candidates, suppress_sec)
+        except Exception:
+            pass
 
     @staticmethod
     def _data_url_png(raw: bytes) -> str:
@@ -986,6 +1037,20 @@ instruction in this run.
         Deduplication prevents multiple visual_notify tasks in queue.
         """
         if not self.cfg.visual_notify.auto_chat_enabled:
+            return
+        # Gate by source against the active visual_notify schedule's channel
+        # toggles. **Soft-mutex default**: UIA allowed, visual blocked when
+        # no schedule has fired yet (matches the per-schedule defaults set
+        # in scheduler.add_schedule). "visual" = TaskbarMonitor Step-2 LLM
+        # confirm; "uia" = TaskbarUiaMonitor event-driven.
+        src = str(payload.get("source") or "visual").strip().lower()
+        if src == "visual" and not getattr(self, "_visual_notify_allow_visual", False):
+            _writeln({"event": "taskbar_auto_chat_skipped_channel_disabled",
+                      "source": src, "app_candidates": list(payload.get("app_candidates") or [])})
+            return
+        if src == "uia" and not getattr(self, "_visual_notify_allow_uia", True):
+            _writeln({"event": "taskbar_auto_chat_skipped_channel_disabled",
+                      "source": src, "app_candidates": list(payload.get("app_candidates") or [])})
             return
         base_instruction = (self.cfg.visual_notify.auto_chat_instruction or "").strip()
         if not base_instruction:
@@ -1841,6 +1906,8 @@ instruction in this run.
             constraints=params.get("constraints"),
             auto_chat_apps=params.get("auto_chat_apps"),
             auto_chat_extra=params.get("auto_chat_extra"),
+            taskbar_allow_visual=params.get("taskbar_allow_visual"),
+            taskbar_allow_uia=params.get("taskbar_allow_uia"),
         )
 
     def _rpc_schedule_update(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1857,6 +1924,8 @@ instruction in this run.
             constraints=params.get("constraints"),
             auto_chat_apps=params.get("auto_chat_apps"),
             auto_chat_extra=params.get("auto_chat_extra"),
+            taskbar_allow_visual=params.get("taskbar_allow_visual"),
+            taskbar_allow_uia=params.get("taskbar_allow_uia"),
         )
         if item is None:
             raise ValueError(f"schedule {sid!r} not found")
@@ -1891,10 +1960,26 @@ instruction in this run.
                     self._visual_notify_extra_prompt = str(item.get("auto_chat_extra") or "").strip()
                 except Exception:
                     self._visual_notify_extra_prompt = ""
-                if self._taskbar_monitor is not None:
+                # Per-schedule channel allow flags. **Soft-mutex default**:
+                # UIA on, visual off when the field is missing (new or
+                # legacy schedule). UIA priority > visual: zero LLM cost vs
+                # every visual hit burning a confirm call.
+                try:
+                    raw_v = item.get("taskbar_allow_visual")
+                    self._visual_notify_allow_visual = False if raw_v is None else bool(raw_v)
+                except Exception:
+                    self._visual_notify_allow_visual = False
+                try:
+                    raw_u = item.get("taskbar_allow_uia")
+                    self._visual_notify_allow_uia = True if raw_u is None else bool(raw_u)
+                except Exception:
+                    self._visual_notify_allow_uia = True
+                if self._taskbar_monitor is not None and self._visual_notify_allow_visual:
                     self._taskbar_monitor.tick_once()
                 _writeln({"event": "visual_notify_tick", "id": item.get("id"),
-                          "auto_chat_apps": list(self._visual_notify_filter_apps)})
+                          "auto_chat_apps": list(self._visual_notify_filter_apps),
+                          "allow_visual": self._visual_notify_allow_visual,
+                          "allow_uia": self._visual_notify_allow_uia})
             except Exception as e:
                 _writeln({"event": "visual_notify_tick_error", "id": item.get("id"),
                           "message": f"{type(e).__name__}: {e}"})

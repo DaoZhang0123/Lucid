@@ -26,6 +26,8 @@
     constraints?: Constraints;
     auto_chat_apps?: string[];
     auto_chat_extra?: string;
+    taskbar_allow_visual?: boolean;
+    taskbar_allow_uia?: boolean;
   };
 
   type InstalledApp = { key: string; name: string; icon: string };
@@ -69,6 +71,12 @@
   // "only reply to contact X", "reply in formal tone", "never reply to group
   // chats", etc. Empty string = no extra preferences.
   let autoChatExtra = $state("");
+  // visual_notify: per-schedule listening-channel toggles. Default both ON for
+  // widest coverage. UIA priority > visual (zero LLM cost vs every visual hit
+  // burning tokens); when UIA fires it also suppresses the visual channel for
+  // a short window via taskbar_uia.visual_suppress_after_uia_sec.
+  let taskbarAllowVisual = $state(false);
+  let taskbarAllowUia = $state(true);
   // Apps default-checked when creating a new visual_notify schedule.
   // Match against the **exact** installed-app name (case-insensitive). We
   // used to do a substring match but that pulled in things like
@@ -229,6 +237,8 @@
     dateEnd = "";
     autoChatApps = defaultAutoChatApps();
     autoChatExtra = "";
+    taskbarAllowVisual = false;
+    taskbarAllowUia = true;
   }
 
   // ms -> "YYYY-MM-DDTHH:MM" in local tz, suitable for <input type="datetime-local">.
@@ -286,6 +296,10 @@
       // see a fully unchecked list.
       : defaultAutoChatApps();
     autoChatExtra = typeof s.auto_chat_extra === "string" ? s.auto_chat_extra : "";
+    // Per-schedule channel toggles. Legacy schedules created before this
+    // feature have no field saved -> default to true (both on).
+    taskbarAllowVisual = typeof s.taskbar_allow_visual === "boolean" ? s.taskbar_allow_visual : false;
+    taskbarAllowUia = typeof s.taskbar_allow_uia === "boolean" ? s.taskbar_allow_uia : true;
   }
 
   function buildSpec(): Spec {
@@ -341,9 +355,9 @@
       const spec = buildSpec();
       const constraints = buildConstraints();
       if (editing) {
-        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null, autoChatExtra: action === "visual_notify" ? autoChatExtra : null });
+        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null, autoChatExtra: action === "visual_notify" ? autoChatExtra : null, taskbarAllowVisual: action === "visual_notify" ? taskbarAllowVisual : null, taskbarAllowUia: action === "visual_notify" ? taskbarAllowUia : null });
       } else {
-        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null, autoChatExtra: action === "visual_notify" ? autoChatExtra : null });
+        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null, autoChatExtra: action === "visual_notify" ? autoChatExtra : null, taskbarAllowVisual: action === "visual_notify" ? taskbarAllowVisual : null, taskbarAllowUia: action === "visual_notify" ? taskbarAllowUia : null });
       }
       reset();
       await load();
@@ -488,6 +502,12 @@
     </label>
     {#if action === "visual_notify"}
       <p class="sub-hint visual-note">{$_("schedules.visual_notify_instruction")}</p>
+      <fieldset class="trigger taskbar-channels">
+        <legend>{$_("schedules.taskbar_channels_legend")}</legend>
+        <p class="sub-hint">{$_("schedules.taskbar_channels_hint")}</p>
+        <label><input type="checkbox" bind:checked={taskbarAllowUia} /> {$_("schedules.taskbar_channel_uia")}</label>
+        <label><input type="checkbox" bind:checked={taskbarAllowVisual} /> {$_("schedules.taskbar_channel_visual")}</label>
+      </fieldset>
       <fieldset class="trigger auto-chat-apps">
         <legend>{$_("schedules.auto_chat_apps_legend")}</legend>
         <p class="sub-hint">{$_("schedules.auto_chat_apps_hint")}</p>
