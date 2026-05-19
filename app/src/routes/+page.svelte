@@ -46,6 +46,17 @@
     setDictationSink((text) => {
       appendDictation(text);
     });
+    // Skill / template "Use" buttons hand off a draft prompt via sessionStorage
+    // — surface it in the textarea so the user can edit before sending.
+    try {
+      const draft = sessionStorage.getItem("lucid:prefill");
+      if (draft) {
+        sessionStorage.removeItem("lucid:prefill");
+        instruction = instruction ? `${instruction}\n${draft}` : draft;
+      }
+    } catch {
+      // sessionStorage unavailable — ignore
+    }
   });
   onDestroy(() => {
     setDictationSink(null);

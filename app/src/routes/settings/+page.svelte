@@ -237,11 +237,12 @@
         if (v.model_size) vModelSize = v.model_size;
         if (typeof v.language === "string") {
           const lang = v.language.trim().toLowerCase();
-          // Only en / zh / fr are supported transcription targets (matches
-          // sidecar's lucid.voice.SUPPORTED_LANGS). Any other value
-          // ("", "system", "detect", legacy two-letter codes) collapses
-          // to "auto" so the dropdown displays a valid option.
-          vLanguage = (lang === "en" || lang === "zh" || lang === "fr") ? lang : "auto";
+          // Only en / zh / fr / multi are supported transcription targets
+          // (matches sidecar's lucid.voice.SUPPORTED_LANGS + the explicit
+          // multilingual opt-in). Any other value ("", "system", "detect",
+          // legacy two-letter codes) collapses to "auto" so the dropdown
+          // displays a valid option.
+          vLanguage = (lang === "en" || lang === "zh" || lang === "fr" || lang === "multi") ? lang : "auto";
         }
         if (v.hotkey) vHotkey = v.hotkey;
         if (typeof v.hold_threshold_ms === "number") vHoldThresholdMs = v.hold_threshold_ms;
@@ -670,6 +671,7 @@
               <option value="en">{$_("settings.voice_language_opt_en")}</option>
               <option value="zh">{$_("settings.voice_language_opt_zh")}</option>
               <option value="fr">{$_("settings.voice_language_opt_fr")}</option>
+              <option value="multi">{$_("settings.voice_language_opt_multi")}</option>
             </select>
           </label>
           <p class="hint">{$_("settings.voice_language_hint")}</p>

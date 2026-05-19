@@ -10,6 +10,7 @@ TIPS = """\
 - [seed · enter-formula] Click the target cell, then `type` the formula text (starting with `=`) and press Enter. The cell value updates. To re-read the computed value, click the same cell again — the formula bar (or the cell itself if you take a `screenshot(level='active_window')`) will show it.
 - [seed · close] Ctrl+W closes the workbook; if a Save prompt appears use `key text='alt+s'` for Save / `alt+n` for Don't Save.
 - [seed · key-Delete-pitfall] After dismissing a save / paste-options popup, do NOT immediately fire `key Delete` blind — the underlying input layer can wedge if focus is briefly on a transient toolbar overlay. Take a fresh `screenshot(level='active_window')` first so the watchdog observes the real focused control. (See E2E run 20260512-182234 O2 wedge.)
+- [seed · prefer-skill-for-authoring] **Excel UI is great for tweaking cells, fixing one formula, or showing the user a live sheet** — it is NOT a good way to build a workbook from scratch (multi-sheet model, lots of rows, conditional formatting). For "make me an xlsx with this data / model" tasks: first call `search_skills(query="create excel xlsx")` — if the user enabled the `anthropics/skills` repo it returns a real `document-skills/xlsx` SKILL.md that authors the file programmatically (openpyxl). Install with `install_repo_skill`, then `read_skill` and follow the body. UI remains the right tool for *editing* an existing sheet the user opens.
 """
 
 LAUNCHER = {

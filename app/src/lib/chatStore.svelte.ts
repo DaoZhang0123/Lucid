@@ -106,13 +106,23 @@ function handleEvent(v: any) {
           // 中途切换：仅重放，不重复 push 当前 sidecar 还在 emit 的事件。
           // 简单起见：如果本地 items 还是空，就用历史事件填充；之后的实时事件会自然 append。
           if (!chat.items.length && events.length) {
+            // Track which steps already have at least one rendered tool card
+            // from individual tool_call events. step_summary serves as a
+            // FALLBACK for steps whose tool_call event was lost (e.g. the
+            // sidecar broken-pipe regression before the fix in thread
+            // 20260518-212634 where _writeln silently dropped every event
+            // past step 9 while step_summary kept landing on disk).
+            const stepsWithToolCard = new Set<number>();
             for (const ev of events) {
               const ek = ev.event;
               if (ek === "user_input") chat.items.push({ kind: "user", text: ev.text ?? "" });
               else if (ek === "user_attachments") pushUserAttachments(Array.isArray(ev.refs) ? ev.refs : []);
               else if (ek === "run_start") chat.items.push({ kind: "system", text: t("chat.run_started") });
               else if (ek === "assistant_text") chat.items.push({ kind: "assistant", step: ev.step, text: ev.text ?? "" });
-              else if (ek === "tool_call") chat.items.push({ kind: "tool", step: ev.step, action: ev.action, args: ev.args });
+              else if (ek === "tool_call") {
+                chat.items.push({ kind: "tool", step: ev.step, action: ev.action, args: ev.args });
+                if (typeof ev.step === "number") stepsWithToolCard.add(ev.step);
+              }
               else if (ek === "tool_result") {
                 for (let i = chat.items.length - 1; i >= 0; i--) {
                   const it = chat.items[i];
@@ -120,6 +130,24 @@ function handleEvent(v: any) {
                     it.result = { ok: ev.ok, output: ev.output, error: ev.error };
                     break;
                   }
+                }
+              } else if (ek === "step_summary") {
+                const s = ev.step;
+                if (typeof s === "number" && !stepsWithToolCard.has(s)) {
+                  const at = ev.assistant_text;
+                  if (typeof at === "string" && at.trim()) {
+                    chat.items.push({ kind: "assistant", step: s, text: at });
+                  }
+                  const tools = Array.isArray(ev.tools) ? ev.tools : [];
+                  for (const t of tools) {
+                    const resStr = typeof t?.result === "string" ? t.result : "";
+                    const looksErr = /^ERROR:/i.test(resStr) || /exit_code=[^0]/i.test(resStr);
+                    chat.items.push({
+                      kind: "tool", step: s, action: t?.action ?? "", args: t?.args,
+                      result: { ok: !looksErr, output: looksErr ? "" : resStr, error: looksErr ? resStr : "" },
+                    });
+                  }
+                  stepsWithToolCard.add(s);
                 }
               } else if (ek === "step_image") {
                 chat.items.push({ kind: "image", step: ev.step, level: ev.level, threadId: ev.thread_id ?? newId, file: ev.file, path: ev.path });
@@ -363,6 +391,9 @@ export async function openThread(id: string): Promise<void> {
   chat.currentStep = 0;
   chat.totalSteps = 0;
   const events: any[] = data?.events ?? [];
+  // Same step_summary fallback as in the thread_changed replay path above
+  // — see comment there for the historical regression this guards against.
+  const stepsWithToolCard = new Set<number>();
   // 把 events.jsonl 重放成 ChatItem 列表
   for (const v of events) {
     const k = v.event;
@@ -376,6 +407,7 @@ export async function openThread(id: string): Promise<void> {
       chat.items.push({ kind: "assistant", step: v.step, text: v.text ?? "" });
     } else if (k === "tool_call") {
       chat.items.push({ kind: "tool", step: v.step, action: v.action, args: v.args });
+      if (typeof v.step === "number") stepsWithToolCard.add(v.step);
     } else if (k === "tool_result") {
       // 找最近一个未填 result 的 tool_call 填进去
       for (let i = chat.items.length - 1; i >= 0; i--) {
@@ -384,6 +416,24 @@ export async function openThread(id: string): Promise<void> {
           it.result = { ok: v.ok, output: v.output, error: v.error };
           break;
         }
+      }
+    } else if (k === "step_summary") {
+      const s = v.step;
+      if (typeof s === "number" && !stepsWithToolCard.has(s)) {
+        const at = v.assistant_text;
+        if (typeof at === "string" && at.trim()) {
+          chat.items.push({ kind: "assistant", step: s, text: at });
+        }
+        const tools = Array.isArray(v.tools) ? v.tools : [];
+        for (const tr of tools) {
+          const resStr = typeof tr?.result === "string" ? tr.result : "";
+          const looksErr = /^ERROR:/i.test(resStr) || /exit_code=[^0]/i.test(resStr);
+          chat.items.push({
+            kind: "tool", step: s, action: tr?.action ?? "", args: tr?.args,
+            result: { ok: !looksErr, output: looksErr ? "" : resStr, error: looksErr ? resStr : "" },
+          });
+        }
+        stepsWithToolCard.add(s);
       }
     } else if (k === "step_image") {
       chat.items.push({ kind: "image", step: v.step, level: v.level, threadId: v.thread_id ?? id, file: v.file, path: v.path });

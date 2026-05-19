@@ -51,7 +51,23 @@ impl Sidecar {
     }
 
     /// Send a JSON-RPC request to the sidecar and wait for its response.
+    ///
+    /// Uses the default 120s timeout — appropriate for RPCs that may legitimately
+    /// take a long time (network handshakes, long file reads, model setup).
+    /// For RPCs that should return effectively instantly (cancel, thread switch,
+    /// status queries) prefer ``request_with_timeout`` so a stalled IPC pipe
+    /// surfaces as an error in seconds rather than two minutes.
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+        self.request_with_timeout(method, params, std::time::Duration::from_secs(120)).await
+    }
+
+    /// Same as ``request`` but with a caller-chosen timeout.
+    pub async fn request_with_timeout(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
@@ -66,16 +82,25 @@ impl Sidecar {
                 .map_err(|e| format!("write stdin: {e}"))?;
             stdin.flush().await.ok();
         }
-        match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
+        match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(res)) => res,
             Ok(Err(_)) => Err("sidecar response channel closed".into()),
             Err(_) => {
                 self.pending.lock().await.remove(&id);
-                Err("sidecar request timed out".into())
+                Err(format!(
+                    "sidecar request timed out after {}s (method={method}); the IPC pipe may be stuck — try restarting the app",
+                    timeout.as_secs()
+                ))
             }
         }
     }
 }
+
+/// Default short timeout for RPCs that touch in-memory state or read tiny files
+/// and should return effectively instantly. Long enough to absorb a brief
+/// hiccup, short enough that users get feedback in seconds rather than minutes
+/// when the stdout IPC pipe is wedged.
+const FAST_RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 static INSTANCE: OnceCell<Arc<Sidecar>> = OnceCell::new();
 
@@ -262,12 +287,49 @@ async fn spawn_once(app: &AppHandle) -> Result<Option<i32>, String> {
     *sidecar.stdin.lock().await = Some(stdin);
 
     // stdout reader
+    //
+    // ROBUSTNESS: read raw bytes via `read_until(b'\n')` and decode lossily,
+    // never letting a single bad byte kill the reader task. The previous
+    // implementation used `BufReader::lines().next_line()` and matched only
+    // `Ok(Some(line))` in the while-let — but Tokio's `read_line` returns
+    // `Err(InvalidData)` the moment it sees a non-UTF-8 byte sequence, which
+    // does NOT match the pattern and silently terminates the entire stdout
+    // reader task. Symptom (observed in thread-20260518-223343 and
+    // thread-20260518-230314): UI froze at step 9 (the launch_app step
+    // emitted an event containing the Chinese cmd-window title that got
+    // re-encoded as CP936 mojibake when Python's stdout text codec mis-
+    // configured; or any other stray non-UTF-8 byte from a C extension /
+    // PyInstaller bootloader / unredirected print). Sidecar kept running
+    // and writing to events.jsonl past step 22+, but the frontend got
+    // ZERO events from step 10 onward. Reading bytes + `from_utf8_lossy`
+    // guarantees a single bad byte just produces a U+FFFD that the JSON
+    // parser will reject for that one line — and we `continue` instead of
+    // breaking, so subsequent valid lines still flow.
     let app_out = app.clone();
     let sidecar_out = sidecar.clone();
     tauri::async_runtime::spawn(async move {
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        let mut reader = BufReader::new(stdout);
+        let mut buf: Vec<u8> = Vec::with_capacity(8192);
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf).await {
+                Ok(0) => break, // EOF
+                Ok(_) => {}
+                Err(e) => {
+                    log::warn!("sidecar stdout read error: {e}");
+                    // Transient I/O error — try the next read rather than
+                    // killing the task.
+                    continue;
+                }
+            }
+            // Trim trailing \n and optional \r (Windows line endings).
+            while matches!(buf.last(), Some(b'\n') | Some(b'\r')) {
+                buf.pop();
+            }
+            if buf.is_empty() {
+                continue;
+            }
+            let line = String::from_utf8_lossy(&buf);
             let v: Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
                 Err(_) => continue,
@@ -291,11 +353,26 @@ async fn spawn_once(app: &AppHandle) -> Result<Option<i32>, String> {
     });
 
     // stderr → forwarded as event with kind:"log" so the UI can show python tracebacks.
+    // Same robustness as stdout reader above — never let a stray non-UTF-8
+    // byte kill the stderr task (would silently lose Python tracebacks).
     let app_err = app.clone();
     tauri::async_runtime::spawn(async move {
-        let reader = BufReader::new(stderr);
-        let mut lines = reader.lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        let mut reader = BufReader::new(stderr);
+        let mut buf: Vec<u8> = Vec::with_capacity(4096);
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(_) => continue,
+            }
+            while matches!(buf.last(), Some(b'\n') | Some(b'\r')) {
+                buf.pop();
+            }
+            if buf.is_empty() {
+                continue;
+            }
+            let line = String::from_utf8_lossy(&buf).into_owned();
             let _ = app_err.emit(
                 EVENT_SIDECAR,
                 json!({"kind": "stderr", "line": line}),
@@ -470,18 +547,18 @@ pub async fn sidecar_start_task(args: StartArgs) -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn sidecar_cancel() -> Result<Value, String> {
-    instance().request("cancel", json!({})).await
+    instance().request_with_timeout("cancel", json!({}), FAST_RPC_TIMEOUT).await
 }
 
 #[tauri::command]
 pub async fn sidecar_get_status() -> Result<Value, String> {
-    instance().request("get_status", json!({})).await
+    instance().request_with_timeout("get_status", json!({}), FAST_RPC_TIMEOUT).await
 }
 
 /// Liveness probe of the sidecar JSON-RPC pipe.
 #[tauri::command]
 pub async fn sidecar_ping() -> Result<Value, String> {
-    instance().request("ping", json!({})).await
+    instance().request_with_timeout("ping", json!({}), FAST_RPC_TIMEOUT).await
 }
 
 // ---- GitHub Copilot OAuth (device-code) bridge ----
@@ -512,44 +589,47 @@ pub async fn copilot_logout() -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn thread_new(title: Option<String>) -> Result<Value, String> {
-    instance().request("thread_new", json!({"title": title.unwrap_or_default()})).await
+    instance().request_with_timeout("thread_new", json!({"title": title.unwrap_or_default()}), FAST_RPC_TIMEOUT).await
 }
 
 #[tauri::command]
 pub async fn thread_list() -> Result<Value, String> {
-    instance().request("thread_list", json!({})).await
+    instance().request_with_timeout("thread_list", json!({}), FAST_RPC_TIMEOUT).await
 }
 
 #[tauri::command]
 pub async fn thread_read(id: String) -> Result<Value, String> {
+    // thread_read can be slower for very long threads (reads + parses events.jsonl,
+    // which can be several MB), so keep the default 120s timeout here rather than
+    // the fast one.
     instance().request("thread_read", json!({"id": id})).await
 }
 
 #[tauri::command]
 pub async fn thread_set_active(id: Option<String>) -> Result<Value, String> {
-    instance().request("thread_set_active", json!({"id": id})).await
+    instance().request_with_timeout("thread_set_active", json!({"id": id}), FAST_RPC_TIMEOUT).await
 }
 
 #[tauri::command]
 pub async fn thread_delete(id: String) -> Result<Value, String> {
-    instance().request("thread_delete", json!({"id": id})).await
+    instance().request_with_timeout("thread_delete", json!({"id": id}), FAST_RPC_TIMEOUT).await
 }
 
 // ---- Task queue ----
 
 #[tauri::command]
 pub async fn task_queue_list() -> Result<Value, String> {
-    instance().request("queue_list", json!({})).await
+    instance().request_with_timeout("queue_list", json!({}), FAST_RPC_TIMEOUT).await
 }
 
 #[tauri::command]
 pub async fn task_queue_remove(thread_id: String) -> Result<Value, String> {
-    instance().request("queue_remove", json!({"thread_id": thread_id})).await
+    instance().request_with_timeout("queue_remove", json!({"thread_id": thread_id}), FAST_RPC_TIMEOUT).await
 }
 
 #[tauri::command]
 pub async fn task_queue_clear() -> Result<Value, String> {
-    instance().request("queue_clear", json!({})).await
+    instance().request_with_timeout("queue_clear", json!({}), FAST_RPC_TIMEOUT).await
 }
 
 /// Read an image file inside a thread directory, return as data URL.
@@ -721,6 +801,48 @@ pub async fn skill_delete(id: String) -> Result<Value, String> {
 #[tauri::command]
 pub async fn skill_install_url(url: String) -> Result<Value, String> {
     instance().request("skill_install_url", json!({"url": url})).await
+}
+
+#[tauri::command]
+pub async fn skill_set_enabled(id: String, enabled: bool) -> Result<Value, String> {
+    instance().request("skill_set_enabled", json!({"id": id, "enabled": enabled})).await
+}
+
+#[tauri::command]
+pub async fn skill_repo_list() -> Result<Value, String> {
+    instance().request("skill_repo_list", json!({})).await
+}
+
+#[tauri::command]
+pub async fn skill_repo_add(url: String, name: Option<String>, description: Option<String>) -> Result<Value, String> {
+    instance().request("skill_repo_add", json!({
+        "url": url, "name": name, "description": description,
+    })).await
+}
+
+#[tauri::command]
+pub async fn skill_repo_delete(id: String) -> Result<Value, String> {
+    instance().request("skill_repo_delete", json!({"id": id})).await
+}
+
+#[tauri::command]
+pub async fn skill_repo_set_enabled(id: String, enabled: bool) -> Result<Value, String> {
+    instance().request("skill_repo_set_enabled", json!({"id": id, "enabled": enabled})).await
+}
+
+#[tauri::command]
+pub async fn skill_repo_refresh(force: Option<bool>) -> Result<Value, String> {
+    instance().request("skill_repo_refresh", json!({"force": force.unwrap_or(false)})).await
+}
+
+#[tauri::command]
+pub async fn skill_repo_search(query: String, limit: Option<u32>) -> Result<Value, String> {
+    instance().request("skill_repo_search", json!({"query": query, "limit": limit})).await
+}
+
+#[tauri::command]
+pub async fn skill_repo_install(repo_id: String, path: String) -> Result<Value, String> {
+    instance().request("skill_repo_install", json!({"repo_id": repo_id, "path": path})).await
 }
 
 // ---- 定时任务 ----

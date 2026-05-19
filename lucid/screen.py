@@ -453,11 +453,15 @@ class ScreenSensor:
         img = self._grab(region)
         raw = img.size
         sent = _shrink(img, self.cfg.l1_max_long_edge)
-        sent, legend = _draw_grid(sent, raw, (region["left"], region["top"]))
+        # L1 = overview only; intentionally NO gridlines. On a 2560×1440
+        # virtual desktop the 100-px grid would paint ~25 vertical + ~14
+        # horizontal labelled lines, cluttering the panoramic view that L1
+        # is meant for. Precise clicking happens via L2 / L3 which keep
+        # the colour-coded grid.
         return Capture(
             level=ScreenLevel.L1, image=sent, raw_size=raw, sent_size=sent.size,
             offset=(region["left"], region["top"]), phash=_phash(sent),
-            grid_legend=legend,
+            grid_legend=None,
         )
 
     def _capture_active_window(self) -> Capture:

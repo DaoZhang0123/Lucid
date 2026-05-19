@@ -63,6 +63,7 @@ from . import memory as memory_mod
 from . import tooltips as tooltips_mod
 from . import templates as templates_mod
 from . import skills as skills_mod
+from . import skill_repos as skill_repos_mod
 from . import scheduler as scheduler_mod
 from . import launchers as launchers_mod
 from . import regions as regions_mod
@@ -75,10 +76,54 @@ _err_console = Console(file=sys.stderr)
 
 
 def _writeln(obj: dict[str, Any]) -> None:
-    """把一行 JSON 写到 stdout 并立刻刷盘。"""
-    line = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
-    sys.stdout.write(line + "\n")
-    sys.stdout.flush()
+    """把一行 JSON 写到 stdout 并立刻刷盘。
+
+    Hardened: any failure here (BrokenPipe when frontend disconnects, a non-
+    serialisable payload from some tool, an OSError during flush) must NOT
+    propagate — callers like ``sink`` chain a disk-persist step right after
+    this one, and an unhandled exception here used to silently kill both the
+    UI stream AND ``events.jsonl`` for every subsequent step of the run
+    (regression observed in thread-20260518-212634: UI froze at step 9 while
+    the agent kept running to step 29+; events.jsonl missed all step_start /
+    tool_call / tool_result / assistant_text events past step 9 because the
+    outer ``_emit``'s blanket except swallowed the BrokenPipe and the
+    append_event branch in ``sink`` was never reached).
+
+    UTF-8 enforcement: we encode and write to ``sys.stdout.buffer`` directly
+    instead of relying on ``sys.stdout.reconfigure(encoding='utf-8')`` from
+    ``run_sidecar`` (regression observed in thread-20260518-223343: UI froze
+    at step 9 the moment the agent's ``focus_window`` tool_call carried a
+    Chinese title_substring "命令提示符" — Python's text codec re-encoded
+    those chars as CP936 mojibake when written to stdout, the Tauri stdin
+    JSON parser hit invalid UTF-8 bytes and stalled the stream. The reconfigure
+    call is unreliable under PyInstaller's bootloader on Python 3.14;
+    going through ``.buffer`` bypasses the text codec entirely).
+    """
+    try:
+        line = json.dumps(obj, ensure_ascii=False, separators=(",", ":"), default=str)
+    except Exception:
+        # Truly unserialisable — still emit a marker so the frontend at
+        # least sees that a step happened (kind preserved if present).
+        try:
+            kind = str(obj.get("event")) if isinstance(obj, dict) else "?"
+        except Exception:
+            kind = "?"
+        line = json.dumps({"event": kind, "_dropped": True}, ensure_ascii=False)
+    try:
+        data = (line + "\n").encode("utf-8", errors="replace")
+        buf = getattr(sys.stdout, "buffer", None)
+        if buf is not None:
+            buf.write(data)
+            buf.flush()
+        else:
+            # Last-resort: fall back to text write. Will mangle non-ASCII on
+            # CP936 consoles but at least delivers ASCII control structure.
+            sys.stdout.write(line + "\n")
+            sys.stdout.flush()
+    except Exception:
+        # Broken pipe / closed stdout — frontend likely went away. Don't
+        # raise; the caller still wants to persist to events.jsonl.
+        pass
 
 
 class Sidecar:
@@ -417,8 +462,35 @@ instruction in this run.
             self._append_startup_log(
                 f"queue restore failed: {type(exc).__name__}: {exc}"
             )
-        for raw in sys.stdin:
-            raw = raw.strip()
+        # Read JSON-RPC requests as raw bytes via ``sys.stdin.buffer``.
+        # Symmetric to the ``_writeln`` fix: ``sys.stdin.reconfigure(
+        # encoding='utf-8', errors='replace', newline='\n')`` from
+        # ``run_sidecar`` is unreliable under PyInstaller's bootloader on
+        # Python 3.14 — the text-mode iterator can buffer multi-KB chunks
+        # and stall ``cancel`` / ``ping`` RPCs for the full TextIOWrapper
+        # refill window, well past the 8s fast-RPC timeout the UI uses.
+        # Going through ``.buffer.readline()`` bypasses the text codec and
+        # delivers each newline-terminated frame the moment Tauri flushes
+        # it (regression observed in thread-20260519-114820: every
+        # cancel-button press surfaced "sidecar request timed out after 8s"
+        # in the chat panel despite the main loop being otherwise idle).
+        # ``read_until_newline_bytes`` returns ``b''`` only on EOF.
+        stdin_buf = getattr(sys.stdin, "buffer", None)
+        while True:
+            try:
+                if stdin_buf is not None:
+                    raw_bytes = stdin_buf.readline()
+                    if not raw_bytes:
+                        break
+                    raw = raw_bytes.decode("utf-8", errors="replace").strip()
+                else:
+                    raw_line = sys.stdin.readline()
+                    if not raw_line:
+                        break
+                    raw = raw_line.strip()
+            except Exception:
+                _err_console.print_exception()
+                continue
             if not raw:
                 continue
             if self._shutdown.is_set():
@@ -1014,7 +1086,7 @@ instruction in this run.
         "ping", "get_status", "thread_list", "thread_read", "thread_read_image",
         "memory_read", "tools_read", "app_tips_list", "app_tips_read",
         "templates_list", "schedule_list",
-        "skill_list", "skill_read",
+        "skill_list", "skill_read", "skill_repo_list",
         "launchers_list", "regions_list", "doze_status", "doze_outputs",
         "installed_apps_list",
         "voice_status", "voice_config",
@@ -1628,9 +1700,23 @@ instruction in this run.
         key = (params.get("id") or params.get("name") or "").strip()
         if not key:
             raise ValueError("id or name required")
+        relfile = (params.get("file") or params.get("path") or "").strip()
+        if relfile:
+            item = skills_mod.get_skill(key)
+            if item is None:
+                raise ValueError(f"skill {key!r} not found")
+            fileobj = skills_mod.get_skill_file(key, relfile)
+            if fileobj is None:
+                raise ValueError(f"skill {key!r} has no file {relfile!r}")
+            return fileobj
         item = skills_mod.get_skill(key)
         if item is None:
             raise ValueError(f"skill {key!r} not found")
+        # Attach the list of reference files so the Skills UI can show them.
+        try:
+            item["files"] = skills_mod.list_skill_files(key) or []
+        except Exception:  # noqa: BLE001 — defensive
+            item["files"] = []
         return item
 
     def _rpc_skill_add(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1668,6 +1754,63 @@ instruction in this run.
         if not url:
             raise ValueError("url required")
         return skills_mod.install_skill_url(url, cfg=self.cfg.skills)
+
+    def _rpc_skill_set_enabled(self, params: dict[str, Any]) -> dict[str, Any]:
+        sid = (params.get("id") or "").strip()
+        if not sid:
+            raise ValueError("id required")
+        enabled = bool(params.get("enabled"))
+        item = skills_mod.set_enabled(sid, enabled)
+        if item is None:
+            raise ValueError(f"skill {sid!r} not found")
+        return item
+
+    # ---- Skill repositories (catalogue browsing / agent self-install) ----
+
+    def _rpc_skill_repo_list(self, _params: dict[str, Any]) -> dict[str, Any]:
+        return {"repos": skill_repos_mod.list_repos()}
+
+    def _rpc_skill_repo_add(self, params: dict[str, Any]) -> dict[str, Any]:
+        url = (params.get("url") or "").strip()
+        if not url:
+            raise ValueError("url required")
+        return skill_repos_mod.add_repo(
+            url=url,
+            name=str(params.get("name") or "").strip(),
+            description=str(params.get("description") or "").strip(),
+        )
+
+    def _rpc_skill_repo_delete(self, params: dict[str, Any]) -> dict[str, Any]:
+        rid = (params.get("id") or "").strip()
+        if not rid:
+            raise ValueError("id required")
+        return {"deleted": skill_repos_mod.delete_repo(rid)}
+
+    def _rpc_skill_repo_set_enabled(self, params: dict[str, Any]) -> dict[str, Any]:
+        rid = (params.get("id") or "").strip()
+        if not rid:
+            raise ValueError("id required")
+        item = skill_repos_mod.set_repo_enabled(rid, bool(params.get("enabled")))
+        if item is None:
+            raise ValueError(f"repo {rid!r} not found")
+        return item
+
+    def _rpc_skill_repo_refresh(self, params: dict[str, Any]) -> dict[str, Any]:
+        return skill_repos_mod.refresh_all(force=bool(params.get("force")))
+
+    def _rpc_skill_repo_search(self, params: dict[str, Any]) -> dict[str, Any]:
+        q = (params.get("query") or "").strip()
+        if not q:
+            raise ValueError("query required")
+        limit = int(params.get("limit") or 10)
+        return {"hits": skill_repos_mod.search(q, limit=limit)}
+
+    def _rpc_skill_repo_install(self, params: dict[str, Any]) -> dict[str, Any]:
+        rid = (params.get("repo_id") or "").strip()
+        path = (params.get("path") or "").strip()
+        if not rid or not path:
+            raise ValueError("repo_id and path required")
+        return skill_repos_mod.install_from_repo(rid, path, cfg=self.cfg.skills)
 
     # ---- 定时任务 ----
 
@@ -1983,13 +2126,17 @@ instruction in this run.
     def _run_task(self, instruction: str, thread: ThreadLog, *, extra_system: str = "",
                   file_refs: list[dict[str, str]] | None = None) -> None:
         def sink(evt: dict[str, Any]) -> None:
-            # 1) 走 stdout 让前端实时看到
-            _writeln(evt)
-            # 2) 同步追加到 thread events.jsonl持久化
+            # Order matters: persistence MUST run even if the stdout write
+            # fails (broken pipe, frontend reload, non-serialisable payload),
+            # otherwise events.jsonl loses every subsequent event for the
+            # whole run and the chat UI cannot reconstruct the thread on
+            # reload. _writeln is already hardened to never raise, but we
+            # still persist first as a belt-and-braces guarantee.
             try:
                 thread.append_event(evt)
             except Exception:
                 pass
+            _writeln(evt)
         try:
             agent = Agent(self.cfg, event_sink=sink, cancel_event=self._cancel,
                           thread_log=thread, extra_system=extra_system,

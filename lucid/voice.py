@@ -530,8 +530,16 @@ class FasterWhisperTranscriber(Transcriber):
                 primary = t.split("-", 1)[0]
                 return primary if primary in SUPPORTED_LANGS else None
 
-            if language in ("", "auto", "system", "detect"):
-                lang_param: Optional[str] = (
+            if language in ("multi", "multilingual", "any", "none"):
+                # User opted into true Whisper auto-detect across all
+                # languages it knows. Accuracy is noticeably worse on short
+                # (<2 s) clips — the model drifts between similar-sounding
+                # languages (zh / ko, en / cy, …) — but it's the only way to
+                # mix languages in one session. We acknowledge this trade-off
+                # in the Settings UI hint.
+                lang_param: Optional[str] = None
+            elif language in ("", "auto", "system", "detect"):
+                lang_param = (
                     _ui_lang_to_whisper(ui_locale)
                     or _coerce_supported(_system_language_tag())
                 )

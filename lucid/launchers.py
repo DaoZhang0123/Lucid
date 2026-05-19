@@ -634,7 +634,24 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
     exe = spec.get("exe")
     if exe:
         try:
-            subprocess.Popen(exe, shell=True)
+            # Console-app spawn: the bundled sidecar (lucid.exe) is built as a
+            # *windowless* GUI binary, so a child `cmd` / `powershell` /
+            # `pwsh` / `wt` inherits "no console" and exits invisibly — the
+            # agent then sees "process is running but no matching top-level
+            # window appeared" and proceeds to `type` into whatever stale
+            # window happens to hold focus (often a Win+R "运行" dialog,
+            # which then surfaces the "Windows 找不到文件 'cd'" error).
+            # `CREATE_NEW_CONSOLE` forces the child to allocate its own
+            # console window, which is exactly what the user expects when
+            # they ask for a terminal. Regression observed in
+            # thread-20260519-114820.
+            popen_kwargs: dict[str, Any] = {"shell": True}
+            _exe_l = str(exe).strip().lower().replace(".exe", "")
+            if _exe_l in ("cmd", "powershell", "pwsh", "wt"):
+                _flag = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+                if _flag:
+                    popen_kwargs["creationflags"] = _flag
+            subprocess.Popen(exe, **popen_kwargs)
             wait_s = _launch_timeout(spec, 2.0)
             wins2 = _wait_for_windows(spec, timeout=wait_s)
             # Cold-start retry: many Office / Paint / browser binaries fail to
@@ -647,7 +664,7 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
                 if not running:
                     time.sleep(1.0)
                     try:
-                        subprocess.Popen(exe, shell=True)
+                        subprocess.Popen(exe, **popen_kwargs)
                     except Exception:
                         pass
                     wins2 = _wait_for_windows(spec, timeout=wait_s)
