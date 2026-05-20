@@ -949,9 +949,8 @@ instruction in this run.
           - ``source_key_captures`` : original ``logs/taskbar-monitor/key/`` paths
                                      (kept for traceability; may be pruned later)
 
-        Doze's per-thread reflector pass can read ``events.jsonl`` for this
-        record, load the in-thread images directly, and emit ``learn_tip`` /
-        icon proposals tied to ``apps``.
+        The in-thread copy keeps the originating frames alive for debugging /
+        future analysis even after ``logs/taskbar-monitor/key/`` rolls.
         """
         if thread is None or getattr(thread, "run_dir", None) is None:
             return
@@ -1142,12 +1141,11 @@ instruction in this run.
             )
             # Copy the originating taskbar key frames (current / previous /
             # focus crops, as preserved by the LLM-confirm step) into the
-            # auto-reply thread's own directory and record an event pointing
-            # at them. Doze later scans this thread and learns the icon
-            # signature for the apps that triggered the reply — without this
+            # auto-reply thread's own directory and record a
+            # ``visual_notify_trigger`` event pointing at them. Without this
             # copy the source files live under ``logs/taskbar-monitor/key/``
             # which rolls at ``key_screenshot_keep`` (~200) and gets evicted
-            # long before the doze reflector picks the thread up.
+            # before later debugging / analysis can see them.
             self._copy_visual_notify_captures_to_thread(vn_thread, payload, apps)
             res = self._rpc_start_task({
                 "instruction": instruction,

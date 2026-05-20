@@ -54,8 +54,18 @@ def _processed_path(cfg: Config) -> Path:
 
 
 def _log_path(cfg: Config) -> Path:
+    """Resolve today's doze log path.
+
+    The configured ``cfg.doze.log_path`` (default ``logs/doze.log``) is treated
+    as a template: the date stamp ``-YYYYMMDD`` is inserted before the suffix
+    so logs rotate daily (``logs/doze-20260520.log``). This prevents one giant
+    ever-growing file across many days of background reflection.
+    """
     p = Path(cfg.doze.log_path)
-    return p if p.is_absolute() else _user_data_dir() / p
+    if not p.is_absolute():
+        p = _user_data_dir() / p
+    stamp = datetime.now().strftime("%Y%m%d")
+    return p.with_name(f"{p.stem}-{stamp}{p.suffix}")
 
 
 def _load_processed(cfg: Config) -> dict[str, Any]:
@@ -279,40 +289,6 @@ def _summarise_event(evt: dict[str, Any], max_chars: int) -> str | None:
         return f"TOOL_RESULT: {body}"
     if et == "task_close":
         return f"TASK_CLOSE status={evt.get('status')} final={(evt.get('final_text') or '')[:200]}"
-    if et == "visual_notify_trigger":
-        # The taskbar-monitor confirmed an auto-reply trigger and the sidecar
-        # copied the originating icon-strip frames into this thread's
-        # ``trigger-captures/`` dir. Surfacing the paths + LLM reason lets the
-        # reflector say things like "the green dot at x=420 means WeChat had a
-        # new message" without having to dig through ``taskbar-monitor/key/``
-        # (which may have rolled away).
-        apps = evt.get("apps") or []
-        reason = (evt.get("reason") or "").strip()
-        conf = evt.get("confidence")
-        focus = evt.get("focus_crops") or []
-        cur = evt.get("current")
-        prv = evt.get("previous")
-        focus_bits: list[str] = []
-        for fc in focus[:6]:
-            if not isinstance(fc, dict):
-                continue
-            focus_bits.append(
-                f"focus[{fc.get('index')}@x{fc.get('x0')}-{fc.get('x1')}]: "
-                f"now={fc.get('current')} was={fc.get('previous')}"
-            )
-        head = (
-            f"VISUAL_NOTIFY_TRIGGER apps={apps} confidence={conf} reason={reason[:300]!r}"
-        )
-        tail_bits = []
-        if cur:
-            tail_bits.append(f"strip_now={cur}")
-        if prv:
-            tail_bits.append(f"strip_was={prv}")
-        tail_bits.extend(focus_bits)
-        s = head
-        if tail_bits:
-            s += " | " + "; ".join(tail_bits)
-        return s[:max_chars]
     if et == "final":
         return f"FINAL: {(evt.get('text') or '')[:max_chars]}"
     if et == "error":
