@@ -13,12 +13,55 @@ else:  # pragma: no cover
     import tomli as tomllib
 
 
-# Current default for visual_notify.auto_chat_instruction (used both by the
-# dataclass field and by the upgrade hook in load_config()).
-_DEFAULT_AUTO_CHAT_INSTRUCTION = (
-    "请打开对应的聊天工具，逐条阅读所有最近未读消息：对每条都要结合上下文给出自然、完整的回复；"
-    "若消息中包含可执行的任务，请先把任务实际完成（含必要的操作和结果），再把结果回复给对方。"
-    "所有消息和任务都处理完毕后才算本轮结束（监听会由调度器自动继续，不需要你留在循环里）。"
+# Localized defaults for visual_notify.auto_chat_instruction, keyed by the
+# Lucid UI locale (cfg.ui.locale). The dataclass field below uses the zh-CN
+# version as a static fallback (legacy: that was the single shipping default);
+# sidecar.py picks the locale-appropriate one at runtime via
+# ``default_auto_chat_instruction(cfg.ui.locale)`` whenever the stored value
+# still matches ANY of these defaults (= user never customised it).
+_DEFAULT_AUTO_CHAT_INSTRUCTION_BY_LOCALE: dict[str, str] = {
+    "zh-CN": (
+        "请打开对应的聊天工具，逐条阅读所有最近未读消息：对每条都要结合上下文给出自然、完整的回复；"
+        "若消息中包含可执行的任务，请先把任务实际完成（含必要的操作和结果），再把结果回复给对方。"
+        "所有消息和任务都处理完毕后才算本轮结束（监听会由调度器自动继续，不需要你留在循环里）。"
+    ),
+    "en": (
+        "Open the corresponding chat client and read every recent unread message one by one: "
+        "for each one, write a natural, complete reply that fits the context; if a message contains "
+        "an actionable task, actually carry the task out first (including the necessary steps and "
+        "results) and then reply with the outcome. The turn only ends after every message and task "
+        "has been handled (the scheduler will keep listening automatically — you don't need to stay "
+        "in a loop yourself)."
+    ),
+    "fr-FR": (
+        "Ouvrez le client de chat correspondant et lisez un par un tous les messages récents non lus : "
+        "pour chacun, rédigez une réponse naturelle et complète adaptée au contexte ; si un message "
+        "contient une tâche exécutable, effectuez d'abord réellement la tâche (étapes et résultats "
+        "nécessaires inclus), puis répondez avec le résultat. Le tour ne se termine qu'une fois tous "
+        "les messages et toutes les tâches traités (le planificateur continuera l'écoute "
+        "automatiquement — vous n'avez pas besoin de rester dans une boucle)."
+    ),
+}
+_DEFAULT_AUTO_CHAT_INSTRUCTION = _DEFAULT_AUTO_CHAT_INSTRUCTION_BY_LOCALE["zh-CN"]
+
+
+def default_auto_chat_instruction(locale: str | None) -> str:
+    """Return the auto-chat default instruction for ``locale`` (Lucid UI locale
+    like ``en`` / ``zh-CN`` / ``fr-FR``). Unknown locales fall back to English."""
+    tag = (locale or "").strip()
+    if tag in _DEFAULT_AUTO_CHAT_INSTRUCTION_BY_LOCALE:
+        return _DEFAULT_AUTO_CHAT_INSTRUCTION_BY_LOCALE[tag]
+    primary = tag.split("-")[0].lower()
+    alias = {"zh": "zh-CN", "fr": "fr-FR", "en": "en"}.get(primary)
+    if alias:
+        return _DEFAULT_AUTO_CHAT_INSTRUCTION_BY_LOCALE[alias]
+    return _DEFAULT_AUTO_CHAT_INSTRUCTION_BY_LOCALE["en"]
+
+
+# Any stored value equal to one of the current localized defaults counts as
+# "user hasn't customised" — sidecar then swaps in the locale-appropriate one.
+_CURRENT_DEFAULT_AUTO_CHAT_INSTRUCTIONS = frozenset(
+    _DEFAULT_AUTO_CHAT_INSTRUCTION_BY_LOCALE.values()
 )
 
 # Historical default strings that older builds shipped with. If a user-level

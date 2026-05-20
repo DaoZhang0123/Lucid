@@ -1021,6 +1021,7 @@ class Agent:
                     tr = meta_tools.dispatch_meta_tool(
                         fn_name, args, self.cfg, self._last_png_by_level,
                         sensor=self.sensor,
+                        last_capture=self.tool.last_capture,
                     )
                     if tr is None:
                         tr = ToolResult(error=f"unknown tool: {fn_name}")

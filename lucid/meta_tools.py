@@ -829,6 +829,7 @@ def dispatch_meta_tool(
     cfg: Config,
     last_png_by_level: dict[str, bytes],
     sensor: Any = None,
+    last_capture: Any = None,
 ) -> ToolResult | None:
     """处理一次 meta tool 的 tool_call。
 
@@ -1064,12 +1065,58 @@ def dispatch_meta_tool(
         if isinstance(result, dict):  # error
             return ToolResult(error=result.get("message", "region lookup failed"))
         d = result.to_dict()
+        cx = d["center"]["x"]
+        cy = d["center"]["y"]
+        rx = d["screen"]["x"]
+        ry = d["screen"]["y"]
+        rw = d["screen"]["w"]
+        rh = d["screen"]["h"]
         lines = [
             f"region {app}/{name}:",
             f"  description: {d['description']}",
-            f"  center: ({d['center']['x']}, {d['center']['y']})",
-            f"  rect: x={d['screen']['x']} y={d['screen']['y']} w={d['screen']['w']} h={d['screen']['h']}",
+            f"  center: ({cx}, {cy})  [absolute screen pixels]",
+            f"  rect: x={rx} y={ry} w={rw} h={rh}  [absolute screen pixels]",
         ]
+        # If there's an active image-frame capture (e.g. the most recent L1/L2
+        # that the model is currently reading gridline labels off), also report
+        # the image-local coordinates the model should pass to
+        # `computer.left_click` etc. — because click `coordinate` MUST be in
+        # image-local pixels (the framework adds the capture's screen offset
+        # automatically). Without this translation the model has been guessing
+        # the subtraction and missing by 30-60 px (Teams compose-box thread
+        # 20260520-211343 step 8: region center=(2270,1290) but model sent
+        # image-coord (706,993) → screen (2270,1235), 55 px too high, landing
+        # on a chat bubble instead of the composer).
+        try:
+            if last_capture is not None and getattr(last_capture, "offset", None) is not None:
+                ox, oy = last_capture.offset
+                img_rw, img_rh = last_capture.raw_size
+                ix_c = cx - ox
+                iy_c = cy - oy
+                ix_r = rx - ox
+                iy_r = ry - oy
+                inside = (0 <= ix_c < img_rw and 0 <= iy_c < img_rh)
+                level_tag = getattr(getattr(last_capture, "level", None), "value", "?")
+                if inside:
+                    lines.append(
+                        f"  image-local (for the active {level_tag} frame, "
+                        f"offset=({ox},{oy}), rect={img_rw}x{img_rh}):"
+                    )
+                    lines.append(
+                        f"    center: ({ix_c}, {iy_c})  ← pass this as `coordinate` to computer.left_click"
+                    )
+                    lines.append(
+                        f"    rect:   x={ix_r} y={iy_r} w={rw} h={rh}"
+                    )
+                else:
+                    lines.append(
+                        f"  image-local: region is OUTSIDE the active {level_tag} frame "
+                        f"(offset=({ox},{oy}), rect={img_rw}x{img_rh}; would map to "
+                        f"({ix_c},{iy_c})). Take a fresh screenshot before clicking, "
+                        f"or use the screen coords above with a tool that accepts them."
+                    )
+        except Exception:
+            pass
         return ToolResult(output="\n".join(lines))
 
     if fn_name in ("schedule_list", "schedule_add", "schedule_update", "schedule_delete"):

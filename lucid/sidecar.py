@@ -246,6 +246,16 @@ instruction in this run.
         self._cancel = threading.Event()
         self._current_instruction: str | None = None
         self._current_thread_id: str | None = None
+        # Mirrors the ``_from_visual_notify`` metadata flag of whatever task
+        # is currently being executed by ``_run_task``. Used by the
+        # ``_on_taskbar_notify_confirmed`` dedup gate so that, while one
+        # auto-reply is mid-flight (e.g. still opening the chat window),
+        # another taskbar hit doesn't queue a second auto-reply behind it
+        # that will fight for focus the moment the first finishes. Without
+        # this, a burst of 5 WeChat pings would stack 5 auto-reply tasks
+        # that take turns hijacking the active window (regression observed
+        # 5/19 19:48–19:50 — 5 back-to-back 🔔·微信 threads all cancelled).
+        self._current_from_visual_notify: bool = False
         self._shutdown = threading.Event()
         self._active_thread: ThreadLog | None = None
         # 任务队列：当 worker 在跑时，后续 start_task 会被排在这里，上一个任务结束
@@ -1061,6 +1071,20 @@ instruction in this run.
         base_instruction = (self.cfg.visual_notify.auto_chat_instruction or "").strip()
         if not base_instruction:
             return
+        # Localize: if the user hasn't customised the default, swap in the
+        # locale-appropriate version so an English/French UI doesn't get a
+        # Chinese auto-reply query (Teams thread 20260520-221240 regression).
+        try:
+            from . import config as _cfg_mod
+            if base_instruction in _cfg_mod._CURRENT_DEFAULT_AUTO_CHAT_INSTRUCTIONS:
+                ui_locale = ""
+                try:
+                    ui_locale = (getattr(getattr(self.cfg, "ui", None), "locale", "") or "").strip()
+                except Exception:
+                    pass
+                base_instruction = _cfg_mod.default_auto_chat_instruction(ui_locale)
+        except Exception:
+            pass
 
         # Inject the apps the LLM Step-2 confirm just identified, so the agent
         # knows which client to focus instead of probing every messaging app.
@@ -1081,9 +1105,24 @@ instruction in this run.
             apps_text = " / ".join(apps)
             # 把检测到的目标 App 直接合进一句话里，不再单开一段「[detector] ...」
             # —— 短指令既好读，也不会让 thread 标题被截得乱七八糟。
-            instruction = (
-                f"任务栏检测到 {apps_text} 可能有新消息：{base_instruction}"
-            )
+            ui_locale = ""
+            try:
+                ui_locale = (getattr(getattr(self.cfg, "ui", None), "locale", "") or "").strip().lower()
+            except Exception:
+                pass
+            primary = ui_locale.split("-")[0]
+            if primary == "en":
+                instruction = (
+                    f"Taskbar detected a possible new message in {apps_text}: {base_instruction}"
+                )
+            elif primary == "fr":
+                instruction = (
+                    f"La barre des tâches a détecté un possible nouveau message dans {apps_text} : {base_instruction}"
+                )
+            else:
+                instruction = (
+                    f"任务栏检测到 {apps_text} 可能有新消息：{base_instruction}"
+                )
         else:
             instruction = base_instruction
         # AUTO-REPLY SAFETY POLICY 走 system prompt（extra_system），不再塞进
@@ -1123,13 +1162,24 @@ instruction in this run.
             apps = matched
         
         with self._lock:
-            # Deduplication: check if there's already a pending visual_notify task
+            # Deduplication: skip if there's already a pending visual_notify
+            # task in the queue OR one currently running. Without the
+            # running-task check, a burst of taskbar hits during a single
+            # auto-reply (very common — the agent's own scroll/focus actions
+            # cause the unread badge to refresh on adjacent apps) stacks
+            # multiple auto-reply threads that take turns stealing focus.
             has_pending = any(
                 it.get("_from_visual_notify")
                 for it in self._queue
             )
-            if has_pending:
-                _writeln({"event": "taskbar_auto_chat_skipped_duplicate"})
+            running_is_visual = (
+                self._worker is not None
+                and self._worker.is_alive()
+                and self._current_from_visual_notify
+            )
+            if has_pending or running_is_visual:
+                _writeln({"event": "taskbar_auto_chat_skipped_duplicate",
+                          "reason": "running" if running_is_visual else "queued"})
                 return
         
         try:
@@ -2129,6 +2179,10 @@ instruction in this run.
                 # 入队：为这个排队任务创建独立 thread，在侧边栏马上可见。
                 qthread = preset_thread or ThreadLog.create(self.cfg.logging, instruction)
                 qthread.append_user_input(instruction)
+                # 同时实时通知前端，让 query 立刻显示在新 thread 的对话流里 —
+                # 否则 sidecar 自起的任务（visual_notify / scheduler）的用户消息
+                # 只在 events.jsonl 里，前端要等用户手动选中 thread 时才看得到。
+                _writeln({"event": "user_input", "text": instruction, "thread_id": qthread.id})
                 if file_refs:
                     qthread.append_event({"event": "user_attachments", "refs": file_refs})
                 queue_item = {
@@ -2166,6 +2220,9 @@ instruction in this run.
             else:
                 thread = self._ensure_active_thread(instruction)
             thread.append_user_input(instruction)
+            # 实时通知前端 user_input（同上注释）。手动 startTask 路径前端已经
+            # 自己 push 过用户气泡，chatStore 里有去重判定不会重复。
+            _writeln({"event": "user_input", "text": instruction, "thread_id": thread.id})
             if file_refs:
                 thread.append_event({"event": "user_attachments", "refs": file_refs})
                 # 同时走 stdout，让前端实时渲染 chip。
@@ -2173,6 +2230,7 @@ instruction in this run.
             self._cancel.clear()
             self._current_instruction = instruction
             self._current_thread_id = thread.id
+            self._current_from_visual_notify = bool(params.get("_from_visual_notify"))
             t = threading.Thread(
                 target=self._run_task, args=(instruction, thread),
                 kwargs={"extra_system": extra_system, "file_refs": file_refs}, daemon=True
@@ -2251,6 +2309,7 @@ instruction in this run.
         finally:
             self._current_instruction = None
             self._current_thread_id = None
+            self._current_from_visual_notify = False
             # 堆出下一个排队任务（如有）。
             self._drain_queue()
 
@@ -2272,6 +2331,7 @@ instruction in this run.
             self._cancel.clear()
             self._current_instruction = instruction
             self._current_thread_id = thread.id
+            self._current_from_visual_notify = bool(nxt.get("_from_visual_notify"))
             t = threading.Thread(
                 target=self._run_task, args=(instruction, thread),
                 kwargs={"extra_system": extra_system, "file_refs": file_refs}, daemon=True

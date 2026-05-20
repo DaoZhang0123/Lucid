@@ -30,6 +30,30 @@
   // copilot
   let copModel = $state("claude-opus-4-6");
 
+  // Curated model presets shown in the <select> dropdowns. The user can
+  // always pick "(custom…)" to type any model id the backend currently
+  // accepts — model catalogues drift faster than we can ship UI updates,
+  // so the presets are advisory rather than authoritative.
+  const ANTH_MODEL_PRESETS = [
+    "claude-opus-4-7-20260201",
+    "claude-opus-4-6-20251201",
+    "claude-opus-4-5-20250929",
+    "claude-sonnet-4-6-20260201",
+    "claude-sonnet-4-5-20250929",
+  ];
+  const COPILOT_MODEL_PRESETS = [
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5",
+    "gpt-5.5",
+    "gpt-5",
+    "gemini-3.5-pro",
+    "gemini-3.5-flash",
+    "gemini-2.5-pro",
+  ];
+  const MODEL_CUSTOM_SENTINEL = "__custom__";
+
   let temperature = $state<number>(0.2);
   let topP = $state<number>(1.0);
   let emergencyHotkey = $state("ctrl+alt+esc");
@@ -574,8 +598,27 @@
             </label>
             <label>
               model
-              <input type="text" bind:value={anthModel} placeholder={$_("settings.anthropic_model_placeholder")} />
+              <select
+                value={ANTH_MODEL_PRESETS.includes(anthModel) ? anthModel : MODEL_CUSTOM_SENTINEL}
+                onchange={(e) => {
+                  const v = (e.currentTarget as HTMLSelectElement).value;
+                  if (v !== MODEL_CUSTOM_SENTINEL) anthModel = v;
+                  else if (ANTH_MODEL_PRESETS.includes(anthModel)) anthModel = "";
+                }}
+              >
+                {#each ANTH_MODEL_PRESETS as m}
+                  <option value={m}>{m}</option>
+                {/each}
+                <option value={MODEL_CUSTOM_SENTINEL}>{$_("settings.model_custom_option")}</option>
+              </select>
             </label>
+            {#if !ANTH_MODEL_PRESETS.includes(anthModel)}
+              <label>
+                {$_("settings.model_custom_label")}
+                <input type="text" bind:value={anthModel} placeholder={$_("settings.anthropic_model_placeholder")} />
+              </label>
+              <p class="hint">{$_("settings.model_custom_hint")}</p>
+            {/if}
             <label>
               base_url
               <input type="text" bind:value={anthBaseUrl} placeholder={$_("settings.anthropic_base_url_placeholder")} />
@@ -584,8 +627,27 @@
             <h3>{$_("settings.copilot_section_title")}</h3>
             <label>
               model
-              <input type="text" bind:value={copModel} placeholder={$_("settings.copilot_model_placeholder")} />
+              <select
+                value={COPILOT_MODEL_PRESETS.includes(copModel) ? copModel : MODEL_CUSTOM_SENTINEL}
+                onchange={(e) => {
+                  const v = (e.currentTarget as HTMLSelectElement).value;
+                  if (v !== MODEL_CUSTOM_SENTINEL) copModel = v;
+                  else if (COPILOT_MODEL_PRESETS.includes(copModel)) copModel = "";
+                }}
+              >
+                {#each COPILOT_MODEL_PRESETS as m}
+                  <option value={m}>{m}</option>
+                {/each}
+                <option value={MODEL_CUSTOM_SENTINEL}>{$_("settings.model_custom_option")}</option>
+              </select>
             </label>
+            {#if !COPILOT_MODEL_PRESETS.includes(copModel)}
+              <label>
+                {$_("settings.model_custom_label")}
+                <input type="text" bind:value={copModel} placeholder={$_("settings.copilot_model_placeholder")} />
+              </label>
+              <p class="hint">{$_("settings.model_custom_hint")}</p>
+            {/if}
             <div class="copilot-status">
               {#if copStatus.logged_in}
                 <p class="ok">{$_("settings.copilot_logged_in_as")} <b>{copStatus.github_user || $_("settings.copilot_user_unknown")}</b></p>

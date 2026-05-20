@@ -204,7 +204,22 @@ function handleEvent(v: any) {
     chat.runningThreadId = null;
     push({ kind: "system", text: `错误：${v.message}` });
   } else if (k === "user_input") {
-    // 这个事件只在重放老 thread 时使用；实时 user 消息已经在 startTask 里 push
+    // 通常 startTask 已经把用户消息 push 进 chat.items，这条实时事件就只是回放；
+    // 但对于 sidecar 自己起的任务（visual_notify 任务栏自动回复、调度器定时任务等），
+    // 前端没走 startTask，user_input 是唯一来源 — 此时必须 push 出来，
+    // 否则像 thread 20260520-211343 那样：UI 只显示 "Task started" 接 step 1 launch_app，
+    // 用户根本看不到 query 是什么。
+    // 注意：sidecar 排队任务时也会广播 user_input，但 thread_id 是排队的那个 thread，
+    // 不是当前活动 thread —— 只在 thread_id 匹配活动 thread 时 push，否则会把排队任务的
+    // query 灌进用户当前正在看的 thread。去重判定：最后一条已经是同样文本的 user 卡片就跳过。
+    const text = v.text ?? "";
+    const evThreadId = v.thread_id ?? null;
+    const matchesActive = !evThreadId || evThreadId === chat.activeThreadId;
+    if (matchesActive) {
+      const last = chat.items.length ? chat.items[chat.items.length - 1] : null;
+      const alreadyShown = !!(last && last.kind === "user" && last.text === text);
+      if (!alreadyShown) push({ kind: "user", text });
+    }
   } else if (k === "user_attachments") {
     // live：用户在当前 thread 提交了附件；渲染 chip 卡片。
     pushUserAttachments(Array.isArray(v.refs) ? v.refs : []);

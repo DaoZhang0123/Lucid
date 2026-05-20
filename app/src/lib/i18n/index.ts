@@ -72,6 +72,11 @@ export function saveLocale(value: string): void {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("write_settings", { patch: { ui: { locale: value } } });
+      // Hot-reload the sidecar's in-memory cfg so backend-side locale
+      // consumers (auto-reply default text, system-prompt identity block,
+      // …) pick up the new language immediately. Without this, the sidecar
+      // keeps using whatever locale was active when it started.
+      try { await invoke("reload_config"); } catch { /* ignore — task running, applies on next launch */ }
     } catch {
       /* sidecar not up yet, or non-Tauri context — ignore */
     }
