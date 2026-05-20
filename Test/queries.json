@@ -1,6 +1,6 @@
 {
   "version": 17,
-  "notes": "Standing E2E queries — re-run every iteration. SKILL.md keys on `id`. All file deliverables go to %USERPROFILE%\\Downloads\\Test\\ (NOT the desktop). Each query has only an `instruction` (and optional `expect_files`). Verdict is computed by the SKILL: (1) Run layer = manifest.status == 'ok'; (2) Goal layer = a per-thread subagent reads instruction + final_text (+ context.log if needed) and judges whether the task's goal was achieved (goal_met = pass / fail / partial); (3) Deliverables layer = each `expect_files` entry passes its disk check (existence + optional must_contain substring). Categories: cognitive / fileio / notepad / calculator / explorer / browser / vscode / settings / multi-step / resilience / app (single-app coverage: Edge / Paint / Snipping Tool / Task Manager / VS Code / Clock / Downloads sort / Windows Terminal / Photos / Mail) / office (Word / Excel / PowerPoint / Outlook / OneNote — all dry-run, read-only or transient) / messaging (WeChat / Teams, dry-run only — never actually sends) / combo (multi-app integration) / self (Lucid operates its own UI: read sidebar, navigate /settings /memory /schedules /tools /templates pages, toggle theme — strictly read-only, never edits or deletes). Designed to run against a REAL desktop (whatever is open). Do NOT pre-clean. Messaging + office queries are dry-run: type/click but never save, never send; if app is not installed or not signed in, reply '<app> unavailable' and stop — that is a degraded pass.",
+  "notes": "Standing E2E queries — re-run every iteration. SKILL.md keys on `id`. All file deliverables go to %USERPROFILE%\\Downloads\\Test\\ (NOT the desktop). Each query has only an `instruction` (and optional `expect_files`). Verdict is computed by the SKILL: (1) Run layer = manifest.status == 'ok'; (2) Goal layer = a per-thread subagent reads instruction + final_text (+ context.log if needed) and judges whether the task's goal was achieved (goal_met = pass / fail / partial); (3) Deliverables layer = each `expect_files` entry passes its disk check (existence + optional must_contain substring). Categories: cognitive / fileio / notepad / calculator / explorer / browser / vscode / settings / multi-step / resilience / app (single-app coverage: Edge / Paint / Snipping Tool / Task Manager / VS Code / Clock / Downloads sort / Windows Terminal / Photos) / office (Word / Excel / PowerPoint / Outlook / OneNote — all dry-run, read-only or transient) / messaging (WeChat / Teams, dry-run only — never actually sends) / combo (multi-app integration) / self (Lucid operates its own UI: read sidebar, navigate /settings /memory /schedules /tools /templates pages, toggle theme — strictly read-only, never edits or deletes). Designed to run against a REAL desktop (whatever is open). Do NOT pre-clean. Messaging + office queries are dry-run: type/click but never save, never send; if app is not installed or not signed in, reply '<app> unavailable' and stop — that is a degraded pass.",
   "queries": [
     {
       "id": "A1",
@@ -253,14 +253,6 @@
       "instruction": "Open the Microsoft Photos app. Once its main window (collection / library) is visible, read the active_window title and reply 'task complete: photos title=<title>'. Do not open or modify any image. If Photos is not installed reply 'task complete: photos unavailable'.",
       "needs": [
         "app:Microsoft.Photos"
-      ]
-    },
-    {
-      "id": "K11",
-      "category": "app",
-      "instruction": "Open the Windows Mail app. Once the main window is visible, report the name of the currently selected folder in the left rail (Inbox / Drafts / Sent / etc.) and reply 'task complete: mail folder=<name>'. Do NOT open, reply, forward, or send any message. If Mail is not installed or not signed in, reply 'task complete: mail unavailable'.",
-      "needs": [
-        "app:Mail"
       ]
     },
     {

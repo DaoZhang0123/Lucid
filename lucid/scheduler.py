@@ -361,10 +361,16 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
                     enabled: bool = True,
                     constraints: dict[str, Any] | None = None,
                     action: str | None = None,
-                    auto_chat_apps: list[str] | None = None) -> dict[str, Any]:
+                    auto_chat_apps: list[str] | None = None,
+                    respect_existing_enabled: bool = False) -> dict[str, Any]:
     """Ensure a schedule with the same (name, instruction, spec.kind) exists.
 
     If found, returns the existing item as-is. Otherwise creates one.
+
+    ``respect_existing_enabled``: when True and a matching item is already
+    present, its current ``enabled`` value is preserved (so the user's manual
+    pause / resume choice is not overwritten on every sidecar startup). The
+    ``enabled`` argument is then only used as the seed for brand-new items.
     """
     n = (name or "").strip()
     ins = (instruction or "").strip()
@@ -394,12 +400,20 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
             auto_chat_apps is not None
             and "auto_chat_apps" not in primary
         )
+        # When the caller asks us to respect the user's manual enable/pause
+        # toggle, treat the existing value as authoritative rather than
+        # forcing the seed value back on every startup.
+        effective_enabled = (
+            bool(primary.get("enabled", True))
+            if respect_existing_enabled
+            else bool(enabled)
+        )
         need_update = (
             (primary.get("name") or "").strip() != n
             or (primary.get("instruction") or "").strip() != ins
             or (primary.get("spec") or {}) != spec
             or str(primary.get("action") or "task").strip().lower() != schedule_action
-            or bool(primary.get("enabled", True)) != bool(enabled)
+            or bool(primary.get("enabled", True)) != effective_enabled
             or (primary.get("constraints") or {}) != cons
             or seed_apps
         )
@@ -410,7 +424,7 @@ def ensure_schedule(name: str, instruction: str, spec: dict[str, Any],
             instruction=instruction,
             spec=spec,
             action=schedule_action,
-            enabled=enabled,
+            enabled=effective_enabled,
             constraints=cons,
         )
         if seed_apps:

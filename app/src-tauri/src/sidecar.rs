@@ -971,6 +971,7 @@ pub async fn read_settings() -> Result<Value, String> {
     let mut v_overlay_y_offset_px: Option<i64> = None;
     let mut v_keep_audio: Option<bool> = None;
     let mut v_hf_endpoint = String::new();
+    let mut ui_locale = String::new();
     let mut section = String::new();
     for line in raw.lines() {
         let l = line.trim();
@@ -1020,6 +1021,9 @@ pub async fn read_settings() -> Result<Value, String> {
                 if let Some(v) = parse_kv(l, "keep_audio")          { v_keep_audio = parse_bool(&v); }
                 if let Some(v) = parse_kv(l, "hf_endpoint")         { v_hf_endpoint = v; }
             }
+            "[ui]" => {
+                if let Some(v) = parse_kv(l, "locale") { ui_locale = v; }
+            }
             _ => {}
         }
     }
@@ -1062,6 +1066,9 @@ pub async fn read_settings() -> Result<Value, String> {
             "overlay_y_offset_px": v_overlay_y_offset_px,
             "keep_audio": v_keep_audio,
             "hf_endpoint": v_hf_endpoint,
+        },
+        "ui": {
+            "locale": ui_locale,
         },
     }))
 }

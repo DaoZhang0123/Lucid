@@ -470,13 +470,20 @@ instruction in this run.
                       "message": f"{type(exc).__name__}: {exc}"})
         # 同样注册（幂等）每日把所有系统托盘图标 IsPromoted=1 的扫描，
         # 让任务栏不再藏 lucid / 微信 / 等图标到 "^" 溢出菜单里。
+        #
+        # 默认 enabled=False：自从我们不再把 visual_notify 作为开箱即用
+        # 的 auto-reply 方案后，普通用户并不需要把所有托盘图标永久展开
+        # （那会让任务栏变得很拥挤）。只有想启用基于视觉的微信/QQ 等
+        # 监听时才需要打开这一项。已经手动启用过的用户不会被回滚，
+        # 通过 respect_existing_enabled=True 保留其当前 enabled 状态。
         try:
             scheduler_mod.ensure_schedule(
                 name=self._TRAY_PROMOTE_NAME,
                 instruction=self._TRAY_PROMOTE_INSTRUCTION,
                 spec={"kind": "daily", "time": "03:35"},
                 action=self._TRAY_PROMOTE_ACTION,
-                enabled=True,
+                enabled=False,
+                respect_existing_enabled=True,
             )
         except Exception as exc:
             _writeln({"event": "tray_promote_schedule_register_failed",

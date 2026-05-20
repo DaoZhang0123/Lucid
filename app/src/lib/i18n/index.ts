@@ -78,7 +78,24 @@ export function saveLocale(value: string): void {
   })();
 }
 
-/** Initialise svelte-i18n once. Safe to call multiple times. */
+/** Initialise svelte-i18n once. Safe to call multiple times.
+ *
+ * Resolution order for the starting locale:
+ *   1. Explicit `initialLocale` argument (rare — used by tests).
+ *   2. `localStorage[LOCALE_STORAGE_KEY]` — the user's last explicit choice
+ *      in the language picker. This wins so returning users never see a
+ *      flash of a different language.
+ *   3. `config.toml [ui].locale` — read asynchronously after sync init so
+ *      that a pre-seeded install (e.g. an admin/distro that ships
+ *      `locale = "zh-CN"` in the bundled config) starts in that language
+ *      on the very first launch. We can't await this synchronously without
+ *      delaying the splash, so we kick it off in the background and call
+ *      `locale.set()` once it resolves (typically <50 ms, before the first
+ *      message renders). The async swap is a no-op if the config locale
+ *      equals what we already picked.
+ *   4. Browser/OS locale from `navigator`.
+ *   5. `FALLBACK_LOCALE` ("en").
+ */
 export function setupI18n(initialLocale?: string): void {
   if (initialized) {
     if (initialLocale) {
@@ -102,6 +119,34 @@ export function setupI18n(initialLocale?: string): void {
   // though the user is reading the app in Chinese (or French).
   if (!initialLocale && !stored && startLocale) {
     saveLocale(startLocale);
+  }
+  // Async second pass: if the user hasn't made an explicit choice yet
+  // (no localStorage), consult config.toml [ui].locale. A pre-seeded
+  // config wins over the navigator guess so distribution channels can
+  // pin the default language.
+  if (!initialLocale && !stored && browser) {
+    void (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const settings = (await invoke("read_settings")) as {
+          ui?: { locale?: string };
+        };
+        const cfg = (settings?.ui?.locale || "").trim();
+        // Treat "" and "auto" as "no preference" — keep what we already have.
+        if (!cfg || cfg.toLowerCase() === "auto") return;
+        // Only switch if the config locale is one we actually ship.
+        if (!(SUPPORTED_LOCALES as readonly string[]).includes(cfg)) return;
+        if (cfg === startLocale) return;
+        await locale.set(cfg);
+        try {
+          window.localStorage.setItem(LOCALE_STORAGE_KEY, cfg);
+        } catch {
+          /* ignore */
+        }
+      } catch {
+        /* sidecar not up, or non-Tauri context — keep navigator pick */
+      }
+    })();
   }
 }
 

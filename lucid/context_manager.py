@@ -220,19 +220,42 @@ class ContextManager:
                     seen += 1
                     if seen >= k:
                         break
-        # Per-app L2 retention: for every distinct app slug that ever showed an
-        # L2, keep at least ``min_per_l2_app`` of its most recent L2 frames.
-        if min_per_l2_app > 0:
+        # Per-app L2 retention: try to keep at least ``min_per_l2_app`` of the
+        # most recent L2 frames for each distinct app slug — but **never let the
+        # total uncompressed L2 count exceed ``keep_per_level["L2"]``**. The
+        # global cap is a hard limit because some LLM providers reject requests
+        # that carry too many full-resolution images (Copilot/Opus has been
+        # observed to return ``no choices`` once payload crosses ~1 MB of
+        # image bytes after base64 — see thread 20260520-103333). When the
+        # per-app additions would breach the cap, drop the OLDEST L2s first so
+        # the most recent state of every app is favoured.
+        l2_cap = max(0, int(keep_per_level.get("L2", 0)))
+        if min_per_l2_app > 0 and l2_cap > 0:
             by_app: dict[str, list[int]] = {}
             for i, (mi, _ci, tag) in enumerate(entries):
                 if tag != "L2":
                     continue
                 slug = _l2_app_slug_for(messages, mi) or "(unknown)"
                 by_app.setdefault(slug, []).append(i)
+            per_app_candidates: set[int] = set()
             for _slug, idxs in by_app.items():
                 # idxs already in ascending order; take the last K.
                 for i in idxs[-min_per_l2_app:]:
-                    keep_idx.add(i)
+                    per_app_candidates.add(i)
+            # Combined L2 keep set = global-recent (already in keep_idx) ∪
+            # per-app candidates, capped at l2_cap by preferring the newest.
+            l2_in_keep = {i for i in keep_idx if entries[i][2] == "L2"}
+            combined = l2_in_keep | per_app_candidates
+            if len(combined) > l2_cap:
+                # Sort by entry index (== chronological order) descending,
+                # take the first ``l2_cap`` — newest wins.
+                combined = set(sorted(combined, reverse=True)[:l2_cap])
+            # Remove any previously-kept L2 that lost the cap race, then add
+            # the survivors.
+            for i in list(keep_idx):
+                if entries[i][2] == "L2" and i not in combined:
+                    keep_idx.discard(i)
+            keep_idx.update(combined)
         if keep_recent_global > 0:
             for i in range(max(0, len(entries) - keep_recent_global), len(entries)):
                 keep_idx.add(i)

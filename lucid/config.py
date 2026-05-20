@@ -102,12 +102,16 @@ class ScreenshotConfig:
     # 对话历史里每个 level 保留最近 K 张截图（装入发给 LLM 的 prompt 里）。
     # 超出部分会被替换为占位文本（携带本地文件名/路径，需要时可反查）。
     keep_recent_l1: int = 1
-    keep_recent_l2: int = 1
-    # L3 (cursor_local) 默认保留最近 2 张：模型主动调 screenshot(level="cursor_local") 后，
+    keep_recent_l2: int = 2
+    # L3 (cursor_local) 默认保留最近 1 张：模型主动调 screenshot(level="cursor_local") 后，
     # 后续步骤可能还要回看刚才那块细节；超出后替换为占位文本，可用 load_local_images 反查。
     keep_recent_l3: int = 1
-    # 每个不同的 active app（按最近 launch_app/focus_window 的 slug 区分）至少保留多少张
-    # 最近的 L2，避免跨 App 任务里旧 App 的 L2 被新 App 的 L2 一次性挤掉。
+    # 每个不同的 active app（按最近 launch_app/focus_window 的 slug 区分）
+    # 期望保留多少张最近的 L2，用于跨 App 任务里旧 App 的 L2 不被新 App 一次
+    # 性挤掉。**硬性约束：永远不会让总 L2 数超过 keep_recent_l2**——后者
+    # 是 LLM provider payload 的硬上限（图片太多 Copilot/Opus 会直接返回
+    # no choices），所以 min_per_l2_app 只在 keep_recent_l2 的额度内尽量
+    # 公平分配，不能突破。
     min_per_l2_app: int = 1
     # ---- launch_app L2 capture (Docs/screenshot.md §13.3) ----
     # After launch_app, wait briefly for the new window to materialise then

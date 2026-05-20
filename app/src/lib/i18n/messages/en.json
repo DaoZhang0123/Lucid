@@ -357,7 +357,7 @@
     "launcher_scan_instruction": "Full daily sweep of Start Menu shortcuts and the Uninstall registry; extracts each app's icon to <user_data>/icons/launchers/ and refreshes the <user_data>/icons/atlas.png collage.",
     "launcher_scan_meta": "Internal scan task (writes PNGs to user data, does not run the Agent)",
     "tray_promote_name": "Always-show all system tray icons",
-    "tray_promote_instruction": "Walks HKCU\\Control Panel\\NotifyIconSettings\\* and sets IsPromoted = 1 on every entry, equivalent to flipping every switch in Personalization → Taskbar → Other system tray icons. Prevents taskbar detection from missing icons hidden in the “^” overflow flyout.",
+    "tray_promote_instruction": "Paused by default. Only enable this if you want vision-based chat auto-reply (e.g. WeChat / QQ) — it keeps every tray icon permanently visible so taskbar detection doesn't miss icons hidden in the “^” overflow flyout. Mechanism: walks HKCU\\Control Panel\\NotifyIconSettings\\* and sets IsPromoted = 1 on every entry, equivalent to flipping every switch in Personalization → Taskbar → Other system tray icons.",
     "tray_promote_meta": "Internal registry tweak (does not run the Agent)",
     "taskbar_channels_legend": "Listening channels",
     "taskbar_channels_hint": "UIA only by default (event-driven, zero token cost). The visual channel is a fallback — only enable it for apps where UIA misses, because every hit burns an LLM confirm. Lucid keeps comparing a periodic UIA snapshot against the event stream and writes misses to uia-misses.jsonl; when an app misses repeatedly across days, doze will recommend turning on the visual fallback for it.",
@@ -468,5 +468,14 @@
     "weekday_fri": "Fri",
     "weekday_sat": "Sat",
     "weekday_sun": "Sun"
+  },
+  "disclaimer": {
+    "title": "Lucid Terms of Use",
+    "version_changed": "updated — please re-read",
+    "scroll_hint": "Please scroll to the bottom to enable the acknowledgement.",
+    "checkbox": "I have read and accept the terms above. I use Lucid at my own risk.",
+    "decline": "Decline and exit",
+    "accept": "Accept and continue",
+    "body": "Lucid is an experimental open-source vision agent. Please read carefully before continuing.\n\n1. AUTONOMOUS CONTROL\nLucid uses a Large Language Model (LLM) to autonomously drive your mouse, keyboard, and clipboard. It can open any app, send messages, read and write files, and access the network on your behalf. The LLM may misread the screen, click the wrong button, send the wrong message, or delete the wrong file. You are solely responsible for every action Lucid performs under your account and for every resulting consequence.\n\n2. DATA TRANSMISSION\nLucid sends screenshots, window titles, and your task instructions to the LLM provider you have configured (Anthropic, GitHub Copilot, an OpenAI-compatible proxy, etc.). Screenshots may contain personal information, chat history, password fields, bank card numbers, and confidential work content. Do not use Lucid while sensitive information is visible on screen.\n\n3. EMERGENCY STOP\nPress Ctrl+Alt+Esc at any time to immediately stop the current task and reclaim input control. You can also force-quit from the system tray icon.\n\n4. NOT SUITABLE FOR\n  • Online banking, payment passwords, or fund transfer confirmations.\n  • Communication that involves another person's privacy, unless you have their consent.\n  • Any operation with irreversible consequences (deleting databases, git push --force, publishing on social media, sending contracts, etc.) — use only under direct supervision.\n  • Windows that require administrator privileges (UAC, Group Policy) are already blocked.\n\n5. PROVIDER ACCEPTABLE USE\nYou must use your own LLM API key and comply with the provider's Acceptable Use Policy (Anthropic AUP, OpenAI Usage Policies, GitHub Copilot Terms, etc.). Lucid does not relay, store, or proxy your API credentials.\n\n6. NO WARRANTY\nLucid is provided 'AS IS' under the MIT License, without warranties of any kind, express or implied, including but not limited to merchantability, fitness for a particular purpose, or data integrity. The authors and contributors shall not be liable for any direct or indirect damages arising from the use of this software.\n\n7. LOCAL LAW\nDo not use Lucid for any activity that violates the laws of your jurisdiction, including but not limited to unauthorized access, scraping protected content, automated harassment, or evasion of anti-abuse mechanisms.\n\nBy clicking 'Accept and continue' you acknowledge that you have read, understood, and agreed to these terms."
   }
 }

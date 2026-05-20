@@ -1208,7 +1208,19 @@ class Agent:
                 else:
                     coord_text = f"[follow-up image] {label}"
                 content.append({"type": "text", "text": coord_text})
-                content.append({"type": "image_url", "image_url": {"url": _data_url(meta_png)}})
+                # Route follow-up image through the same JPEG path as primary
+                # screenshots when we have an attached_capture (launch_app L2,
+                # click-verify L2 …). L2 grid overlays compress poorly as PNG
+                # (≈0.8 byte/px due to colored gridlines) — a 1568×624 paint
+                # L2 came out 824 KB, blowing payload after a few turns and
+                # causing Copilot/Opus to return no choices. JPEG q=88 brings
+                # the same image down to ~100-150 KB.
+                if meta_cap is not None:
+                    block, sent = self._capture_image_part(meta_cap)
+                    self._record_img(sent, None)
+                    content.append(block)
+                else:
+                    content.append({"type": "image_url", "image_url": {"url": _data_url(meta_png)}})
 
             for idx, prev_png in enumerate(step_preview_pngs, start=1):
                 content.append({

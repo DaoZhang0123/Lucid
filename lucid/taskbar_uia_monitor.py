@@ -879,9 +879,17 @@ class TaskbarUiaMonitor:
             )
             prev_sweep_unread = self._sweep_prev_unread.get(app, False)
 
-            # Only log to misses.jsonl when this snapshot is a miss vs the
-            # event channel — useful as a diagnostic, even after promotion.
-            if not event_covered_recently:
+            # Only log to misses.jsonl on the RISING EDGE — when this app
+            # first appears as unread in a sweep AND the event channel
+            # didn't already cover it within the last interval. Without the
+            # edge gate, an app that flashes unread for N minutes writes
+            # ~2 rows/sec for the whole flash duration (one tracked WeChat
+            # window can fill the file with ~50 KB of identical rows in a
+            # single afternoon — exactly the bloat the user flagged). With
+            # the gate, one real miss = one row, which matches the semantics
+            # of `_emit_confirmed` promotion below and keeps the file useful
+            # as a diagnostic.
+            if not event_covered_recently and not prev_sweep_unread:
                 misses.append({
                     "ts_ms": now_ms,
                     "app_name": app,

@@ -1,0 +1,107 @@
+Lucid - Terms of Use / 使用须知
+================================================================================
+
+Lucid is an experimental open-source vision agent. Please read carefully
+before installing.
+
+Lucid 是一款实验性的开源视觉代理软件。请在安装前仔细阅读以下条款。
+
+--------------------------------------------------------------------------------
+ENGLISH
+--------------------------------------------------------------------------------
+
+1. AUTONOMOUS CONTROL
+   Lucid uses a Large Language Model (LLM) to autonomously drive your mouse,
+   keyboard, and clipboard. It can open any app, send messages, read and
+   write files, and access the network on your behalf. The LLM may misread
+   the screen, click the wrong button, send the wrong message, or delete the
+   wrong file. You are solely responsible for every action Lucid performs
+   under your account and for every resulting consequence.
+
+2. DATA TRANSMISSION
+   Lucid sends screenshots, window titles, and your task instructions to the
+   LLM provider you have configured (Anthropic, GitHub Copilot, an
+   OpenAI-compatible proxy, etc.). Screenshots may contain personal
+   information, chat history, password fields, bank card numbers, and
+   confidential work content. Do not use Lucid while sensitive information is
+   visible on screen.
+
+3. EMERGENCY STOP
+   Press Ctrl+Alt+Esc at any time to immediately stop the current task and
+   reclaim input control. You can also force-quit from the system tray icon.
+
+4. NOT SUITABLE FOR
+   - Online banking, payment passwords, or fund transfer confirmations.
+   - Communication that involves another person's privacy, unless consented.
+   - Any operation with irreversible consequences (deleting databases,
+     git push --force, publishing on social media, sending contracts, etc.)
+     - use only under direct supervision.
+   - Windows that require administrator privileges (UAC, Group Policy) are
+     already blocked.
+
+5. PROVIDER ACCEPTABLE USE
+   You must use your own LLM API key and comply with the provider's
+   Acceptable Use Policy (Anthropic AUP, OpenAI Usage Policies, GitHub
+   Copilot Terms, etc.). Lucid does not relay, store, or proxy your API
+   credentials.
+
+6. NO WARRANTY
+   Lucid is provided "AS IS" under the MIT License, without warranties of
+   any kind, express or implied, including but not limited to
+   merchantability, fitness for a particular purpose, or data integrity.
+   The authors and contributors shall not be liable for any direct or
+   indirect damages arising from the use of this software.
+
+7. LOCAL LAW
+   Do not use Lucid for any activity that violates the laws of your
+   jurisdiction, including but not limited to unauthorized access, scraping
+   protected content, automated harassment, or evasion of anti-abuse
+   mechanisms.
+
+--------------------------------------------------------------------------------
+中文
+--------------------------------------------------------------------------------
+
+1. 自主控制风险
+   Lucid 通过大语言模型（LLM）自动控制您的鼠标、键盘和剪贴板。它可以代您
+   打开任何应用、发送消息、读写文件、访问网络。LLM 可能误判屏幕内容、误点
+   按钮、误发消息、误删文件。您对 Lucid 在您账户下产生的所有操作及其后果
+   承担全部责任。
+
+2. 数据外发
+   Lucid 会把屏幕截图、当前窗口标题、您输入的任务指令发送给您所配置的 LLM
+   服务商（Anthropic / GitHub Copilot / OpenAI 兼容代理等）。截图中可能
+   包含个人信息、聊天记录、密码输入框、银行卡号、工作机密。请勿在屏幕上
+   能看到敏感信息时使用 Lucid。
+
+3. 紧急停止
+   随时按 Ctrl+Alt+Esc 可立刻停止当前任务并夺回输入控制权。您也可以通过
+   系统托盘图标右键强制退出。
+
+4. 不适用场景
+   - 网银、支付密码、资金转账确认。
+   - 涉及他人隐私的通讯（除非已获对方同意）。
+   - 任何带有不可撤销后果的操作（删除数据库、git push --force、发布
+     社交媒体、签署合同等），请仅在监护下使用。
+   - 需要管理员权限的窗口（UAC、组策略）已被禁用。
+
+5. 服务条款合规
+   您必须使用自有的 LLM API Key，并遵守对应服务商的可接受使用政策
+   （Anthropic AUP、OpenAI Usage Policies、GitHub Copilot Terms 等）。
+   Lucid 不代理、不存储、不转发您的 API 凭证。
+
+6. 无担保
+   Lucid 按"现状"提供（MIT 协议），不对适销性、特定用途适用性、数据完整
+   性作任何明示或默示担保。因使用本软件造成的直接或间接损失，开发者及
+   贡献者不承担任何责任。
+
+7. 遵守当地法律
+   请勿使用 Lucid 进行任何违反所在司法管辖区法律的行为，包括但不限于：
+   未授权访问、爬取受保护内容、自动化骚扰、规避反滥用机制等。
+
+================================================================================
+By clicking "I Agree" you acknowledge that you have read, understood, and
+agreed to these terms.
+
+点击"我同意"，即表示您已阅读、理解并同意以上全部条款。
+================================================================================

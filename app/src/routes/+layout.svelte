@@ -3,6 +3,7 @@
   import { setupI18n } from "$lib/i18n";
   import { setupTheme } from "$lib/theme";
   import ConfirmModal from "$lib/ConfirmModal.svelte";
+  import DisclaimerGate from "$lib/DisclaimerGate.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import { initVoice } from "$lib/voice";
@@ -67,6 +68,9 @@
     </div>
   </div>
   <ConfirmModal />
+  {#if appWindow.label === "main"}
+    <DisclaimerGate />
+  {/if}
 {/if}
 
 <style>
