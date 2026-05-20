@@ -78,9 +78,13 @@ class LLMConfig:
     # top_p can cause repetition loops, so prefer adjusting only one.
     temperature: float | None = 0.2
     top_p: float | None = 1.0
-    # 发往模型的对话历史里最多保留多少张截图（含起始图）。
-    # 超出后旧图被替换成一段占位文字，避免 413 Request Entity Too Large。
-    keep_recent_screenshots: int = 0
+    # 发往模型的对话历史里最多保留多少张截图（不计 L0 icon_atlas，后者总是保留）。
+    # 这是一个 **硬天花板**：即使按 level / 按 app 的保留规则会保留更多，超出
+    # 这个数量的旧图也会被强制压缩/丢弃为占位文字。设为 0 关闭硬天花板（只按
+    # per-level 规则）。默认 4 = 1 L1 + 2 L2 + 1 L3 的稳态，可吸收偶尔的瞬时
+    # 峰值同时给 Copilot/Opus content filter 留出余量。见 thread-20260520-132241
+    # O2 — content-filter 在累积 vision payload 上误判。
+    keep_recent_screenshots: int = 4
     # 单次 chat() 调用的应用层 wall-clock 兜底。SDK 自己的 timeout 在连接 hang
     # 或 chunked 上游静默时不一定真触发，daemon 线程到点视为 connection-style
     # 错误进入下一轮退避重试。设大于 _CHAT_TIMEOUT_SEC (90s) 即可。

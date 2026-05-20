@@ -5,7 +5,7 @@ TITLE = "Microsoft PowerPoint"
 
 TIPS = """\
 - [seed · launch] Use `launch_app(name='powerpoint')` — resolves the `powerpnt` App Paths alias via `start powerpnt`. Do NOT `where powerpnt` / `Get-ChildItem -Recurse`.
-- [seed · cold-start] Office cold start shows a splash for 3–8s before the start screen renders. After `launch_app` returns, the screenshot you take in the next step is the canonical "PPT is ready" check. Do NOT issue extra `launch_app` retries when the title bar already contains "PowerPoint".
+- [seed · cold-start-budget] Office cold start can take **30–90s** on first launch after boot or with slow SSDs/many add-ins — not the 3–8s warm path. **If `launch_app('powerpoint')` returns a timeout error, do NOT retry `launch_app` and do NOT immediately retry `focus_window` — PowerPoint is still mid-init and the second `launch_app` will often wedge the Win32 enum call for another 25s.** Fallback: `run_shell({'command':'start powerpnt', 'shell':'cmd', 'timeout_s':10})` — fire-and-forget. Then take one `screenshot(level='active_window')` per step; the title-bar substring "PowerPoint" is the canonical "ready" signal.
 - [seed · start-screen] On launch PowerPoint shows the start screen. **Press `Enter` to open a Blank Presentation — do NOT click the "Blank Presentation" thumbnail.** The thumbnail's hit region drifts with window size / theme / template-row scroll position; pixel-clicks miss repeatedly (E2E 20260517 O3 — 393s). Enter activates the same "new blank deck" path regardless of layout. The empty deck has the title-bar substring "演示文稿1 - PowerPoint" / "Presentation1 - PowerPoint".
 - [seed · title-placeholder] On slide 1, the "Click to add title" placeholder is centred near the top half. Click it once to enter edit mode, then `type` the title text. To exit text mode press Esc.
 - [seed · close] Ctrl+W closes the deck; if a Save prompt appears use `key text='alt+s'` for Save / `alt+n` for Don't Save.
@@ -19,5 +19,7 @@ LAUNCHER = {
     "exe": "powerpnt",
     "process": "POWERPNT.EXE",
     "window_title_re": r"PowerPoint",
-    "launch_timeout_s": 8.0,
+    # Bumped from 8.0 → 20.0: Office cold-start can take 15-20s before the
+    # window is enumerable. Outer launch_app watchdog is 25s. See excel.py.
+    "launch_timeout_s": 20.0,
 }

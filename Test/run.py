@@ -21,6 +21,7 @@ the sidecar / config.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import os
 import subprocess
@@ -71,6 +72,22 @@ def _snapshot_expect_files(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "must_contain": spec.get("must_contain"),
             "snapshot_ms": _now_ms(),
         }
+        # Glob support: when path contains wildcard chars, resolve to the
+        # NEWEST matching file (by mtime). This lets a query stamp its
+        # output filename (e.g. `lucid-e2e-P3-<STAMP>.xlsx`) so a stale
+        # file from a prior run can't false-pass the deliverable check.
+        if any(ch in path for ch in ("*", "?", "[")):
+            matches = glob.glob(path)
+            if matches:
+                matches.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+                path = matches[0]
+                rec["resolved"] = path
+                rec["glob_matches"] = len(matches)
+            else:
+                rec["exists"] = False
+                rec["glob_matches"] = 0
+                out.append(rec)
+                continue
         try:
             st = os.stat(path)
             rec["exists"] = True

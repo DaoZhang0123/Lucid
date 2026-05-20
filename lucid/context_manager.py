@@ -195,6 +195,13 @@ class ContextManager:
             global L2 budget.
           * additionally: most recent ``keep_recent_global`` blocks overall.
 
+        ``keep_recent_global`` is also enforced as a **hard ceiling**: when
+        > 0, only the most recent ``keep_recent_global`` non-L0 image blocks
+        survive uncompressed, regardless of what per-level / per-app rules
+        would otherwise keep. L0 atlases are exempt (small and always
+        useful). This caps total uncompressed image payload, which is what
+        Copilot/Opus's ``no choices`` content filter actually trips on.
+
         Everything else is recompressed to JPEG @ ``image_recompress_quality``
         and downscaled to ``image_recompress_max_long_edge``. If
         ``image_recompress_enabled`` is False or
@@ -259,6 +266,19 @@ class ContextManager:
         if keep_recent_global > 0:
             for i in range(max(0, len(entries) - keep_recent_global), len(entries)):
                 keep_idx.add(i)
+            # Hard ceiling: drop any kept non-L0 entries older than the most
+            # recent ``keep_recent_global`` images. L0 (icon atlases) are
+            # exempt — they're small and always useful for the launcher. This
+            # is the actual safeguard against Copilot/Opus content-filter
+            # ``no choices`` rejection on accumulated vision payload.
+            non_l0_indices = [i for i, e in enumerate(entries) if e[2] != "L0"]
+            if len(non_l0_indices) > keep_recent_global:
+                survivors_non_l0 = set(non_l0_indices[-keep_recent_global:])
+                for i in list(keep_idx):
+                    if entries[i][2] == "L0":
+                        continue
+                    if i not in survivors_non_l0:
+                        keep_idx.discard(i)
 
         recompressed = 0
         dropped = 0

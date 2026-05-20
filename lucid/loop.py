@@ -40,6 +40,53 @@ def _data_url(png: bytes, mime: str = "image/png") -> str:
     return f"data:{mime};base64," + base64.b64encode(png).decode("ascii")
 
 
+def _strip_old_images(
+    messages: list[dict[str, Any]], *, keep_recent: int = 1
+) -> list[dict[str, Any]]:
+    """Return a shallow copy of ``messages`` with all but the most recent
+    ``keep_recent`` ``image_url`` parts replaced by a short text placeholder.
+
+    Used as a last-resort retry payload when the upstream LLM returns
+    ``no choices`` repeatedly — stripping vision input frequently unblocks the
+    content filter (see ``_chat_with_retry`` for context). The caller's list
+    is not mutated; only fresh message dicts / content lists are emitted for
+    the touched entries.
+    """
+    # First pass: collect (mi, ci) of every image part in chronological order.
+    img_locs: list[tuple[int, int]] = []
+    for mi, m in enumerate(messages):
+        c = m.get("content") if isinstance(m, dict) else None
+        if not isinstance(c, list):
+            continue
+        for ci, part in enumerate(c):
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                img_locs.append((mi, ci))
+    if not img_locs:
+        return messages
+    keep = max(0, int(keep_recent))
+    drop_set = set(img_locs[: max(0, len(img_locs) - keep)])
+    if not drop_set:
+        return messages
+    # Build a shallow-copied list with only the affected messages rewritten.
+    drop_by_msg: dict[int, set[int]] = {}
+    for mi, ci in drop_set:
+        drop_by_msg.setdefault(mi, set()).add(ci)
+    out: list[dict[str, Any]] = list(messages)
+    for mi, ci_set in drop_by_msg.items():
+        m = out[mi]
+        new_content = []
+        for ci, part in enumerate(m["content"]):
+            if ci in ci_set:
+                new_content.append({
+                    "type": "text",
+                    "text": "[image dropped on retry to bypass content filter]",
+                })
+            else:
+                new_content.append(part)
+        out[mi] = {**m, "content": new_content}
+    return out
+
+
 class CancelledError(RuntimeError):
     """外部取消驱动时抛出（例如 sidecar.cancel）。"""
 
@@ -615,11 +662,20 @@ class Agent:
         attempt = 0
         while True:
             result_box: dict[str, Any] = {}
+            # 对 no-choices 第 3 次起的重试（attempts >= 2），剥掉除最近一张外的
+            # 所有图片再发——content filter 的常见触发面之一是 vision 输入的累积
+            # 内容（中文聊天名、富界面截图叠加大段 tool error 文本），完全相同的
+            # payload 再发往往同样被 reject。剥图后通常一次就过；模型损失少量
+            # 历史视觉上下文，但比整轮 task 挂掉强。见 thread-20260520-132241 O2。
+            if no_choices_attempts >= 2:
+                msgs_for_call = _strip_old_images(messages, keep_recent=1)
+            else:
+                msgs_for_call = messages
 
-            def _runner() -> None:
+            def _runner(_msgs: list[dict[str, Any]] = msgs_for_call) -> None:
                 try:
                     result_box["value"] = self.client.chat(
-                        messages=messages,
+                        messages=_msgs,
                         tools=tools,
                         max_tokens=self.cfg.llm.max_tokens,
                         temperature=self.cfg.llm.temperature,
