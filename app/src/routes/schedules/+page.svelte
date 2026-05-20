@@ -596,13 +596,25 @@
       </label>
     {/if}
 
+    {#if action === "visual_notify" && !taskbarAllowVisual}
+      <fieldset class="trigger no-poll">
+        <legend>{$_("schedules.taskbar_no_poll_legend")}</legend>
+        <p class="sub-hint">{$_("schedules.taskbar_no_poll_hint")}</p>
+      </fieldset>
+    {:else}
     <fieldset class="trigger">
       <legend>{$_("schedules.trigger_legend")}</legend>
-      <label><input type="radio" bind:group={kind} value="hourly" /> {$_("schedules.trigger_hourly")}</label>
-      <label><input type="radio" bind:group={kind} value="daily" /> {$_("schedules.trigger_daily")}</label>
-      <label><input type="radio" bind:group={kind} value="weekly" /> {$_("schedules.trigger_weekly")}</label>
-      <label><input type="radio" bind:group={kind} value="secondly" /> {$_("schedules.trigger_secondly")}</label>
-      <label><input type="radio" bind:group={kind} value="minutely" /> {$_("schedules.trigger_minutely")}</label>
+      {#if action === "visual_notify"}
+        <p class="sub-hint">{$_("schedules.taskbar_visual_poll_hint")}</p>
+        <label><input type="radio" bind:group={kind} value="secondly" /> {$_("schedules.trigger_secondly")}</label>
+        <label><input type="radio" bind:group={kind} value="minutely" /> {$_("schedules.trigger_minutely")}</label>
+      {:else}
+        <label><input type="radio" bind:group={kind} value="hourly" /> {$_("schedules.trigger_hourly")}</label>
+        <label><input type="radio" bind:group={kind} value="daily" /> {$_("schedules.trigger_daily")}</label>
+        <label><input type="radio" bind:group={kind} value="weekly" /> {$_("schedules.trigger_weekly")}</label>
+        <label><input type="radio" bind:group={kind} value="secondly" /> {$_("schedules.trigger_secondly")}</label>
+        <label><input type="radio" bind:group={kind} value="minutely" /> {$_("schedules.trigger_minutely")}</label>
+      {/if}
 
       <div class="trigger-detail">
         {#if kind === "secondly"}

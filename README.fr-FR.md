@@ -12,15 +12,25 @@ Un véritable assistant IA qui agit comme un humain sur ordinateur : sans MCP, c
 
 **Langues :** [English](README.md) · [简体中文](README.zh-CN.md) · **Français**
 
+<!-- VIDÉO DE DÉMO : déposez le fichier ici, p.ex. ![demo](docs/demo.mp4) ou une balise HTML <video> -->
+*▶ Vidéo de démonstration bientôt disponible.*
+
 ```
-Vous :   « Ouvre Microsoft Teams et envoie-moi 'Hello' à moi-même »
+Teams (entrant) :  « Transforme le doc sur mon bureau (proposal.docx)
+                    en un beau jeu de diapositives et renvoie-le-moi. »
           ↓
-Lucid :  *prend une capture d'écran*
-          *voit le bureau*
-          → launch_app("Microsoft Teams")
-          → click(conversation avec moi-même)
-          → type("Hello")  → key("enter")
-          → « Fait. »
+Lucid :  *le moniteur de la barre des tâches voit la nouvelle notif Teams*
+          *un LLM léger confirme : vrai message, app = Microsoft Teams*
+          → launch_app("Microsoft Teams")  → ouvre la conversation, lit la demande
+          → read_file("~/Desktop/proposal.docx")     # extrait le plan
+          → pas encore de compétence PPT ? on la prend dans le dépôt skills d'Anthropic :
+              run_shell("git clone https://github.com/anthropics/skills ~/.lucid/skills")
+              read_file("~/.lucid/skills/pptx/SKILL.md")   # apprend à s'en servir
+              learn_tip("utiliser anthropics/skills/pptx pour bâtir un deck depuis un plan docx")
+          → run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")
+          → launch_app("Microsoft Teams")  → click(chat) → attach(proposal.pptx)
+          → type(« Deck en pièce jointe — dis-moi si tu veux des retouches. ») → key("enter")
+          → « Fait. Répondu dans Teams avec proposal.pptx. »
 ```
 
 Lucid est livré comme une appli de bureau Windows (`lucid.exe` comme moteur + GUI Tauri/WebView2). Voici ce qu'il sait déjà faire et une bonne brassée d'exemples de prompts.
@@ -40,124 +50,9 @@ Lucid est livré comme une appli de bureau Windows (`lucid.exe` comme moteur + G
 
 ---
 
-## Ce que Lucid sait faire aujourd'hui
-
-### Vous parle
-- Coquille de chat conversationnelle (Tauri 2 + SvelteKit + WebView2), icône de barre des tâches, raccourci global d'arrêt d'urgence (`Ctrl+Alt+Esc`).
-- UI trilingue — **English / 简体中文 / Français** (svelte-i18n), bascule dans Paramètres.
-- Trois backends LLM en un clic : **Anthropic** direct · **GitHub Copilot** OAuth · **proxy compatible OpenAI** (LiteLLM, OpenClaw, …).
-
-### Regarde votre écran, intelligemment
-- **Per-Monitor V2 DPI** + coordonnées virtuelles multi-écrans.
-- **Pyramide de captures à trois niveaux** que le modèle choisit lui-même : L1 plein écran, L2 fenêtre active, L3 voisinage du curseur (resserré par UIA — colle au vrai cadre de l'élément UI sous le curseur, pas une bête boîte 200×200).
-- Gestion de contexte intelligente : fenêtres de rétention par niveau + recompression JPEG des anciennes captures + résumé automatique quand le contexte dépasse le budget du modèle.
-- **Mode démarrage léger :** quand fournir le L1 initial n'apporte rien, Lucid communique seulement la taille du bureau et laisse le modèle décider s'il doit regarder.
-
-### Pilote votre vrai bureau
-- Outil `computer` complet : clic / glisser / molette / raccourci / `type` compatible chinois (via presse-papiers — contourne complètement l'IME).
-- Utilitaires « zero-GUI » intégrés pour ne pas avoir à *cliquer* pour des trivialités : `read_file` / `write_file` / `run_shell` (sortie capturée, console masquée, timeout 20 s).
-- Lancement natif : `launch_app("VS Code")` utilise les API Windows (raccourcis Menu Démarrer + scan des manifestes UWP MSIX), épingle la fenêtre active et évite l'aller-retour « cherche l'icône ».
-
-### Surveille pour vous quand vous êtes ailleurs
-- **Notification visuelle de la barre des tâches** — diff dHash périodique sur la barre ; si un changement candidat apparaît, un appel LLM bon marché confirme s'il s'agit d'un nouveau message et *quelle* appli l'a déclenché. **Liste blanche d'applis** par planification — Lucid ne touche que ce que vous autorisez.
-- **Auto-réponse** avec une **AUTO-REPLY SAFETY POLICY** codée en dur dans le system prompt : ne jamais divulguer d'infos perso ou de codes, ne jamais cliquer sur payer / accepter / installer, ne jamais accepter fichiers / demandes d'amis / partage d'écran, escalade-et-arrêt en cas d'ambiguïté. *Contrairement aux bots WeChat officiels (qui demandent une approbation, n'ont pas d'état persistant et ne peuvent pas contrôler les messages sortants), Lucid pilote votre vrai client WeChat — vous obtenez donc une vraie auto-réponse autonome et intelligente.*
-
-### Planifications et modèles
-- **Planifications** — modes cron + ponctuel + visual_notify. Pause / reprise / « exécuter maintenant ».
-- **Modèles** — sauvegardez les instructions courantes, lancez en un clic.
-- **Persistance de contexte par thread** — chaque réponse dans le même thread réutilise les messages précédents (après compression d'images).
-
-### Apprend dans le temps
-- **`memory.md`** — mémoire long terme injectée dans le system prompt ; Lucid peut appeler `remember(text)` pour écrire, vous éditez sur la page Mémoire.
-- **`tools.md`** — bibliothèque de « trucs et astuces » qui évolue ; Lucid appelle `learn_tip(text)` après une exécution réussie ou ratée.
-- **Fichier par appli** (`apps/<slug>.py`) — déposer un fichier = apprendre une nouvelle appli à Lucid, avec lanceur custom + tips.
-- **Apprentissage en veille** — quand vous êtes inactif depuis 5 minutes, Lucid réfléchit en silence sur les threads terminés, en extrait des astuces et des *icon proposals* (petites icônes recadrées qu'il a repérées ; vous les acceptez sur la page Doze, il apprend ainsi le mapping icône → appli).
-- **Auto-diagnostic** — moniteurs / DPI / alias Win+R / décalage des coordonnées de clic.
-
-### Honnête sur lui-même
-- Logs par exécution dans `~/.lucid/logs/threads/<thread>/` — `events.jsonl`, `messages.json`, toutes les captures, dump complet du contexte LLM.
-- Trois niveaux d'autonomie : `full` / `confirm_critical` / `confirm_each`. Liste de mots-clés HITL (`delete`, `format`, `transfer`, `confirm payment`, …) qui intercepte les actions dangereuses même en `full`.
-
----
-
-## Exemples de prompts — à quoi ça sert vraiment
-
-Ce sont de vraies phrases à coller dans le chat. Ajustez chemins / noms. Le niveau d'autonomie se règle dans le pied de page.
-
-### 📝 Bureautique
-
-> *« Ouvre le Bloc-notes, tape les notes de réunion que je viens de dicter, enregistre-les en `D:\notes\2026-05-08.txt`. »*
-
-> *« Ouvre `expenses.xlsx` sur mon bureau, descends en bas de la colonne C, dis-moi la somme. »*
-
-> *« Prends le PDF actuellement ouvert dans Edge, résume l'executive summary en 5 puces, colle-les dans un nouveau brouillon Outlook pour alice@…, sujet `Résumé PDF`. »*
-
-### 💬 Messagerie pendant que vous êtes absent (avec une planification)
-
-Créez une **planification → action : visual_notify**, liste blanche `WeChat` + `Microsoft Teams`. Instruction par défaut :
-
-> *« Ouvre le client de messagerie correspondant, lis le dernier message non lu, et envoie une réponse courte et polie si c'est sans risque. »*
-
-L'`AUTO-REPLY SAFETY POLICY` (côté system prompt) impose : pas de fuite d'infos perso, pas d'acceptation de fichier / lien / code, aucune autorisation, escalade-et-arrêt si la conversation devient bizarre.
-
-### ⏰ Tâches récurrentes (cron)
-
-Action `task` avec déclencheur quotidien / hebdo / interval :
-
-> *« Tous les jours ouvrés à 9 h — ouvre Outlook, scanne les non-lus, écris-moi un résumé en 3 lignes en toast. »*
-
-> *« Tous les vendredis 17 h — ouvre `D:\Reports\template.xlsx`, mets la date de la semaine en A1, enregistre sous `weekly-<YYYY-MM-DD>.xlsx` dans le même dossier. »*
-
-> *« Toutes les 30 minutes — regarde la barre git de Visual Studio Code ; si la branche affiche `*` (non sauvegardé), pousse-moi un toast. »*
-
-### 🌐 Navigateur / recherche
-
-> *« Ouvre Chrome, cherche "meilleurs claviers ergonomiques 2026", ouvre les 3 premiers résultats dans des onglets, donne-moi un paragraphe de résumé pour chacun. »*
-
-> *« Dans l'onglet GitHub déjà connecté, va sur l'issue #142 du dépôt `acme/foo`, colle le commentaire que je vais dicter, clique Comment. »*
-
-### 🛠️ Fichiers / système
-
-> *« Dans `D:\Photos\unsorted`, renomme tous les fichiers `IMG_*.JPG` en `2026-05-08-<NNNN>.jpg` en gardant l'ordre. »*
-
-> *« Quels sont les 5 plus gros fichiers sous `C:\Users\me\Downloads` ? »* (Lucid utilisera `run_shell`, pas la souris.)
-
-### 🎮 Jeux légers / applis de niche
-
-> *« Joue un tour dans Civilization VI : recherche Poterie, construit un Travailleur, finis le tour. »*
-
-> *« Dans FL Studio, mute la piste 3, exporte le projet vers `D:\music\demo.wav`. »*
-
-(Les UI de jeux sont visuellement particulières — mettez l'autonomie sur `confirm_each` la première fois pour avancer pas à pas.)
-
-### 🧪 Sanity checks (sans souris ni clavier)
-
-> *« Prends une capture plein écran et dis-moi combien de fenêtres sont visibles. »*
-
-> *« Lis `~/.lucid/config.toml` et dis-moi quel provider LLM est actif. »* (Utilise le meta tool `read_file`, pas de clic.)
-
----
-
 ## Architecture, en bref
 
-```
-┌──────────── Tauri WebView (SvelteKit) ─────────────┐
-│  Chat │ Planifs │ Modèles │ Mémoire │ Doze │ ⚙     │
-└──────────────────────┬─────────────────────────────┘
-                       │ Tauri IPC
-┌──────────────────────┴─────────────────────────────┐
-│   Coquille Rust — cycle de vie sidecar, params,    │
-│   tray                                              │
-└──────────────────────┬─────────────────────────────┘
-                       │ JSON-RPC sur stdio
-┌──────────────────────┴─────────────────────────────┐
-│  Sidecar Python (lucid.exe)                       │
-│  ReAct · planifs · monitor barre · doze · mémoire   │
-│        ↓ captures mss          ↓ saisie pyautogui   │
-│        ↓ HTTP                                       │
-│   Anthropic API   ·   GitHub Copilot   ·   proxy    │
-└─────────────────────────────────────────────────────┘
-```
+![Architecture de Lucid](docs/arch.fr-FR.png)
 
 Données utilisateur : `~/.lucid/` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
 

@@ -12,15 +12,25 @@ A true "human-like computer-use" AI assistant: no MCP, direct control of your Wi
 
 **Languages:** **English** · [简体中文](README.zh-CN.md) · [Français](README.fr-FR.md)
 
+<!-- DEMO VIDEO: drop the file here, e.g. ![demo](docs/demo.mp4) or an HTML <video> tag -->
+*▶ Demo video coming soon.*
+
 ```
-You:    "Open Microsoft Teams and send 'Hello' to myself"
+Teams (incoming):  "Hey, turn the doc on my desktop (proposal.docx)
+                    into a polished slide deck and send it back."
           ↓
-Lucid:   *takes a screenshot*
-          *sees the desktop*
-          → launch_app("Microsoft Teams")
-          → click(chat with myself)
-          → type("Hello")  → key("enter")
-          → "Done."
+Lucid:   *taskbar monitor sees the new Teams notification*
+          *cheap LLM confirms: it's a real message, app = Microsoft Teams*
+          → launch_app("Microsoft Teams")  → open the chat, read the request
+          → read_file("~/Desktop/proposal.docx")     # extract outline
+          → no PPT-authoring skill yet? grab one from Anthropic's skills repo:
+              run_shell("git clone https://github.com/anthropics/skills ~/.lucid/skills")
+              read_file("~/.lucid/skills/pptx/SKILL.md")   # learn how to use it
+              learn_tip("use anthropics/skills/pptx to build decks from docx outlines")
+          → run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")
+          → launch_app("Microsoft Teams")  → click(chat) → attach(proposal.pptx)
+          → type("Deck attached — let me know if you'd like edits.") → key("enter")
+          → "Done. Replied in Teams with proposal.pptx."
 ```
 
 Lucid ships as a Windows desktop app (`lucid.exe` engine + Tauri/WebView2 GUI). Below is what it can already do today and a generous helping of example prompts.
@@ -40,122 +50,9 @@ Lucid ships as a Windows desktop app (`lucid.exe` engine + Tauri/WebView2 GUI). 
 
 ---
 
-## What Lucid can do today
-
-### Talks to you
-- Conversational chat shell (Tauri 2 + SvelteKit + WebView2), system tray, global emergency hotkey (`Ctrl+Alt+Esc`).
-- Trilingual UI — **English / 简体中文 / Français** (svelte-i18n), switch in Settings.
-- Three LLM backends in one click: **Anthropic** direct · **GitHub Copilot** OAuth · **OpenAI-compatible proxy** (LiteLLM, OpenClaw, …).
-
-### Watches your screen, intelligently
-- **Per-Monitor V2 DPI** + multi-monitor virtual coordinates.
-- **Three-level screenshot pyramid** the model picks from: L1 fullscreen, L2 active window, L3 cursor neighborhood (UIA-tightened — clamps L3 to whatever UI element is under the cursor, not a dumb 200×200 box).
-- Smart context manager: pyramid retention windows + JPEG re-compression of old screenshots + auto-summarisation when the context blows past the model's budget.
-- **Empty-screenshot model:** when feeding the initial L1 isn't useful, Lucid tells the model the desktop dimensions and lets it decide whether to look.
-
-### Drives your real desktop
-- Full `computer` tool: click / drag / scroll / hotkey / Chinese-safe `type` (clipboard route — bypasses IME entirely).
-- Built-in zero-GUI utilities so it doesn't have to *click* its way through trivial things: `read_file` / `write_file` / `run_shell` (output captured, console hidden, 20s timeout).
-- Native app launching: `launch_app("VS Code")` uses Windows APIs (Start menu shortcuts + UWP MSIX manifest scan), pins the active window, and skips the "look for the icon" round-trip.
-
-### Watches over your shoulder when you're away
-- **Visual taskbar notify** — periodic dHash diff on the taskbar; if a candidate change appears, a cheap LLM call confirms whether it's a new message and *which* app fired it. Per-schedule **app whitelist** so it only ever touches the apps you allow.
-- **Auto-reply** with a hard-coded **AUTO-REPLY SAFETY POLICY** baked into the system prompt: never leak personal info or codes, never click pay/agree/install, never accept files / friend requests / screen-share, escalate-and-stop on ambiguity. *Unlike official WeChat bots (which require registration, can't persist state, and can't control outbound messaging), Lucid drives your real WeChat client — so you get full, unsupervised, stateful auto-reply to any chat.*
-
-### Schedules and templates
-- **Schedules** — cron-like + one-shot + visual_notify modes. Pause / resume / "run now" buttons.
-- **Templates** — save common instructions, fire with one click.
-- **Per-thread context persistence** — every reply in the same thread re-uses the prior messages (after image compression).
-
-### Learns over time
-- **`memory.md`** — long-term memory injected into the system prompt; Lucid can call `remember(text)` to add to it, you edit it on the Memory page.
-- **`tools.md`** — evolving "operation tips" library; Lucid calls `learn_tip(text)` after a successful or failed run.
-- **Per-app spec files** (`apps/<slug>.py`) — drop-a-file = teach Lucid a new app, with custom launcher + tips.
-- **Doze learning** — when you're idle for 5 minutes, Lucid quietly reflects on finished threads, mining tips and *icon proposals* (small icon crops it spotted that you can accept on the Doze page so it learns icon → app mapping).
-- **Self-check** for monitors / DPI / Win+R alias / click-coordinate offset.
-
-### Honest about itself
-- Per-run logs at `~/.lucid/logs/threads/<thread>/` — `events.jsonl`, `messages.json`, every screenshot, full LLM context dumps.
-
----
-
-## Example prompts — what people actually use it for
-
-These are real one-liners you can paste into the chat box. Adjust paths / names.
-
-### 📝 Office stuff
-
-> *"Open Notepad, type the meeting notes I just dictated, save it as `D:\notes\2026-05-08.txt`."*
-
-> *"Open the Excel file on my desktop called `expenses.xlsx`, scroll to the bottom of column C, and tell me the sum."*
-
-> *"Take the PDF that's currently open in Edge, summarise the executive summary in 5 bullet points, paste them into a new Outlook draft to alice@…, subject `PDF summary`."*
-
-### 💬 Messaging while away (with a schedule)
-
-Set up a **schedule → action: visual_notify**, whitelist `WeChat` + `Microsoft Teams`. Default instruction:
-
-> *"Open the matching chat client, read the latest unread, and send a short polite reply if it's safe to."*
-
-The `AUTO-REPLY SAFETY POLICY` (in the system prompt) enforces: don't leak personal info, don't accept files / links / verification codes, don't authorise anything, escalate-and-stop if the conversation gets weird.
-
-### ⏰ Recurring tasks (cron)
-
-Schedules of action `task` with a daily / weekly / interval trigger:
-
-> *"Every weekday at 9:00 — open Outlook, scan the unread inbox, and write me a 3-line summary in a popup."*
-
-> *"Every Friday 17:00 — open `D:\Reports\template.xlsx`, fill A1 with this week's date, save as `weekly-<YYYY-MM-DD>.xlsx` in the same folder."*
-
-> *"Every 30 minutes — check Visual Studio Code's git status bar; if the branch shows `*` (unsaved), nudge me with a toast."*
-
-### 🌐 Browser / research
-
-> *"Open Chrome, search for 'best ergonomic keyboards 2026', open the top 3 results in tabs, and give me a one-paragraph summary of each."*
-
-> *"Log into the GitHub tab I have open, find issue #142 in the `acme/foo` repo, paste the comment body I'll dictate next, hit Comment."*
-
-### 🛠️ File / system chores
-
-> *"In `D:\Photos\unsorted`, rename every file matching `IMG_*.JPG` to `2026-05-08-<NNNN>.jpg` keeping the order."*
-
-> *"Find the largest 5 files under `C:\Users\me\Downloads` and tell me their sizes."* (Lucid will use `run_shell` here, not click around.)
-
-### 🎮 Light gaming / niche apps
-
-> *"Take a turn in Civilization VI: research Pottery, build a Worker, end turn."*
-
-> *"In FL Studio, mute track 3, render the project to `D:\music\demo.wav`."*
-
-(Game UIs are visually unusual — the first time, watch closely so you can hit the emergency hotkey if it goes off-track.)
-
-### 🧪 Sanity checks (no mouse / keyboard)
-
-> *"Take a fullscreen screenshot and tell me how many windows are visible."*
-
-> *"Read `~/.lucid/config.toml` and tell me which LLM provider is active."* (Uses the `read_file` meta tool, no GUI clicks.)
-
----
-
 ## Architecture, briefly
 
-```
-┌──────────── Tauri WebView (SvelteKit) ─────────────┐
-│  Chat │ Schedules │ Templates │ Memory │ Doze │ ⚙  │
-└──────────────────────┬─────────────────────────────┘
-                       │ Tauri IPC
-┌──────────────────────┴─────────────────────────────┐
-│   Rust shell — sidecar lifecycle, settings, tray   │
-└──────────────────────┬─────────────────────────────┘
-                       │ JSON-RPC over stdio
-┌──────────────────────┴─────────────────────────────┐
-│  Python sidecar (lucid.exe)                       │
-│  ReAct · scheduler · taskbar monitor · doze · mem.  │
-│        ↓ mss screenshots          ↓ pyautogui       │
-│        ↓ HTTP                                       │
-│   Anthropic API   ·   GitHub Copilot   ·   proxy    │
-└─────────────────────────────────────────────────────┘
-```
+![Lucid architecture](docs/arch.png)
 
 User data: `~/.lucid/` (config, logs, schedules, memory, icons cache, Copilot token).
 
