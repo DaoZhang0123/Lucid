@@ -52,7 +52,7 @@ Lucid ships as a Windows desktop app (`lucid.exe` engine + Tauri/WebView2 GUI). 
 
 ## Architecture, briefly
 
-![Lucid architecture](docs/arch.png)
+![Lucid architecture](Docs/arch.png)
 
 User data: `~/.lucid/` (config, logs, schedules, memory, icons cache, Copilot token).
 

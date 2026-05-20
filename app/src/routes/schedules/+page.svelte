@@ -642,6 +642,7 @@
         {/if}
       </div>
     </fieldset>
+    {/if}
 
     <fieldset class="trigger constraints">
       <legend>{$_("schedules.constraints_legend")}</legend>

@@ -52,7 +52,7 @@ Lucid est livré comme une appli de bureau Windows (`lucid.exe` comme moteur + G
 
 ## Architecture, en bref
 
-![Architecture de Lucid](docs/arch.fr-FR.png)
+![Architecture de Lucid](Docs/arch.fr-FR.png)
 
 Données utilisateur : `~/.lucid/` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
 
