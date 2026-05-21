@@ -12,24 +12,16 @@
 
 **语言：** [English](README.md) · **简体中文** · [Français](README.fr-FR.md)
 
-<!-- 演示视频：把视频文件放在这里，例如 ![demo](docs/demo.mp4) 或者一段 HTML <video> 标签 -->
-*▶ 演示视频稍后补上。*
+<video src="Docs/Wechat.mp4" controls width="720">你的浏览器不支持内嵌视频，<a href="Docs/Wechat.mp4">点此下载演示</a>。</video>
 
 ```
-Teams（来信）：  "帮我把桌面上的 proposal.docx 做成一份像样的 PPT，做好回发给我。"
+微信（来信）：  “宝宝，给我讲一个笑话吧，关于这个程序员买西瓜和苹果的”
           ↓
-Lucid：  *任务栏监听看到 Teams 新通知*
-          *廉价 LLM 确认：是真消息，来源 = Microsoft Teams*
-          → launch_app("Microsoft Teams")  → 打开对话，读取请求
-          → read_file("~/Desktop/proposal.docx")     # 抽出大纲
-          → 还没有做 PPT 的技能？从 Anthropic 官方 skills 仓库拉：
-              run_shell("git clone https://github.com/anthropics/skills ~/.lucid/skills")
-              read_file("~/.lucid/skills/pptx/SKILL.md")   # 看怎么用
-              learn_tip("用 anthropics/skills/pptx 把 docx 大纲转成幻灯片")
-          → run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")
-          → launch_app("Microsoft Teams")  → click(对话) → attach(proposal.pptx)
-          → type("PPT 已附上，需要改的地方告诉我。") → key("enter")
-          → "完成。已在 Teams 把 proposal.pptx 回发。"
+Lucid：  *任务栏 UIA 监听看到微信新消息（不需要 LLM 二次确认）*
+          → launch_app("微信")  → 打开对话，读取请求
+          → 想一个程序员买西瓜和苹果的笑话
+          → click(输入框) → type("…笑话内容…") → key("enter")
+          → “完成。已在微信回复笑话。”
 ```
 
 Lucid 是一个 Windows 桌面应用（`lucid.exe` 引擎 + Tauri/WebView2 GUI）。下面是它已经能做的事，以及一大把可直接抄的指令例子。

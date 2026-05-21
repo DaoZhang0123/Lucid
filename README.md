@@ -12,25 +12,16 @@ A true "human-like computer-use" AI assistant: no MCP, direct control of your Wi
 
 **Languages:** **English** · [简体中文](README.zh-CN.md) · [Français](README.fr-FR.md)
 
-<!-- DEMO VIDEO: drop the file here, e.g. ![demo](docs/demo.mp4) or an HTML <video> tag -->
-*▶ Demo video coming soon.*
+<video src="Docs/Teams.mp4" controls width="720">Your browser does not support embedded video. <a href="Docs/Teams.mp4">Download the demo</a>.</video>
 
 ```
-Teams (incoming):  "Hey, turn the doc on my desktop (proposal.docx)
-                    into a polished slide deck and send it back."
+Teams (incoming):  "Tell me a joke about dog and cat"
           ↓
-Lucid:   *taskbar monitor sees the new Teams notification*
-          *cheap LLM confirms: it's a real message, app = Microsoft Teams*
+Lucid:   *taskbar UIA listener sees a new Teams message (no LLM confirm needed)*
           → launch_app("Microsoft Teams")  → open the chat, read the request
-          → read_file("~/Desktop/proposal.docx")     # extract outline
-          → no PPT-authoring skill yet? grab one from Anthropic's skills repo:
-              run_shell("git clone https://github.com/anthropics/skills ~/.lucid/skills")
-              read_file("~/.lucid/skills/pptx/SKILL.md")   # learn how to use it
-              learn_tip("use anthropics/skills/pptx to build decks from docx outlines")
-          → run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")
-          → launch_app("Microsoft Teams")  → click(chat) → attach(proposal.pptx)
-          → type("Deck attached — let me know if you'd like edits.") → key("enter")
-          → "Done. Replied in Teams with proposal.pptx."
+          → think up a joke about a dog and a cat
+          → click(chat input) → type("…joke text…") → key("enter")
+          → "Done. Replied in Teams with the joke."
 ```
 
 Lucid ships as a Windows desktop app (`lucid.exe` engine + Tauri/WebView2 GUI). Below is what it can already do today and a generous helping of example prompts.

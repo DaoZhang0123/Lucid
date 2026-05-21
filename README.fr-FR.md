@@ -12,25 +12,16 @@ Un véritable assistant IA qui agit comme un humain sur ordinateur : sans MCP, c
 
 **Langues :** [English](README.md) · [简体中文](README.zh-CN.md) · **Français**
 
-<!-- VIDÉO DE DÉMO : déposez le fichier ici, p.ex. ![demo](docs/demo.mp4) ou une balise HTML <video> -->
-*▶ Vidéo de démonstration bientôt disponible.*
+<video src="Docs/Teams.mp4" controls width="720">Votre navigateur ne prend pas en charge la vidéo intégrée. <a href="Docs/Teams.mp4">Télécharger la démo</a>.</video>
 
 ```
-Teams (entrant) :  « Transforme le doc sur mon bureau (proposal.docx)
-                    en un beau jeu de diapositives et renvoie-le-moi. »
+Teams (entrant) :  « Tell me a joke about dog and cat »
           ↓
-Lucid :  *le moniteur de la barre des tâches voit la nouvelle notif Teams*
-          *un LLM léger confirme : vrai message, app = Microsoft Teams*
+Lucid :  *l'écouteur UIA de la barre des tâches voit un nouveau message Teams (pas besoin de confirmation LLM)*
           → launch_app("Microsoft Teams")  → ouvre la conversation, lit la demande
-          → read_file("~/Desktop/proposal.docx")     # extrait le plan
-          → pas encore de compétence PPT ? on la prend dans le dépôt skills d'Anthropic :
-              run_shell("git clone https://github.com/anthropics/skills ~/.lucid/skills")
-              read_file("~/.lucid/skills/pptx/SKILL.md")   # apprend à s'en servir
-              learn_tip("utiliser anthropics/skills/pptx pour bâtir un deck depuis un plan docx")
-          → run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")
-          → launch_app("Microsoft Teams")  → click(chat) → attach(proposal.pptx)
-          → type(« Deck en pièce jointe — dis-moi si tu veux des retouches. ») → key("enter")
-          → « Fait. Répondu dans Teams avec proposal.pptx. »
+          → invente une blague sur un chien et un chat
+          → click(champ de saisie) → type("…texte de la blague…") → key("enter")
+          → « Fait. Répondu dans Teams avec la blague. »
 ```
 
 Lucid est livré comme une appli de bureau Windows (`lucid.exe` comme moteur + GUI Tauri/WebView2). Voici ce qu'il sait déjà faire et une bonne brassée d'exemples de prompts.
