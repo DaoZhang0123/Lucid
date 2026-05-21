@@ -266,6 +266,71 @@ UPDATE_LAUNCHER_SCHEMA: dict = {
 
 
 # ---------------------------------------------------------------------------
+# Voice-abort orchestrator (`abort_target`) — only emitted to the urgent
+# thread spawned by ``Sidecar._rpc_voice_dispatch_abort`` (see
+# Docs/internal/voice-input.md §10.9). The schema is still in
+# ``build_meta_tool_schemas`` so the model can find it; the dispatcher
+# bails with a clear error if no sidecar handler has registered.
+# ---------------------------------------------------------------------------
+
+_abort_target_handler: Callable[[str, str, str], dict[str, Any]] | None = None
+
+
+def set_abort_target_handler(
+    fn: Callable[[str, str, str], dict[str, Any]] | None,
+) -> None:
+    """Register the sidecar-level callback that ``abort_target`` dispatches
+    to. ``fn(scope, match, reason) -> dict`` runs under the sidecar's queue
+    lock and may mutate ``self._queue``."""
+    global _abort_target_handler
+    _abort_target_handler = fn
+
+
+ABORT_TARGET_SCHEMA: dict = {
+    "type": "function",
+    "function": {
+        "name": "abort_target",
+        "description": (
+            "Cancel queued Lucid task(s) on behalf of a user voice command. "
+            "Call this ONCE from inside a voice-abort urgent thread. The "
+            "previously-running task is ALREADY cancelled by the time you "
+            "see this prompt (a priority=0 thread auto-preempts the slot). "
+            "Pick the scope based on what the user actually said:\n"
+            "  • \"noop\"        — user only meant the running task we just "
+            "preempted; leave the queue alone.\n"
+            "  • \"queue_all\"   — user said 'cancel everything' / 'stop all'. "
+            "Flush every pending task.\n"
+            "  • \"queue_head\"  — drop only the next queued task.\n"
+            "  • \"queue_match\" — drop pending tasks whose thread_id == match "
+            "or whose title contains match (case-insensitive substring)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "enum": ["noop", "queue_all", "queue_head", "queue_match"],
+                    "description": "What to do with the pending queue.",
+                },
+                "match": {
+                    "type": "string",
+                    "description": (
+                        "Required only for scope=queue_match. Thread id (exact) "
+                        "or case-insensitive substring of the thread title."
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Short Chinese sentence explaining the decision (for the run log).",
+                },
+            },
+            "required": ["scope", "reason"],
+        },
+    },
+}
+
+
+# ---------------------------------------------------------------------------
 # Scheduled tasks (`schedule_*`) — let the agent create / inspect / edit
 # the user's scheduled instructions through conversation.
 # ---------------------------------------------------------------------------
@@ -654,6 +719,10 @@ def build_meta_tool_schemas(cfg: Config) -> list[dict]:
     out.append(SCHEDULE_ADD_SCHEMA)
     out.append(SCHEDULE_UPDATE_SCHEMA)
     out.append(SCHEDULE_DELETE_SCHEMA)
+    # abort_target is always on: it's the urgent-thread's only verb. Non-urgent
+    # threads almost never call it (the description hard-scopes it to voice
+    # aborts), and the dispatcher errors cleanly if no sidecar handler is set.
+    out.append(ABORT_TARGET_SCHEMA)
     # Always-on: re-load any past screenshot or inbox attachment from disk
     # (cheaper than re-visiting the App).
     out.append(LOAD_LOCAL_IMAGES_SCHEMA)
@@ -1139,6 +1208,31 @@ def dispatch_meta_tool(
 
     if fn_name in ("list_skills", "read_skill", "search_skills", "install_repo_skill") and getattr(cfg, "skills", None) and cfg.skills.enabled:
         return _dispatch_skill(fn_name, args, cfg)
+
+    if fn_name == "abort_target":
+        scope = (args.get("scope") or "noop").strip().lower()
+        match = (args.get("match") or "").strip()
+        reason = (args.get("reason") or "").strip()
+        if scope not in ("noop", "queue_all", "queue_head", "queue_match"):
+            return ToolResult(error=f"unknown scope: {scope!r}")
+        if scope == "queue_match" and not match:
+            return ToolResult(error="scope=queue_match requires `match`")
+        handler = _abort_target_handler
+        if handler is None:
+            return ToolResult(error="abort_target unavailable: no sidecar handler registered")
+        try:
+            info = handler(scope, match, reason)
+        except Exception as exc:  # pragma: no cover — defensive
+            return ToolResult(error=f"abort_target failed: {type(exc).__name__}: {exc}")
+        removed = info.get("removed") or []
+        if scope == "noop":
+            summary = f"noop: {reason}"
+        elif not removed:
+            summary = f"scope={scope}: nothing matched ({reason})"
+        else:
+            titles = ", ".join(r.get("title") or r.get("thread_id") or "?" for r in removed)
+            summary = f"scope={scope}: cancelled {len(removed)} pending task(s): {titles} — {reason}"
+        return ToolResult(output=summary)
 
     return None
 

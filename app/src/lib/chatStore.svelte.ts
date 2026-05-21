@@ -41,8 +41,16 @@ export const chat = $state({
   sidecarReady: false,
   threads: [] as ThreadMeta[],
   activeThreadId: null as string | null,
-  // 任务队列中的 thread id 集合，用于侧边栏“⏳ 排队中”标记
+  // 任务队列中的 thread id 集合，用于侧边栏"⏳ 排队中"标记
   queuedThreadIds: [] as string[],
+  // 紧急 (priority=0) 的 thread id 集合，用于侧边栏"🛑 紧急"标记。
+  // 来自语音 thread_abort 触发的 voice_dispatch_abort RPC；这些线程会抢占
+  // 当前 priority>0 的运行任务并由 LLM 决定 abort_target 范围。
+  urgentThreadIds: [] as string[],
+  // 后台/监听类 (priority=2) 线程：visual_notify 任务栏自动回复等。
+  // 侧边栏会用灯色较靠的 "👂 后台" 徽章区别于普通排队，避免
+  // "为什么我的任务被插队了" 的困惑。
+  listenerThreadIds: [] as string[],
   // 当前正在运行的 thread id
   runningThreadId: null as string | null,
 });
@@ -81,6 +89,12 @@ function handleEvent(v: any) {
     // 带了 queue 快照就以快照为准。
     chat.queuedThreadIds = Array.isArray(v.queue)
       ? v.queue.map((it: any) => it.thread_id).filter(Boolean)
+      : [];
+    chat.urgentThreadIds = Array.isArray(v.queue)
+      ? v.queue.filter((it: any) => Number(it.priority) === 0).map((it: any) => it.thread_id).filter(Boolean)
+      : [];
+    chat.listenerThreadIds = Array.isArray(v.queue)
+      ? v.queue.filter((it: any) => Number(it.priority) === 2).map((it: any) => it.thread_id).filter(Boolean)
       : [];
     chat.runningThreadId = null;
     chat.running = false;
@@ -197,10 +211,20 @@ function handleEvent(v: any) {
     }
   } else if (k === "final") {
     chat.running = false;
+    if (chat.runningThreadId) {
+      const tid = chat.runningThreadId;
+      chat.urgentThreadIds = chat.urgentThreadIds.filter((x) => x !== tid);
+      chat.listenerThreadIds = chat.listenerThreadIds.filter((x) => x !== tid);
+    }
     chat.runningThreadId = null;
     push({ kind: "final", status: v.status, text: v.text });
   } else if (k === "error") {
     chat.running = false;
+    if (chat.runningThreadId) {
+      const tid = chat.runningThreadId;
+      chat.urgentThreadIds = chat.urgentThreadIds.filter((x) => x !== tid);
+      chat.listenerThreadIds = chat.listenerThreadIds.filter((x) => x !== tid);
+    }
     chat.runningThreadId = null;
     push({ kind: "system", text: `错误：${v.message}` });
   } else if (k === "user_input") {
@@ -227,6 +251,12 @@ function handleEvent(v: any) {
     if (v.thread_id && !chat.queuedThreadIds.includes(v.thread_id)) {
       chat.queuedThreadIds = [...chat.queuedThreadIds, v.thread_id];
     }
+    if (v.thread_id && Number(v.priority) === 0 && !chat.urgentThreadIds.includes(v.thread_id)) {
+      chat.urgentThreadIds = [...chat.urgentThreadIds, v.thread_id];
+    }
+    if (v.thread_id && Number(v.priority) === 2 && !chat.listenerThreadIds.includes(v.thread_id)) {
+      chat.listenerThreadIds = [...chat.listenerThreadIds, v.thread_id];
+    }
     void refreshThreadList();
   } else if (k === "task_dequeued") {
     if (v.thread_id) {
@@ -235,11 +265,30 @@ function handleEvent(v: any) {
     }
     if (Array.isArray(v.queue)) {
       chat.queuedThreadIds = v.queue.map((it: any) => it.thread_id);
+      // Re-sync urgent set from the fresh queue snapshot, then preserve the
+      // running thread's urgent status (it just left the queue this tick).
+      const queuedUrgent = v.queue.filter((it: any) => Number(it.priority) === 0).map((it: any) => it.thread_id);
+      const next = new Set<string>([...queuedUrgent, ...chat.urgentThreadIds.filter((id) => id === v.thread_id)]);
+      chat.urgentThreadIds = Array.from(next);
+      const queuedListener = v.queue.filter((it: any) => Number(it.priority) === 2).map((it: any) => it.thread_id);
+      const nextL = new Set<string>([...queuedListener, ...chat.listenerThreadIds.filter((id) => id === v.thread_id)]);
+      chat.listenerThreadIds = Array.from(nextL);
     }
     void refreshThreadList();
   } else if (k === "queue_changed") {
     if (Array.isArray(v.queue)) {
       chat.queuedThreadIds = v.queue.map((it: any) => it.thread_id);
+      // Keep running thread's urgent flag (not in queue any more).
+      const queuedUrgent = v.queue.filter((it: any) => Number(it.priority) === 0).map((it: any) => it.thread_id);
+      const keepRunning = chat.runningThreadId && chat.urgentThreadIds.includes(chat.runningThreadId)
+        ? [chat.runningThreadId]
+        : [];
+      chat.urgentThreadIds = Array.from(new Set<string>([...queuedUrgent, ...keepRunning]));
+      const queuedListener = v.queue.filter((it: any) => Number(it.priority) === 2).map((it: any) => it.thread_id);
+      const keepRunningL = chat.runningThreadId && chat.listenerThreadIds.includes(chat.runningThreadId)
+        ? [chat.runningThreadId]
+        : [];
+      chat.listenerThreadIds = Array.from(new Set<string>([...queuedListener, ...keepRunningL]));
     }
   }
 }
@@ -258,6 +307,8 @@ export async function ensureChatListeners(): Promise<void> {
       // sidecar 死了 → 内存队列同时蒸发。立刻清掉前端的 ghost “排队中”
       // 状态，避免侧边栏永久挂着不会被 dequeue 的假任务。
       chat.queuedThreadIds = [];
+      chat.urgentThreadIds = [];
+      chat.listenerThreadIds = [];
       chat.runningThreadId = null;
       push({ kind: "system", text: `sidecar 已退出（code=${v.code}），1 秒后自动重启` });
     } else if (v.kind === "spawn_error") {

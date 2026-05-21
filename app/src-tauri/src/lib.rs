@@ -154,6 +154,7 @@ pub fn run() {
             set_caption_color,
             voice::sidecar_transcribe,
             voice::voice_dispatch,
+            voice::voice_dispatch_abort,
             voice::voice_status,
             voice::voice_unload,
             voice::voice_config,

@@ -297,6 +297,13 @@
     if (copPollTimer) clearInterval(copPollTimer);
   });
 
+  // mode=auto → auto_send is locked to true (the classifier owns the
+  // decision; user can't choose "transcribe and review" semantics in auto).
+  // mode=thread_new / dictation_append → user controls the checkbox.
+  $effect(() => {
+    if (vMode === "auto" && !vAutoSend) vAutoSend = true;
+  });
+
   async function save() {
     saving = true;
     error = "";
@@ -789,10 +796,20 @@
           </label>
           <p class="hint">{$_("settings.voice_mode_hint")}</p>
           <label class="check">
-            <input type="checkbox" bind:checked={vAutoSend} />
+            <input
+              type="checkbox"
+              bind:checked={vAutoSend}
+              disabled={vMode === "auto"}
+            />
             {$_("settings.voice_auto_send_label")}
           </label>
-          <p class="hint">{$_("settings.voice_auto_send_hint")}</p>
+          <p class="hint">
+            {#if vMode === "auto"}
+              {$_("settings.voice_auto_send_locked_hint")}
+            {:else}
+              {$_("settings.voice_auto_send_hint")}
+            {/if}
+          </p>
 
           <label>
             {$_("settings.voice_max_seconds_label")}

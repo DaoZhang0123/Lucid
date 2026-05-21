@@ -30,6 +30,8 @@
     "thread_unnamed": "(未命名)",
     "thread_running": "▶ 运行中",
     "thread_queued": "⏳ 排队中",
+    "thread_urgent": "🛑 紧急",
+    "thread_listener": "👂 后台",
     "thread_task_count": "· {n} 任务",
     "thread_delete_title": "删除",
     "thread_delete_confirm": "删除这个对话？",
@@ -165,7 +167,8 @@
     "voice_mode_dictation_append": "append（每句话都插入当前输入框）",
     "voice_mode_hint": "自动模式会用一个小型 LLM 识别每句话是「新任务」/「停止任务」/「听写」；选 new_thread 或 append 则跳过识别，每次都按同一种方式处理。",
     "voice_auto_send_label": "转录完成后直接发送",
-    "voice_auto_send_hint": "不勾（默认）：悬浮窗会呈现识别结果，等你点 ✓ 才发送，留个检查机会。勾上：识别完短暂停顿后自动发送。",
+    "voice_auto_send_hint": "不勾：识别结果填进输入框后等你按回车。勾上：识别一完就自动提交。默认：“新建任务”勾、“追加到输入框”不勾。",
+    "voice_auto_send_locked_hint": "自动模式下被锁定为勾选——由分类器决定每句话怎么走，识别结果一律立即提交。如要手动控制是否立发，请切换到“新建任务”或“追加到输入框”。",
     "voice_always_new_thread_label": "语音输入总是新开线程",
     "voice_max_seconds_label": "最长录音时长（秒）",
 

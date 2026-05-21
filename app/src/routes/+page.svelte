@@ -43,8 +43,13 @@
     void ensureChatListeners();
     // Voice dictation sink: when voice.ts gets a result in dictation mode,
     // append the text into the input box (with a leading space if needed).
-    setDictationSink((text) => {
+    // When opts.autoSend is set (voice.auto_send = true), submit immediately
+    // after appending so the user doesn't need to hit Enter.
+    setDictationSink((text, opts) => {
       appendDictation(text);
+      if (opts?.autoSend) {
+        queueMicrotask(() => { void start(); });
+      }
     });
     // Skill / template "Use" buttons hand off a draft prompt via sessionStorage
     // — surface it in the textarea so the user can edit before sending.
@@ -556,7 +561,7 @@
                  onclick={() => onPickThread(t.id)}
                  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); void onPickThread(t.id); } }}>
               <div class="t-title" title={t.title}>
-                {#if chat.runningThreadId === t.id}<span class="t-tag run">{$_("sidebar.thread_running")}</span>{:else if chat.queuedThreadIds.includes(t.id)}<span class="t-tag queued">{$_("sidebar.thread_queued")}</span>{/if}
+                {#if chat.urgentThreadIds.includes(t.id)}<span class="t-tag urgent">{$_("sidebar.thread_urgent")}</span>{:else if chat.runningThreadId === t.id}<span class="t-tag run">{$_("sidebar.thread_running")}</span>{:else if chat.listenerThreadIds.includes(t.id)}<span class="t-tag listener">{$_("sidebar.thread_listener")}</span>{:else if chat.queuedThreadIds.includes(t.id)}<span class="t-tag queued">{$_("sidebar.thread_queued")}</span>{/if}
                 {#if threadIconKind(t.title) === "schedule"}
                   <svg class="t-kind-icon t-kind-schedule" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <circle cx="12" cy="13" r="7.5"/>
@@ -835,6 +840,8 @@
            margin-right: 0.3rem; vertical-align: middle; opacity: 0.95; }
   .t-tag.run { background: rgba(34,197,94,0.25); color: #22c55e; }
   .t-tag.queued { background: rgba(234,179,8,0.25); color: #eab308; }
+  .t-tag.urgent { background: rgba(217,48,42,0.85); color: #fff; }
+  .t-tag.listener { background: rgba(148,163,184,0.25); color: #94a3b8; }
   .t-del { position: absolute; right: 0.3rem; top: 0.4rem; background: transparent; color: inherit;
            border: 0; width: 1.2rem; height: 1.2rem; cursor: pointer; opacity: 0; border-radius: 3px;
            font-size: 0.75rem; }

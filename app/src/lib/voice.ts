@@ -40,7 +40,11 @@ export interface DispatchResult {
   confidence: DispatchConfidence;
   reason: string;
   cleaned_text: string;
-  source: "llm" | "regex" | "rule";
+  /** 0 = urgent (preempts), 1 = normal, 2 = background. Always 0 for thread_abort. */
+  priority?: number;
+  /** Short imperative description of what the dispatcher decided. */
+  next_action?: string;
+  source: "llm" | "rule";
 }
 
 export interface VoiceConfig {
@@ -67,8 +71,14 @@ export interface TranscribeResult {
   filtered_reason?: string;
 }
 
+export interface DictationSinkOptions {
+  /** If true, the host should also submit the message immediately after
+   *  inserting it (used when voice.auto_send = true). */
+  autoSend?: boolean;
+}
+
 interface DictationCallback {
-  (text: string): void;
+  (text: string, opts?: DictationSinkOptions): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -489,57 +499,35 @@ async function onRecorderStop(): Promise<void> {
   }
   pendingDispatch = dispatch;
 
-  // ----- routing matrix -----
-  // auto_send = true  : commit immediately after a short dwell (overlay
-  //                     stays visible only as a status indicator).
-  // auto_send = false : skip the overlay confirm flow entirely and stuff
-  //                     the cleaned text into the chat input box — the
-  //                     user reads / edits / hits Enter themselves.
-  //                     `thread_abort` is the one exception: there's
-  //                     nothing to put into a textbox, so we still need
-  //                     to either fire it (high/medium) or surface the
-  //                     three chips (low) so the user can pick.
-  if (cfg!.auto_send) {
-    stateName = "result";
-    setOverlayState({
-      state: "result",
-      text: dispatch.cleaned_text || result.text,
-      mode: pendingResultMode,
-      intent: dispatch.intent,
-      confidence: dispatch.confidence,
-      reason: dispatch.reason,
-      autoSend: true,
-      showChips: false,
-    });
-    const dwellMs = dispatch.intent === "dictation_append" ? 800 : 1500;
-    if (resultDismissTimer !== null) clearTimeout(resultDismissTimer);
-    resultDismissTimer = window.setTimeout(() => commitResult(), dwellMs);
-    return;
-  }
+  // ----- routing matrix (simplified) -----
+  // The overlay only owns recording / transcribing / error states. As soon
+  // as we have a result, route it:
+  //   • thread_abort (any confidence) → spawn an urgent (priority=0) thread
+  //                                    in the sidecar via voice_dispatch_abort.
+  //                                    The act of enqueueing it auto-preempts
+  //                                    the currently-running non-urgent task;
+  //                                    the urgent thread then decides whether
+  //                                    to flush queued tasks too (abort_target
+  //                                    tool). See Docs/internal/voice-input.md
+  //                                    §10.9. We no longer hard-call
+  //                                    cancel + queue_clear here — that lost
+  //                                    the ability to scope the abort.
+  //   • everything else → drop the cleaned text into the main window's
+  //                       textarea via dictationSink. If voice.auto_send is
+  //                       true, also auto-submit; otherwise the user reads /
+  //                       edits / hits Enter themselves.
+  const cleaned = (dispatch.cleaned_text || result.text || "").trim();
 
-  // auto_send = false branch
   if (dispatch.intent === "thread_abort") {
-    if (dispatch.confidence === "low") {
-      // Show chips so the user can disambiguate.
-      stateName = "result";
-      setOverlayState({
-        state: "result",
-        text: dispatch.cleaned_text || result.text,
-        mode: pendingResultMode,
-        intent: dispatch.intent,
-        confidence: dispatch.confidence,
-        reason: dispatch.reason,
-        autoSend: false,
-        showChips: true,
-      });
-      return;
-    }
-    // High/medium abort: fire it. (No way to "preview" a cancel.)
-    // Cancel both the currently running task AND any queued tasks so
-    // "停止所有的对话" / "stop everything" actually clears the whole list,
-    // not just the head.
-    void cancelTask().catch((e) => console.warn("cancelTask failed:", e));
-    void invoke("task_queue_clear").catch((e) => console.warn("task_queue_clear failed:", e));
+    void invoke("voice_dispatch_abort", {
+      args: { targetHint: cleaned, transcript: result.text || "" },
+    }).catch((e) => {
+      // Fallback to the old blunt path so we never leave a runaway task on
+      // screen because of a sidecar hiccup.
+      console.warn("voice_dispatch_abort failed, falling back to cancel+clear:", e);
+      void cancelTask().catch((err) => console.warn("cancelTask failed:", err));
+      void invoke("task_queue_clear").catch((err) => console.warn("task_queue_clear failed:", err));
+    });
     pendingResult = null;
     pendingDispatch = null;
     void invoke("voice_overlay_hide");
@@ -547,13 +535,15 @@ async function onRecorderStop(): Promise<void> {
     return;
   }
 
-  // thread_new / dictation_append → stuff into the chat input. Both end up
-  // in the same place (the dictation sink), the only difference being a
-  // leading newline for thread_new so the user can clearly see it as a
-  // fresh task before they hit Enter.
   const sink = dictationSink;
-  if (sink) {
-    sink(dispatch.cleaned_text || result.text);
+  if (sink && cleaned) {
+    // Settings UI owns the mode→auto_send relationship:
+    //   mode=auto             → auto_send is locked to true.
+    //   mode=thread_new       → user choice (default true).
+    //   mode=dictation_append → user choice (default false).
+    // Runtime just honours whatever cfg.auto_send is at this moment, so
+    // dictation_append users who *want* "speak and fire" can opt in.
+    sink(cleaned, { autoSend: !!cfg!.auto_send });
     pendingResult = null;
     pendingDispatch = null;
     void invoke("voice_overlay_hide");
@@ -561,12 +551,12 @@ async function onRecorderStop(): Promise<void> {
     return;
   }
 
-  // No dictation sink registered (e.g. settings page) — fall back to the
-  // overlay confirm flow so the utterance isn't lost.
+  // No dictation sink registered (e.g. user is on the settings page) — fall
+  // back to the overlay confirm flow so the utterance isn't lost.
   stateName = "result";
   setOverlayState({
     state: "result",
-    text: dispatch.cleaned_text || result.text,
+    text: cleaned || result.text,
     mode: pendingResultMode,
     intent: dispatch.intent,
     confidence: dispatch.confidence,
@@ -601,8 +591,13 @@ function commitResult(): void {
 
   switch (intent) {
     case "thread_abort":
-      void cancelTask().catch((e) => console.warn("cancelTask failed:", e));
-      void invoke("task_queue_clear").catch((e) => console.warn("task_queue_clear failed:", e));
+      void invoke("voice_dispatch_abort", {
+        args: { targetHint: text, transcript: text },
+      }).catch((e) => {
+        console.warn("voice_dispatch_abort failed, falling back to cancel+clear:", e);
+        void cancelTask().catch((err) => console.warn("cancelTask failed:", err));
+        void invoke("task_queue_clear").catch((err) => console.warn("task_queue_clear failed:", err));
+      });
       return;
     case "dictation_append":
       if (dictationSink) {

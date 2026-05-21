@@ -198,6 +198,31 @@ pub async fn voice_dispatch(args: DispatchArgs) -> Result<Value, String> {
     sidecar::instance().request("voice_dispatch", params).await
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DispatchAbortArgs {
+    #[serde(default)]
+    pub target_hint: Option<String>,
+    #[serde(default)]
+    pub transcript: Option<String>,
+}
+
+/// Spawn the urgent (priority=0) thread that owns the cancel decision. The
+/// act of enqueueing this thread auto-preempts whatever priority>0 task is
+/// currently running. See ``Sidecar._rpc_voice_dispatch_abort`` and
+/// ``Docs/internal/voice-input.md`` §10.9.
+#[tauri::command]
+pub async fn voice_dispatch_abort(args: DispatchAbortArgs) -> Result<Value, String> {
+    let mut params = json!({});
+    if let Some(h) = args.target_hint {
+        params["target_hint"] = json!(h);
+    }
+    if let Some(t) = args.transcript {
+        params["transcript"] = json!(t);
+    }
+    sidecar::instance().request("voice_dispatch_abort", params).await
+}
+
 #[tauri::command]
 pub async fn voice_status() -> Result<Value, String> {
     sidecar::instance().request("voice_status", json!({})).await

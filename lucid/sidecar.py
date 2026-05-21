@@ -68,6 +68,7 @@ from . import scheduler as scheduler_mod
 from . import launchers as launchers_mod
 from . import regions as regions_mod
 from . import launcher_icons as launcher_icons_mod
+from . import meta_tools as meta_tools_mod
 from .taskbar_monitor import TaskbarMonitor
 from .taskbar_uia_monitor import TaskbarUiaMonitor
 from .doze import DozeWorker
@@ -256,6 +257,13 @@ instruction in this run.
         # that take turns hijacking the active window (regression observed
         # 5/19 19:48–19:50 — 5 back-to-back 🔔·微信 threads all cancelled).
         self._current_from_visual_notify: bool = False
+        # Priority of the task currently being executed by ``_run_task``
+        # (0=urgent, 1=normal, 2=listener). Tracked so ``_enqueue`` can
+        # preempt: when a priority=0 task is enqueued while the running
+        # one is priority>0, we set ``_cancel`` to make the running task
+        # vacate the slot. ``_drain_queue`` then pops the urgent task
+        # (which is at the head thanks to the priority-asc insertion).
+        self._current_priority: int = 1
         self._shutdown = threading.Event()
         self._active_thread: ThreadLog | None = None
         # 任务队列：当 worker 在跑时，后续 start_task 会被排在这里，上一个任务结束
@@ -289,6 +297,50 @@ instruction in this run.
             is_busy=self._sidecar_busy,
             event_sink=_writeln,
         )
+        # Wire the urgent-thread abort tool back to our queue. See
+        # ``_abort_target_handler`` and Docs/internal/voice-input.md §10.9.
+        meta_tools_mod.set_abort_target_handler(self._abort_target_handler)
+
+    def _abort_target_handler(self, scope: str, match: str, reason: str) -> dict[str, Any]:
+        """Mutate the pending queue for an urgent voice-abort thread. Runs
+        on the urgent thread's worker, called via ``meta_tools.abort_target``.
+
+        ``scope`` is already validated by the caller. ``match`` may be empty
+        for scopes that don't need it. Returns ``{"removed": [...]}`` for
+        the tool to summarise to the model.
+        """
+        removed: list[dict[str, str]] = []
+        with self._lock:
+            if scope == "queue_all":
+                for it in self._queue:
+                    th = it.get("thread")
+                    if th is not None:
+                        removed.append({"thread_id": th.id, "title": th.title or ""})
+                self._queue = []
+            elif scope == "queue_head":
+                if self._queue:
+                    head = self._queue.pop(0)
+                    th = head.get("thread")
+                    if th is not None:
+                        removed.append({"thread_id": th.id, "title": th.title or ""})
+            elif scope == "queue_match":
+                needle = (match or "").strip().lower()
+                kept: list[dict[str, Any]] = []
+                for it in self._queue:
+                    th = it.get("thread")
+                    tid = getattr(th, "id", "") or ""
+                    title = (getattr(th, "title", "") or "").lower()
+                    if tid == match or (needle and needle in title):
+                        removed.append({"thread_id": tid, "title": getattr(th, "title", "") or ""})
+                    else:
+                        kept.append(it)
+                self._queue = kept
+            # scope == "noop": do nothing
+            if removed:
+                self._persist_queue()
+        if removed:
+            _writeln({"event": "queue_changed", "queue": self._queue_snapshot()})
+        return {"scope": scope, "match": match, "reason": reason, "removed": removed}
 
     def _startup_log_path(self) -> Path:
         logs_root = resolve_logs_root(self.cfg.logging)
@@ -320,7 +372,13 @@ instruction in this run.
         return p
 
     def _enqueue(self, item: dict[str, Any]) -> int:
-        """Insert by priority asc, then sequence asc (FIFO within same priority)."""
+        """Insert by priority asc, then sequence asc (FIFO within same priority).
+
+        Side-effect: if the new item is priority=0 (urgent) and there is a
+        non-urgent task currently running, set ``_cancel`` so the running
+        task vacates the slot. ``_run_task.finally`` will then pop this
+        urgent item (now at the head) via ``_drain_queue``.
+        """
         self._queue_seq += 1
         item["seq"] = self._queue_seq
         p = self._normalize_priority(item.get("priority", 1))
@@ -335,6 +393,20 @@ instruction in this run.
                 break
         self._queue.insert(idx, item)
         self._persist_queue()
+        # Preemption: urgent enters while a non-urgent is running.
+        if (
+            p == 0
+            and self._worker is not None
+            and self._worker.is_alive()
+            and self._current_priority > 0
+        ):
+            self._cancel.set()
+            _writeln({
+                "event": "task_preempted",
+                "by_thread_id": item.get("thread").id if item.get("thread") else None,
+                "running_thread_id": self._current_thread_id,
+                "reason": item.get("_preempt_reason") or "urgent task enqueued",
+            })
         return idx + 1
 
     # ------------------------------------------------------------------
@@ -1527,6 +1599,118 @@ instruction in this run.
         disp = self._voice_dispatcher()
         return disp.classify(text, ctx).to_dict()
 
+    def _rpc_voice_dispatch_abort(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Enqueue an urgent (priority=0) thread that the LLM uses to decide
+        which other task(s) to kill. Side-effect of enqueueing a priority=0
+        item is that ``_enqueue`` sets ``_cancel`` and the currently-running
+        non-urgent task vacates the slot for us. The urgent thread then runs
+        with the ``abort_target`` meta-tool available to act on the queue.
+
+        See Docs/internal/voice-input.md §10.9.
+        """
+        target_hint = (params.get("target_hint") or "").strip()
+        transcript = (params.get("transcript") or "").strip()
+        # Snapshot the world BEFORE preemption fires (otherwise the urgent
+        # thread sees an already-empty slot and the system prompt has no
+        # context to reason about).
+        with self._lock:
+            running_tid = self._current_thread_id
+            running_instruction = self._current_instruction or ""
+            queue_view = self._queue_snapshot()
+        running_title = ""
+        if running_tid:
+            for t in ThreadLog.list_threads(self.cfg.logging):
+                if t.get("id") == running_tid:
+                    running_title = t.get("title") or ""
+                    break
+
+        # Build a stand-alone thread for the urgent task. Title prefix uses
+        # the bell-stop emoji so the sidebar instantly shows "this is the
+        # cancel thread"; the body of the prompt tells the LLM exactly
+        # what is queued / what just got preempted.
+        title_hint = (target_hint or transcript or "voice abort")[:24]
+        title = f"🛑 取消·{title_hint}" if title_hint else "🛑 取消"
+        thread = ThreadLog.create(self.cfg.logging, title)
+        # The "instruction" is what the LLM sees as the user prompt; keep it
+        # short and decision-focused.
+        instr_parts: list[str] = []
+        if transcript:
+            instr_parts.append(f'User just said (voice): "{transcript}".')
+        elif target_hint:
+            instr_parts.append(f'User just said (voice): "{target_hint}".')
+        else:
+            instr_parts.append("User asked (voice) to stop the current task.")
+        instr_parts.append(
+            "Decide what to cancel. Call abort_target(scope, match, reason) "
+            "exactly once and stop. Do NOT use any other tool."
+        )
+        instruction = " ".join(instr_parts)
+
+        # extra_system pumps the context the LLM needs to make the call.
+        ctx_lines: list[str] = [
+            "# Voice-abort urgent thread",
+            "",
+            "You are a one-shot decision agent invoked because the user",
+            "vocally asked Lucid to stop something. The previously-running",
+            "task has ALREADY been preempted by the act of you being",
+            "scheduled (a priority=0 thread auto-cancels any priority>0",
+            "task in the slot). Your only job is to look at the queue",
+            "snapshot below and call exactly one `abort_target(...)`:",
+            "",
+            "  scope = \"noop\"        : leave the queue alone (the user only",
+            "                          meant the running task that we",
+            "                          already preempted).",
+            "  scope = \"queue_all\"   : flush every pending task too.",
+            "  scope = \"queue_head\"  : drop just the head of the queue.",
+            "  scope = \"queue_match\" : drop queue items whose thread_id",
+            "                          equals `match` or whose title contains",
+            "                          `match` (case-insensitive substring).",
+            "",
+            "After the tool returns, emit ONE short Chinese sentence",
+            "summarising what you cancelled and stop. Do not call any other",
+            "tool. Do not screenshot. Do not retry.",
+            "",
+            "## Context",
+            f"Preempted running task : thread_id={running_tid or '(none)'} "
+            f"title={running_title!r} instruction={running_instruction!r}",
+            "Pending queue (in order):",
+        ]
+        if queue_view:
+            for i, q in enumerate(queue_view, 1):
+                ctx_lines.append(
+                    f"  {i}. thread_id={q.get('thread_id')} "
+                    f"title={q.get('title')!r} priority={q.get('priority', 1)} "
+                    f"instruction={(q.get('instruction') or '')[:80]!r}"
+                )
+        else:
+            ctx_lines.append("  (empty)")
+        extra_system = "\n".join(ctx_lines)
+
+        queue_item: dict[str, Any] = {
+            "instruction": instruction,
+            "thread": thread,
+            "priority": 0,
+            "extra_system": extra_system,
+            "file_refs": [],
+            "queued_ms": int(time.time() * 1000),
+            "source": "voice_abort",
+            "_preempt_reason": "voice abort",
+        }
+        thread.append_user_input(instruction)
+        _writeln({"event": "user_input", "text": instruction, "thread_id": thread.id})
+        with self._lock:
+            position = self._enqueue(queue_item)
+        _writeln({"event": "task_queued",
+                  "thread_id": thread.id,
+                  "title": thread.title,
+                  "instruction": instruction,
+                  "priority": 0,
+                  "position": position,
+                  "queue": self._queue_snapshot()})
+        return {"thread_id": thread.id, "title": thread.title,
+                "preempted_thread_id": running_tid,
+                "position": position}
+
     # ---- thread management ----
 
     def _ensure_active_thread(self, fallback_title: str) -> ThreadLog:
@@ -2231,6 +2415,7 @@ instruction in this run.
             self._current_instruction = instruction
             self._current_thread_id = thread.id
             self._current_from_visual_notify = bool(params.get("_from_visual_notify"))
+            self._current_priority = self._normalize_priority(priority)
             t = threading.Thread(
                 target=self._run_task, args=(instruction, thread),
                 kwargs={"extra_system": extra_system, "file_refs": file_refs}, daemon=True
@@ -2310,6 +2495,7 @@ instruction in this run.
             self._current_instruction = None
             self._current_thread_id = None
             self._current_from_visual_notify = False
+            self._current_priority = 1
             # 堆出下一个排队任务（如有）。
             self._drain_queue()
 
@@ -2332,6 +2518,7 @@ instruction in this run.
             self._current_instruction = instruction
             self._current_thread_id = thread.id
             self._current_from_visual_notify = bool(nxt.get("_from_visual_notify"))
+            self._current_priority = priority
             t = threading.Thread(
                 target=self._run_task, args=(instruction, thread),
                 kwargs={"extra_system": extra_system, "file_refs": file_refs}, daemon=True

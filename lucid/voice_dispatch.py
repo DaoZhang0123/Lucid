@@ -1,19 +1,27 @@
 """Voice intent dispatcher.
 
-After the local Whisper transcription returns text, we used to either send it
-to the main agent loop (``mode=agent``) or paste it into the focused input
-(``mode=dictation``) based on a settings toggle. In practice users mix all
-three needs in the same session — so we route through a tiny LLM call that
-picks one of:
+After the local Whisper transcription returns text, route it via a small LLM
+call (no regex rule-book -- see commit history for the previous regex-based
+classifier and why it was scrapped: too rigid, mis-classified obvious abort
+utterances like "stop everything" in Chinese because Python's word-boundary
+does not fire between CJK ideographs).
 
-    - ``thread_new``        — start a brand-new agent task
-    - ``thread_abort``      — cancel the currently running task
-    - ``dictation_append``  — append to the focused input box
+The LLM picks one of:
 
-See ``Docs/voice-input.md`` §5.2 for design rationale. This module owns the
-prompt + JSON parsing + a regex fallback so the dispatcher never raises into
-the front-end. Returns a ``DispatchResult`` the front-end converts into the
-result-state chip(s).
+    - ``thread_new``        -- start a brand-new agent task
+    - ``thread_abort``      -- cancel the currently running task
+    - ``dictation_append``  -- append to the focused input box
+
+...and additionally tells us:
+
+    - ``priority``     : 0 = urgent (preempts a running task), 1 = normal,
+                         2 = background (listener-style; lowest). For
+                         ``thread_abort`` this is always coerced to 0.
+    - ``next_action``  : short human-readable description of what the
+                         dispatcher thinks should happen next. Used for
+                         logging and the overlay confirm chip.
+
+See ``Docs/internal/voice-input.md`` sections 5.2 and 10.9 for design.
 """
 from __future__ import annotations
 
@@ -32,6 +40,7 @@ from .llm_client import LLMClient, build_llm_client
 Intent = Literal["thread_new", "thread_abort", "dictation_append"]
 Confidence = Literal["high", "medium", "low"]
 VALID_INTENTS: tuple[Intent, ...] = ("thread_new", "thread_abort", "dictation_append")
+VALID_PRIORITIES: tuple[int, ...] = (0, 1, 2)
 
 
 @dataclass
@@ -60,121 +69,27 @@ class DispatchResult:
     confidence: Confidence
     reason: str
     cleaned_text: str
-    source: Literal["llm", "regex", "rule"] = "llm"
+    priority: int = 1
+    next_action: str = ""
+    source: Literal["llm", "rule"] = "llm"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 # ---------------------------------------------------------------------------
-# Regex fallback — runs when the LLM call errors out or times out, and is
-# also consulted as a fast pre-pass for obvious abort phrases (so the user
-# yelling "stop!" never has to wait for a network round-trip).
+# Helpers
 # ---------------------------------------------------------------------------
 
-_ABORT_RE = re.compile(
-    r"^\s*(?:hey\s+)?(?:lucid[,\s]+)?"
-    r"(stop(?:\s+(?:it|that|now|the\s+task))?|cancel(?:\s+(?:it|that|the\s+task))?|abort"
-    r"|never\s*mind|nevermind|don'?t\s+do\s+(?:that|it)"
-    r"|停下|停止|取消|算了|不要了|别跑了|别做了|住手"
-    r"|arr[êe]te|annule|annuler|laisse\s+tomber|oublie\s+ç?a)"
-    r"[\s.!?。！？]*$",
-    re.IGNORECASE,
-)# Broader "stop X" pattern: any imperative "stop / cancel / abort / 停 / 取消"
-# at the very start of the utterance, regardless of what comes after. The
-# strict ABORT_RE above only matches utterances that ARE the stop word; this
-# catches "停止当天的Thread" / "停止所有的对话" / "stop the running task" etc.
-_ABORT_PREFIX_RE = re.compile(
-    r"^\s*(?:hey\s+)?(?:lucid[,\s，]+)?"
-    r"(?:"
-    r"stop|cancel|abort|halt|kill|terminate|end|quit|pause"
-    r"|停止|停下|停掉|取消|中断|中止|终止|干掉|杀掉|关掉|退出"
-    r"|arr[êé]te(?:r|z)?|annule(?:r|z)?|stoppe(?:r|z)?|halte"
-    r")\b",
-    re.IGNORECASE,
-)_NEW_VERBS = re.compile(
-    r"\b(open|launch|start|run|send|post|message|write|save|create|generate|"
-    r"summari[sz]e|tell\s+me|find|search|look\s+up|read|fetch|"
-    r"play|pause(?!\s+the\s+task)|skip|email|call)\b"
-    r"|(?:打开|启动|运行|发(?:送)?|写一?[篇下条]?|保存|创建|生成|总结|"
-    r"告诉我|查一?下|搜索|搜一?下|读一?下|播放|暂停|发邮件)"
-    r"|\b(?:ouvre|lance|d[ée]marre|envoie|[ée]cris|sauvegarde|cr[ée]e|g[ée]n[èe]re|"
-    r"r[ée]sume|dis[\s-]+moi|cherche|trouve|lis|joue)\b",
-    re.IGNORECASE,
-)
-_DICT_HINTS = re.compile(
-    r"^\s*(?:also|and|plus|oh|oops|wait|um+|uh+|"
-    r"还有|另外|顺便|对了|另说|还有一句|嗯|呃"
-    r"|aussi|et\s+aussi|euh+|hm+|attends|oh)\b",
+_WAKEWORD_RE = re.compile(
+    r"^\s*(?:hey\s+|\u563f\s*|\u55e8\s*)?lucid[\s,\uff0c\u3002:\uff1a]+",
     re.IGNORECASE,
 )
 
 
 def _strip_filler(text: str) -> str:
     """Drop common wake-word / filler prefixes for the LLM input."""
-    cleaned = re.sub(
-        r"^\s*(?:hey\s+|嘿\s*|嗨\s*)?lucid[\s,，。:：]+",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
-    return cleaned.strip()
-
-
-def regex_classify(text: str, ctx: VoiceContext) -> DispatchResult:
-    """Pure-regex classifier. Used as fallback and as fast-path for aborts."""
-    cleaned = _strip_filler(text)
-    if _ABORT_RE.match(cleaned) and ctx.has_running_thread:
-        return DispatchResult(
-            intent="thread_abort",
-            confidence="high",
-            reason="matched abort phrase",
-            cleaned_text=cleaned,
-            source="regex",
-        )
-    # Broader "stop / 停止 / cancel + <object>" prefix. Slightly lower
-    # confidence than the strict full-utterance match above, but still high
-    # enough that the front-end fires the abort directly when there's a
-    # running thread.
-    if _ABORT_PREFIX_RE.match(cleaned) and ctx.has_running_thread:
-        return DispatchResult(
-            intent="thread_abort",
-            confidence="high",
-            reason="matched abort prefix (stop/停止/cancel + object)",
-            cleaned_text=cleaned,
-            source="regex",
-        )
-    if _NEW_VERBS.search(cleaned):
-        return DispatchResult(
-            intent="thread_new",
-            confidence="medium",
-            reason="matched new-task verb",
-            cleaned_text=cleaned,
-            source="regex",
-        )
-    if ctx.active_input_focus and _DICT_HINTS.match(cleaned):
-        return DispatchResult(
-            intent="dictation_append",
-            confidence="medium",
-            reason="continuation phrase + input focused",
-            cleaned_text=cleaned,
-            source="regex",
-        )
-    if ctx.active_input_focus and not ctx.has_running_thread:
-        return DispatchResult(
-            intent="dictation_append",
-            confidence="low",
-            reason="default to dictation when an input is focused",
-            cleaned_text=cleaned,
-            source="regex",
-        )
-    return DispatchResult(
-        intent="thread_new",
-        confidence="low",
-        reason="no abort / dictation signal",
-        cleaned_text=cleaned,
-        source="regex",
-    )
+    return _WAKEWORD_RE.sub("", text).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -182,48 +97,81 @@ def regex_classify(text: str, ctx: VoiceContext) -> DispatchResult:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are a voice-to-action router for the Lucid desktop assistant. Read the
-transcript and classify the user's intent as exactly one of:
+You are the voice-to-action router for the Lucid desktop assistant. Read
+the transcript and return STRICT JSON with these fields:
 
-  - thread_new       : the user wants Lucid to start a NEW task
-                       (open an app, send a message, summarise, write,
-                       compute, look up, play). English verbs: open / launch /
-                       send / write / summari?e / find / play / call.
-                       Chinese: 打开 / 发 / 写 / 保存 / 总结 / 查 / 播放.
-                       French: ouvre / envoie / écris / résume / cherche.
-  - thread_abort     : the user wants to STOP / cancel the currently running
-                       task. Triggers: stop / cancel / abort / never mind /
-                       don't do that / 停下 / 停止 / 取消 / 算了 / 不要了 /
-                       arrête / annule / laisse tomber.
-                       ONLY pick this if has_running_thread = true; otherwise
-                       fall back to thread_new.
-  - dictation_append : the transcript is filler / continuation / correction
-                       meant for the currently focused input box. Triggers:
-                       starts mid-sentence, "also" / "and" / "one more
-                       thing" / "oops" / 还有 / 另外 / 对了 / aussi / euh.
-                       ONLY pick this if active_input_focus = true; otherwise
-                       fall back to thread_new.
+  intent       : one of "thread_new" | "thread_abort" | "dictation_append"
+  priority     : integer 0, 1, or 2  (see below)
+  next_action  : short imperative sentence describing what should happen
+                 next, written for a human log line (max ~80 chars)
+  confidence   : "high" | "medium" | "low"
+  reason       : one sentence explaining the pick
+  cleaned_text : the transcript with wake-words / fillers removed, kept in
+                 its original language
 
-Set confidence:
-  - high   : an unambiguous trigger word + the corresponding context flag is
-             true.
-  - medium : trigger word present but the context flag is missing, OR the
-             trigger is implicit but the verb tense / phrasing is clear.
-  - low    : ambiguous; the user can disambiguate from a 1-frame chip.
+# Intent meanings
 
-Return STRICT JSON, no prose, no markdown fences:
+  - thread_new       : the user wants Lucid to start a NEW task -- open
+                       an app, send a message, summarise, write, look up,
+                       play, compute, etc. Default when nothing else fits.
+  - thread_abort     : the user wants to STOP / cancel the currently
+                       running task or queued tasks. Triggers in any
+                       language: stop / cancel / abort / never mind /
+                       don't do that / 停 / 停止 / 取消 / 算了 /
+                       不要了 / 别跑了 / arrete / annule / laisse tomber.
+                       ONLY pick this when has_running_thread = true OR
+                       when the user explicitly says "cancel everything
+                       in the queue". Otherwise fall back to thread_new.
+  - dictation_append : the transcript is a continuation / correction /
+                       filler that belongs in the currently focused input
+                       box. Triggers: starts mid-sentence, "also" /
+                       "and" / "one more thing" / "oops" / 还有 / 另外 /
+                       对了 / aussi. ONLY pick this when
+                       active_input_focus = true.
 
-{"intent": "thread_new|thread_abort|dictation_append",
- "confidence": "high|medium|low",
- "reason": "<one short sentence explaining the pick>",
- "cleaned_text": "<transcript with wake-words / fillers stripped>"}
-"""
+# Priority
+
+Use 0/1/2 with the same semantics as the sidecar queue:
+
+  0 = urgent     : the user wants this NOW; it should preempt whatever is
+                   running. Always pick 0 for thread_abort. Also pick 0
+                   for thread_new when the user uses panic words
+                   ("urgent", "right now", "drop everything", "立刻",
+                   "马上", "现在就", "快点", "tout de suite") OR when
+                   the request is safety-critical (mute mic, close
+                   camera, stop sharing, kill app).
+  1 = normal     : ordinary new task. Default for thread_new.
+  2 = background : the utterance is low-importance, can wait behind
+                   normal work -- typically a casual "remind me later",
+                   "when you get a chance", "顺便", "有空时". Rare; only
+                   pick when the user explicitly defers.
+  For dictation_append, set priority = 1 (the field is required but
+  ignored downstream).
+
+# next_action
+
+Concise, imperative, English. Examples:
+
+  - "Spawn an urgent thread and let the LLM decide what to cancel."
+  - "Enqueue a normal new task to open WeChat and message Mom."
+  - "Paste the continuation into the focused textarea."
+  - "Enqueue a background reminder for later."
+
+# Confidence
+
+  high   : an unambiguous trigger word + the corresponding context flag
+           is true (or no context flag is needed).
+  medium : the verb is clear but a context flag is missing, OR the
+           trigger is implicit but the phrasing is unmistakable.
+  low    : ambiguous. The overlay will surface a 1-frame confirm chip.
+
+Return ONLY the JSON object -- no prose, no markdown fences."""
 
 
 def _build_user_msg(text: str, ctx: VoiceContext) -> str:
     last = (ctx.last_user_text or "").strip()
     if len(last) > 240:
-        last = last[:240] + "…"
+        last = last[:240] + "..."
     return (
         f"transcript: {text!r}\n"
         f"locale: {ctx.locale}\n"
@@ -250,6 +198,21 @@ def _parse_llm_json(raw: str) -> dict[str, Any]:
     return json.loads(raw)
 
 
+def _coerce_priority(value: Any, intent: str) -> int:
+    """Clamp priority to {0,1,2}. Force 0 for thread_abort."""
+    if intent == "thread_abort":
+        return 0
+    try:
+        p = int(value)
+    except Exception:
+        return 1
+    if p < 0:
+        return 0
+    if p > 2:
+        return 2
+    return p
+
+
 def _coerce_result(payload: dict[str, Any], cleaned_default: str) -> DispatchResult:
     intent = str(payload.get("intent") or "").strip()
     if intent not in VALID_INTENTS:
@@ -259,11 +222,15 @@ def _coerce_result(payload: dict[str, Any], cleaned_default: str) -> DispatchRes
         conf = "low"
     cleaned = str(payload.get("cleaned_text") or cleaned_default).strip() or cleaned_default
     reason = str(payload.get("reason") or "").strip()[:200]
+    priority = _coerce_priority(payload.get("priority"), intent)
+    next_action = str(payload.get("next_action") or "").strip()[:160]
     return DispatchResult(
         intent=intent,  # type: ignore[arg-type]
         confidence=conf,  # type: ignore[arg-type]
         reason=reason,
         cleaned_text=cleaned,
+        priority=priority,
+        next_action=next_action,
         source="llm",
     )
 
@@ -276,6 +243,8 @@ def _apply_context_guards(res: DispatchResult, ctx: VoiceContext) -> DispatchRes
             confidence="low",
             reason=f"abort downgraded (no running thread): {res.reason}",
             cleaned_text=res.cleaned_text,
+            priority=1,
+            next_action="Enqueue a normal new task (abort had nothing to stop).",
             source=res.source,
         )
     if res.intent == "dictation_append" and not ctx.active_input_focus:
@@ -284,9 +253,40 @@ def _apply_context_guards(res: DispatchResult, ctx: VoiceContext) -> DispatchRes
             confidence="low",
             reason=f"dictation downgraded (no input focus): {res.reason}",
             cleaned_text=res.cleaned_text,
+            priority=res.priority if res.priority != 0 else 1,
+            next_action="Enqueue a normal new task (no input focus for dictation).",
             source=res.source,
         )
     return res
+
+
+def _safe_default(text: str, ctx: VoiceContext, reason: str) -> DispatchResult:
+    """Last-resort result when the LLM completely fails.
+
+    Treats the utterance as a normal new task unless the user is clearly
+    mid-typing into a focused input -- in which case we paste it instead
+    of guessing.
+    """
+    cleaned = _strip_filler(text)
+    if ctx.active_input_focus and not ctx.has_running_thread:
+        return DispatchResult(
+            intent="dictation_append",
+            confidence="low",
+            reason=reason,
+            cleaned_text=cleaned,
+            priority=1,
+            next_action="LLM unavailable -> paste into focused textarea (safest default).",
+            source="rule",
+        )
+    return DispatchResult(
+        intent="thread_new",
+        confidence="low",
+        reason=reason,
+        cleaned_text=cleaned,
+        priority=1,
+        next_action="LLM unavailable -> enqueue as normal new task (safest default).",
+        source="rule",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -297,13 +297,13 @@ class VoiceDispatcher:
     """Lazy-built LLM client + a thread-safe call wrapper.
 
     The same provider as the main agent loop is reused (Copilot / Anthropic),
-    so OAuth tokens / API keys are shared. We keep our own client instance to
-    avoid contention with a long-running agent ``chat`` call — the dispatcher
-    request is small (200 in / 80 out tokens) and should not wait on the main
-    loop's wall-clock timeout.
+    so OAuth tokens / API keys are shared. We keep our own client instance
+    to avoid contention with a long-running agent ``chat`` call -- the
+    dispatcher request is small (~250 in / 120 out tokens) and should not
+    wait on the main loop's wall-clock timeout.
     """
 
-    # Hard wall-clock cap. Above this we fall back to regex.
+    # Hard wall-clock cap. Above this we return a safe default and log.
     _LLM_TIMEOUT_S = 6.0
 
     def __init__(self, cfg: Config):
@@ -330,29 +330,9 @@ class VoiceDispatcher:
                 confidence="low",
                 reason="empty transcript",
                 cleaned_text="",
+                priority=1,
+                next_action="No-op (empty transcript).",
                 source="rule",
-            )
-        # Fast-path obvious aborts so panic stops never wait on the network.
-        cleaned = _strip_filler(text)
-        if _ABORT_RE.match(cleaned) and ctx.has_running_thread:
-            return DispatchResult(
-                intent="thread_abort",
-                confidence="high",
-                reason="abort phrase fast-path",
-                cleaned_text=cleaned,
-                source="regex",
-            )
-        # Broader "stop / 停止 / cancel + <object>" prefix is also a fast-path
-        # for aborts when there's something to abort. Prevents the LLM from
-        # getting confused by short utterances like "停止当天的Thread"
-        # (where the word "Thread" might bias it toward thread_new).
-        if _ABORT_PREFIX_RE.match(cleaned) and ctx.has_running_thread:
-            return DispatchResult(
-                intent="thread_abort",
-                confidence="high",
-                reason="abort prefix fast-path",
-                cleaned_text=cleaned,
-                source="regex",
             )
 
         result_box: dict[str, Any] = {}
@@ -366,7 +346,7 @@ class VoiceDispatcher:
                         {"role": "user", "content": _build_user_msg(text, ctx)},
                     ],
                     tools=[],
-                    max_tokens=200,
+                    max_tokens=300,
                     temperature=0.0,
                     top_p=1.0,
                 )
@@ -382,30 +362,36 @@ class VoiceDispatcher:
 
         if t.is_alive():
             print(
-                f"[voice_dispatch] LLM wall-clock timeout after {elapsed:.1f}s; falling back to regex",
+                f"[voice_dispatch] LLM wall-clock timeout after {elapsed:.1f}s; using safe default",
                 file=sys.stderr,
             )
-            fb = regex_classify(text, ctx)
-            return _apply_context_guards(fb, ctx)
+            return _apply_context_guards(
+                _safe_default(text, ctx, "llm timeout"),
+                ctx,
+            )
         if "error" in result_box:
             print(
                 f"[voice_dispatch] LLM error: {type(result_box['error']).__name__}: "
-                f"{result_box['error']}; falling back to regex",
+                f"{result_box['error']}; using safe default",
                 file=sys.stderr,
             )
-            fb = regex_classify(text, ctx)
-            return _apply_context_guards(fb, ctx)
+            return _apply_context_guards(
+                _safe_default(text, ctx, f"llm error: {type(result_box['error']).__name__}"),
+                ctx,
+            )
 
         try:
             payload = _parse_llm_json(result_box.get("text", ""))
-            res = _coerce_result(payload, cleaned_default=cleaned)
+            res = _coerce_result(payload, cleaned_default=_strip_filler(text))
         except Exception as e:
             print(
-                f"[voice_dispatch] could not parse LLM JSON ({e}); falling back to regex",
+                f"[voice_dispatch] could not parse LLM JSON ({e}); using safe default",
                 file=sys.stderr,
             )
-            fb = regex_classify(text, ctx)
-            return _apply_context_guards(fb, ctx)
+            return _apply_context_guards(
+                _safe_default(text, ctx, f"json parse failed: {e}"),
+                ctx,
+            )
 
         return _apply_context_guards(res, ctx)
 
@@ -414,8 +400,8 @@ __all__ = [
     "Intent",
     "Confidence",
     "VALID_INTENTS",
+    "VALID_PRIORITIES",
     "VoiceContext",
     "DispatchResult",
     "VoiceDispatcher",
-    "regex_classify",
 ]
