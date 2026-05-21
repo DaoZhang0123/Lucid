@@ -26,11 +26,24 @@
     constraints?: Constraints;
     auto_chat_apps?: string[];
     auto_chat_extra?: string;
+    auto_chat_rules?: RuleOverride[];
+    auto_chat_customs?: CustomRule[];
     taskbar_allow_visual?: boolean;
     taskbar_allow_uia?: boolean;
   };
 
   type InstalledApp = { key: string; name: string; icon: string };
+
+  // AUTO-REPLY SAFETY POLICY rule editor types (5/21).
+  // The 6 built-in rules A..F live in the Python sidecar (see
+  // `_DEFAULT_AUTO_CHAT_RULES`). The frontend fetches them once on mount via
+  // the `auto_chat_rules_defaults` RPC and renders one card per rule.
+  // ``autoChatRules`` stores ONLY user-side deltas: per-id ``enabled`` flag
+  // plus an optional ``body`` override (empty body => use built-in default).
+  // ``autoChatCustoms`` is a freeform repeater appended after the defaults.
+  type DefaultRule = { id: string; title: string; body: string };
+  type RuleOverride = { id: string; enabled: boolean; body: string };
+  type CustomRule = { id: string; title: string; enabled: boolean; body: string };
 
   let items = $state<Sched[]>([]);
   let err = $state("");
@@ -71,6 +84,74 @@
   // "only reply to contact X", "reply in formal tone", "never reply to group
   // chats", etc. Empty string = no extra preferences.
   let autoChatExtra = $state("");
+  // AUTO-REPLY SAFETY POLICY rule editor state (5/21). ``defaultRules`` is
+  // fetched once from the sidecar on mount and is read-only. ``autoChatRules``
+  // tracks per-built-in-rule deltas (enabled flag + optional body override).
+  // ``autoChatCustoms`` is the user's open-ended custom-rule list, appended
+  // after the defaults in the rendered system prompt.
+  let defaultRules = $state<DefaultRule[]>([]);
+  let autoChatRules = $state<RuleOverride[]>([]);
+  let autoChatCustoms = $state<CustomRule[]>([]);
+  let expandedRuleId = $state<string | null>(null);
+  let expandedCustomId = $state<string | null>(null);
+  let customSeq = 0;
+
+  function defaultBody(id: string): string {
+    return defaultRules.find((r) => r.id === id)?.body ?? "";
+  }
+  function getRuleOverride(id: string): RuleOverride {
+    return autoChatRules.find((r) => r.id === id) ?? { id, enabled: true, body: "" };
+  }
+  function setRuleOverride(id: string, patch: Partial<RuleOverride>) {
+    const i = autoChatRules.findIndex((r) => r.id === id);
+    const cur = i >= 0 ? autoChatRules[i] : { id, enabled: true, body: "" };
+    const next: RuleOverride = { ...cur, ...patch };
+    const copy = [...autoChatRules];
+    if (i >= 0) copy[i] = next;
+    else copy.push(next);
+    autoChatRules = copy;
+  }
+  function toggleRuleEnabled(id: string, on: boolean) {
+    setRuleOverride(id, { enabled: on });
+  }
+  function setRuleBody(id: string, body: string) {
+    setRuleOverride(id, { body });
+  }
+  function resetRuleBody(id: string) {
+    setRuleOverride(id, { body: "" });
+  }
+  function ruleIsCustomized(id: string): boolean {
+    const o = autoChatRules.find((r) => r.id === id);
+    return !!(o && o.body && o.body.trim());
+  }
+  function ruleCurrentBody(id: string): string {
+    const o = getRuleOverride(id);
+    return o.body || defaultBody(id);
+  }
+  function toggleRuleExpand(id: string) {
+    expandedRuleId = expandedRuleId === id ? null : id;
+  }
+  function addCustomRule() {
+    customSeq += 1;
+    const c: CustomRule = { id: `u${Date.now()}${customSeq}`, title: "", enabled: true, body: "" };
+    autoChatCustoms = [...autoChatCustoms, c];
+    expandedCustomId = c.id;
+  }
+  function removeCustomRule(id: string) {
+    autoChatCustoms = autoChatCustoms.filter((c) => c.id !== id);
+    if (expandedCustomId === id) expandedCustomId = null;
+  }
+  function updateCustomRule(id: string, patch: Partial<CustomRule>) {
+    autoChatCustoms = autoChatCustoms.map((c) => (c.id === id ? { ...c, ...patch } : c));
+  }
+  function toggleCustomExpand(id: string) {
+    expandedCustomId = expandedCustomId === id ? null : id;
+  }
+  function defaultsToOverrides(): RuleOverride[] {
+    // Build a fresh "all enabled, no body overrides" set for the current
+    // defaults. New schedules + reset() use this.
+    return defaultRules.map((r) => ({ id: r.id, enabled: true, body: "" }));
+  }
   // visual_notify: per-schedule listening-channel toggles. Default both ON for
   // widest coverage. UIA priority > visual (zero LLM cost vs every visual hit
   // burning tokens); when UIA fires it also suppresses the visual channel for
@@ -237,6 +318,10 @@
     dateEnd = "";
     autoChatApps = defaultAutoChatApps();
     autoChatExtra = "";
+    autoChatRules = defaultsToOverrides();
+    autoChatCustoms = [];
+    expandedRuleId = null;
+    expandedCustomId = null;
     taskbarAllowVisual = false;
     taskbarAllowUia = true;
   }
@@ -296,6 +381,45 @@
       // see a fully unchecked list.
       : defaultAutoChatApps();
     autoChatExtra = typeof s.auto_chat_extra === "string" ? s.auto_chat_extra : "";
+    // Hydrate rule editor state. For any rule id present in the schedule's
+    // overrides, use the stored {enabled, body}; otherwise default to
+    // {enabled: true, body: ""}. Legacy schedules with no overrides field
+    // get a fresh "all defaults" set.
+    if (Array.isArray(s.auto_chat_rules) && s.auto_chat_rules.length) {
+      const byId = new Map(s.auto_chat_rules.map((r) => [r.id, r]));
+      autoChatRules = defaultRules.map((r) => {
+        const o = byId.get(r.id);
+        return o
+          ? { id: r.id, enabled: o.enabled !== false, body: typeof o.body === "string" ? o.body : "" }
+          : { id: r.id, enabled: true, body: "" };
+      });
+    } else {
+      autoChatRules = defaultsToOverrides();
+    }
+    autoChatCustoms = Array.isArray(s.auto_chat_customs)
+      ? s.auto_chat_customs.map((c) => ({
+          id: String(c.id || `u${Date.now()}${++customSeq}`),
+          title: String(c.title || ""),
+          enabled: c.enabled !== false,
+          body: String(c.body || ""),
+        }))
+      : [];
+    // Migrate the legacy free-form ``auto_chat_extra`` textarea into a single
+    // custom rule the first time a schedule that used it is edited under the
+    // new UI. The legacy field is left intact on the backend (still honoured
+    // by the system-prompt builder) until the user saves again, at which
+    // point save() blanks it out.
+    if (autoChatExtra.trim() && autoChatCustoms.length === 0) {
+      customSeq += 1;
+      autoChatCustoms = [{
+        id: `u-legacy-${customSeq}`,
+        title: "",
+        enabled: true,
+        body: autoChatExtra.trim(),
+      }];
+    }
+    expandedRuleId = null;
+    expandedCustomId = null;
     // Per-schedule channel toggles. Legacy schedules created before this
     // feature have no field saved -> default to true (both on).
     taskbarAllowVisual = typeof s.taskbar_allow_visual === "boolean" ? s.taskbar_allow_visual : false;
@@ -354,10 +478,30 @@
       if (!resolvedInstruction) { err = $_("schedules.instruction_required"); return; }
       const spec = buildSpec();
       const constraints = buildConstraints();
+      // Strip the rule-override list down to only entries that actually
+      // differ from the built-in defaults (saves payload + keeps the JSON
+      // human-readable for users who never touch the safety policy). A rule
+      // is "interesting" if it is disabled or its body has been edited.
+      const rulesPayload = autoChatRules
+        .filter((r) => r.enabled === false || (r.body && r.body.trim()))
+        .map((r) => ({ id: r.id, enabled: r.enabled, body: r.body || "" }));
+      // Drop empty-body customs and trim whitespace.
+      const customsPayload = autoChatCustoms
+        .filter((c) => c.body && c.body.trim())
+        .map((c) => ({
+          id: c.id,
+          title: c.title || "",
+          enabled: c.enabled !== false,
+          body: c.body,
+        }));
+      // Migration: now that the structured editor owns the user's
+      // preferences, blank out the legacy free-form field on save so it
+      // doesn't get double-applied alongside the migrated custom rule.
+      const legacyExtraPayload = customsPayload.length > 0 ? "" : autoChatExtra;
       if (editing) {
-        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null, autoChatExtra: action === "visual_notify" ? autoChatExtra : null, taskbarAllowVisual: action === "visual_notify" ? taskbarAllowVisual : null, taskbarAllowUia: action === "visual_notify" ? taskbarAllowUia : null });
+        await invoke("schedule_update", { id: editing.id, name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null, autoChatExtra: action === "visual_notify" ? legacyExtraPayload : null, autoChatRules: action === "visual_notify" ? rulesPayload : null, autoChatCustoms: action === "visual_notify" ? customsPayload : null, taskbarAllowVisual: action === "visual_notify" ? taskbarAllowVisual : null, taskbarAllowUia: action === "visual_notify" ? taskbarAllowUia : null });
       } else {
-        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null, autoChatExtra: action === "visual_notify" ? autoChatExtra : null, taskbarAllowVisual: action === "visual_notify" ? taskbarAllowVisual : null, taskbarAllowUia: action === "visual_notify" ? taskbarAllowUia : null });
+        await invoke("schedule_add", { name, instruction: resolvedInstruction, action, spec, enabled, constraints, autoChatApps: action === "visual_notify" ? autoChatApps : null, autoChatExtra: action === "visual_notify" ? legacyExtraPayload : null, autoChatRules: action === "visual_notify" ? rulesPayload : null, autoChatCustoms: action === "visual_notify" ? customsPayload : null, taskbarAllowVisual: action === "visual_notify" ? taskbarAllowVisual : null, taskbarAllowUia: action === "visual_notify" ? taskbarAllowUia : null });
       }
       reset();
       await load();
@@ -458,6 +602,18 @@
   }
 
   onMount(async () => {
+    // Fetch built-in AUTO-REPLY SAFETY POLICY rule defaults so the rule
+    // editor below can render one card per rule. Failure here just leaves
+    // the editor empty (the sidecar would still apply its built-in
+    // defaults to any visual_notify run).
+    try {
+      const d = await invoke<{ rules: DefaultRule[] }>("auto_chat_rules_defaults");
+      defaultRules = Array.isArray(d?.rules) ? d.rules : [];
+      // Seed the new-form rule overrides only after defaults are loaded.
+      if (!editing && autoChatRules.length === 0) {
+        autoChatRules = defaultsToOverrides();
+      }
+    } catch { /* defaults optional */ }
     try {
       const r = await invoke<{ items: InstalledApp[] }>("installed_apps_list");
       installedApps = r?.items ?? [];
@@ -577,14 +733,108 @@
           </div>
         {/if}
       </fieldset>
-      <fieldset class="trigger auto-chat-extra">
-        <legend>{$_("schedules.auto_chat_extra_legend")}</legend>
-        <p class="sub-hint">{$_("schedules.auto_chat_extra_hint")}</p>
-        <textarea
-          rows="4"
-          bind:value={autoChatExtra}
-          placeholder={$_("schedules.auto_chat_extra_placeholder")}
-        ></textarea>
+      <fieldset class="trigger safety-rules">
+        <legend>{$_("schedules.safety_rules_legend")}</legend>
+        <p class="sub-hint">{$_("schedules.safety_rules_hint")}</p>
+        {#if defaultRules.length === 0}
+          <p class="sub-hint">{$_("schedules.safety_rules_loading")}</p>
+        {:else}
+          <ul class="rule-list">
+            {#each defaultRules as rule (rule.id)}
+              {@const ovr = getRuleOverride(rule.id)}
+              {@const customized = ruleIsCustomized(rule.id)}
+              {@const expanded = expandedRuleId === rule.id}
+              <li class="rule-card" class:disabled={!ovr.enabled}>
+                <div class="rule-head">
+                  <label class="rule-toggle">
+                    <input
+                      type="checkbox"
+                      checked={ovr.enabled}
+                      onchange={(e) => toggleRuleEnabled(rule.id, (e.currentTarget as HTMLInputElement).checked)}
+                    />
+                    <span class="rule-title">{rule.id}. {rule.title}</span>
+                  </label>
+                  <div class="rule-actions">
+                    {#if customized}
+                      <span class="rule-badge">{$_("schedules.safety_rule_customized_badge")}</span>
+                    {/if}
+                    <button type="button" class="ghost rule-expand" onclick={() => toggleRuleExpand(rule.id)}>
+                      {expanded ? $_("schedules.safety_rule_collapse") : $_("schedules.safety_rule_edit")}
+                    </button>
+                  </div>
+                </div>
+                {#if expanded}
+                  <textarea
+                    class="rule-body"
+                    rows="8"
+                    value={ovr.body || rule.body}
+                    oninput={(e) => setRuleBody(rule.id, (e.currentTarget as HTMLTextAreaElement).value)}
+                  ></textarea>
+                  <div class="rule-foot">
+                    {#if customized}
+                      <button type="button" class="ghost" onclick={() => resetRuleBody(rule.id)}>
+                        {$_("schedules.safety_rule_reset_default")}
+                      </button>
+                    {/if}
+                  </div>
+                {:else}
+                  <pre class="rule-preview">{ovr.body || rule.body}</pre>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </fieldset>
+      <fieldset class="trigger custom-rules">
+        <legend>{$_("schedules.custom_rules_legend")}</legend>
+        <p class="sub-hint">{$_("schedules.custom_rules_hint")}</p>
+        {#if autoChatCustoms.length > 0}
+          <ul class="rule-list">
+            {#each autoChatCustoms as c (c.id)}
+              {@const expanded = expandedCustomId === c.id}
+              <li class="rule-card" class:disabled={!c.enabled}>
+                <div class="rule-head">
+                  <label class="rule-toggle">
+                    <input
+                      type="checkbox"
+                      checked={c.enabled}
+                      onchange={(e) => updateCustomRule(c.id, { enabled: (e.currentTarget as HTMLInputElement).checked })}
+                    />
+                    <input
+                      type="text"
+                      class="custom-title"
+                      placeholder={$_("schedules.custom_rule_title_placeholder")}
+                      value={c.title}
+                      oninput={(e) => updateCustomRule(c.id, { title: (e.currentTarget as HTMLInputElement).value })}
+                    />
+                  </label>
+                  <div class="rule-actions">
+                    <button type="button" class="ghost rule-expand" onclick={() => toggleCustomExpand(c.id)}>
+                      {expanded ? $_("schedules.safety_rule_collapse") : $_("schedules.safety_rule_edit")}
+                    </button>
+                    <button type="button" class="ghost danger" onclick={() => removeCustomRule(c.id)}>
+                      {$_("schedules.custom_rule_remove")}
+                    </button>
+                  </div>
+                </div>
+                {#if expanded || !c.body.trim()}
+                  <textarea
+                    class="rule-body"
+                    rows="5"
+                    placeholder={$_("schedules.custom_rule_body_placeholder")}
+                    value={c.body}
+                    oninput={(e) => updateCustomRule(c.id, { body: (e.currentTarget as HTMLTextAreaElement).value })}
+                  ></textarea>
+                {:else}
+                  <pre class="rule-preview">{c.body}</pre>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <button type="button" class="ghost custom-add" onclick={addCustomRule}>
+          + {$_("schedules.custom_rule_add")}
+        </button>
       </fieldset>
     {:else if action === "scan_launcher_icons"}
       <p class="sub-hint visual-note">{$_("schedules.launcher_scan_instruction")}</p>
@@ -729,6 +979,27 @@
 </div>
 
 <style>
+  /* AUTO-REPLY SAFETY POLICY rule-editor (5/21). */
+  .safety-rules .sub-hint, .custom-rules .sub-hint { margin-bottom: 0.5rem; }
+  .rule-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.35rem; }
+  .rule-card { border: 1px solid #d1d5db; border-radius: 6px; padding: 0.45rem 0.55rem; background: #fafafa; }
+  .rule-card.disabled { background: #f3f4f6; opacity: 0.65; }
+  .rule-head { display: flex; align-items: center; gap: 0.5rem; }
+  .rule-toggle { display: flex; align-items: center; gap: 0.4rem; margin: 0; flex: 1 1 auto; min-width: 0; }
+  .rule-title { font-weight: 500; }
+  .rule-actions { display: flex; align-items: center; gap: 0.35rem; flex: 0 0 auto; }
+  .rule-badge { font-size: 0.72rem; padding: 0.05rem 0.4rem; border-radius: 10px; background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+  .rule-body { display: block; width: 100%; box-sizing: border-box; margin-top: 0.4rem;
+    padding: 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 0.82rem; line-height: 1.35; }
+  .rule-preview { margin: 0.4rem 0 0; padding: 0.4rem 0.5rem; border: 1px dashed #d1d5db; border-radius: 4px;
+    background: #fff; color: #374151; font-family: ui-monospace, "Cascadia Mono", monospace; font-size: 0.78rem;
+    line-height: 1.35; white-space: pre-wrap; word-break: break-word; max-height: 14rem; overflow: auto; }
+  .rule-foot { margin-top: 0.3rem; display: flex; gap: 0.4rem; }
+  .custom-title { flex: 1 1 auto; min-width: 0; padding: 0.2rem 0.4rem; border: 1px solid #d1d5db; border-radius: 4px; background: transparent; }
+  .custom-add { margin-top: 0.5rem; }
+  .ghost.danger { color: #b91c1c; }
+
+
   .page { max-width: 56rem; margin: 0; padding: 1rem 1.5rem; font: 14px -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
   header { display: flex; align-items: baseline; gap: 1rem; }
   .back { color: #2563eb; text-decoration: none; font-size: 0.9rem; }

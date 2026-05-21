@@ -71,6 +71,62 @@ def _normalize_apps(apps: list[str] | None) -> list[str]:
     return out
 
 
+def _normalize_auto_chat_rules(rules: Any) -> list[dict[str, Any]]:
+    """Normalize ``auto_chat_rules`` (per-default-rule overrides).
+
+    Accepts a list of ``{id, enabled?, body?}``. Drops entries without an
+    ``id``. ``enabled`` defaults to True; ``body`` defaults to ``""`` (sidecar
+    builder will fall back to the built-in default body when empty).
+    """
+    if not isinstance(rules, list):
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        rid = str(r.get("id") or "").strip()
+        if not rid or rid in seen:
+            continue
+        seen.add(rid)
+        out.append({
+            "id": rid,
+            "enabled": bool(r.get("enabled", True)),
+            "body": str(r.get("body") or ""),
+        })
+    return out
+
+
+def _normalize_auto_chat_customs(customs: Any) -> list[dict[str, Any]]:
+    """Normalize ``auto_chat_customs`` (fully user-defined rules).
+
+    Accepts a list of ``{id?, title?, enabled?, body}``. Entries with an
+    empty ``body`` are dropped (no point persisting an empty custom rule).
+    Missing ``id`` is auto-filled (sequential ``u1``, ``u2``, ...).
+    """
+    if not isinstance(customs, list):
+        return []
+    out: list[dict[str, Any]] = []
+    auto_idx = 0
+    for c in customs:
+        if not isinstance(c, dict):
+            continue
+        body = str(c.get("body") or "").strip()
+        if not body:
+            continue
+        cid = str(c.get("id") or "").strip()
+        if not cid:
+            auto_idx += 1
+            cid = f"u{auto_idx}"
+        out.append({
+            "id": cid,
+            "title": str(c.get("title") or "").strip(),
+            "enabled": bool(c.get("enabled", True)),
+            "body": body,
+        })
+    return out
+
+
 def _resolve_tz(name: str | None):
     """返回 tzinfo 或 None（None 代表本机时间）。``name`` 为空 / 'local' / 'system' 也返回 None。"""
     if not name:
@@ -298,6 +354,8 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
                  action: str | None = None,
                  auto_chat_apps: list[str] | None = None,
                  auto_chat_extra: str | None = None,
+                 auto_chat_rules: list[dict[str, Any]] | None = None,
+                 auto_chat_customs: list[dict[str, Any]] | None = None,
                  taskbar_allow_visual: bool | None = None,
                  taskbar_allow_uia: bool | None = None) -> dict[str, Any]:
     name = (name or "").strip() or "未命名计划"
@@ -342,6 +400,8 @@ def add_schedule(name: str, instruction: str, spec: dict[str, Any],
         "constraints": cons,
         "auto_chat_apps": _normalize_apps(auto_chat_apps),
         "auto_chat_extra": (auto_chat_extra or "").strip(),
+        "auto_chat_rules": _normalize_auto_chat_rules(auto_chat_rules),
+        "auto_chat_customs": _normalize_auto_chat_customs(auto_chat_customs),
         # Per-schedule taskbar-listener channel toggles. **Soft-mutex default**:
         # UIA on, visual off — UIA is event-driven (zero LLM cost, sub-100ms),
         # while visual step-2 LLM costs tokens per diff hit and most "diffs"
@@ -465,6 +525,10 @@ def update_schedule(sid: str, **fields: Any) -> dict[str, Any] | None:
                 it["auto_chat_apps"] = _normalize_apps(fields["auto_chat_apps"])
             if "auto_chat_extra" in fields and fields["auto_chat_extra"] is not None:
                 it["auto_chat_extra"] = str(fields["auto_chat_extra"] or "").strip()
+            if "auto_chat_rules" in fields and fields["auto_chat_rules"] is not None:
+                it["auto_chat_rules"] = _normalize_auto_chat_rules(fields["auto_chat_rules"])
+            if "auto_chat_customs" in fields and fields["auto_chat_customs"] is not None:
+                it["auto_chat_customs"] = _normalize_auto_chat_customs(fields["auto_chat_customs"])
             if "taskbar_allow_visual" in fields and fields["taskbar_allow_visual"] is not None:
                 it["taskbar_allow_visual"] = bool(fields["taskbar_allow_visual"])
             if "taskbar_allow_uia" in fields and fields["taskbar_allow_uia"] is not None:

@@ -852,29 +852,38 @@ pub async fn schedule_list() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn schedule_add(name: String, instruction: String, spec: Value, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>, auto_chat_extra: Option<String>, taskbar_allow_visual: Option<bool>, taskbar_allow_uia: Option<bool>) -> Result<Value, String> {
+pub async fn schedule_add(name: String, instruction: String, spec: Value, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>, auto_chat_extra: Option<String>, auto_chat_rules: Option<Value>, auto_chat_customs: Option<Value>, taskbar_allow_visual: Option<bool>, taskbar_allow_uia: Option<bool>) -> Result<Value, String> {
     instance().request("schedule_add", json!({
         "name": name, "instruction": instruction, "spec": spec,
         "enabled": enabled.unwrap_or(true),
         "constraints": constraints,
         "auto_chat_apps": auto_chat_apps,
         "auto_chat_extra": auto_chat_extra,
+        "auto_chat_rules": auto_chat_rules,
+        "auto_chat_customs": auto_chat_customs,
         "taskbar_allow_visual": taskbar_allow_visual,
         "taskbar_allow_uia": taskbar_allow_uia,
     })).await
 }
 
 #[tauri::command]
-pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>, auto_chat_extra: Option<String>, taskbar_allow_visual: Option<bool>, taskbar_allow_uia: Option<bool>) -> Result<Value, String> {
+pub async fn schedule_update(id: String, name: Option<String>, instruction: Option<String>, spec: Option<Value>, enabled: Option<bool>, constraints: Option<Value>, auto_chat_apps: Option<Vec<String>>, auto_chat_extra: Option<String>, auto_chat_rules: Option<Value>, auto_chat_customs: Option<Value>, taskbar_allow_visual: Option<bool>, taskbar_allow_uia: Option<bool>) -> Result<Value, String> {
     instance().request("schedule_update", json!({
         "id": id, "name": name, "instruction": instruction, "spec": spec,
         "enabled": enabled,
         "constraints": constraints,
         "auto_chat_apps": auto_chat_apps,
         "auto_chat_extra": auto_chat_extra,
+        "auto_chat_rules": auto_chat_rules,
+        "auto_chat_customs": auto_chat_customs,
         "taskbar_allow_visual": taskbar_allow_visual,
         "taskbar_allow_uia": taskbar_allow_uia,
     })).await
+}
+
+#[tauri::command]
+pub async fn auto_chat_rules_defaults() -> Result<Value, String> {
+    instance().request("auto_chat_rules_defaults", json!({})).await
 }
 
 #[tauri::command]

@@ -20,7 +20,7 @@
     refreshThreadList,
     type FileRef,
   } from "$lib/chatStore.svelte";
-  import { setDictationSink } from "$lib/voice";
+  import { setDictationSink, webviewSpacePtt } from "$lib/voice";
   import ClampText from "$lib/ClampText.svelte";
 
   let instruction = $state("");
@@ -302,6 +302,32 @@
 
   // Tauri 2 drag-drop: paths arrive on the webview event, not via DOM `drop`.
   let unlistenDragDrop: UnlistenFn | null = null;
+
+  // Window-level Space-PTT fallback (5/21). The WH_KEYBOARD_LL hook is bypassed
+  // by Chromium's input pipeline inside Lucid's own webview, so pressing Space
+  // while Lucid has focus (but no editable element is focused — e.g. the user
+  // clicked a button or the chat area) never reaches the Rust hold-timer. Mirror
+  // the textarea's onkeydown/onkeyup here so any Space within the Lucid window
+  // engages PTT, unless the user is actively typing in an editable element.
+  function _isEditableTarget(t: EventTarget | null): boolean {
+    if (!(t instanceof HTMLElement)) return false;
+    const tag = t.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (t.isContentEditable) return true;
+    return false;
+  }
+  function _onWinSpaceDown(e: KeyboardEvent) {
+    if (e.code !== "Space" && e.key !== " ") return;
+    if (e.repeat) return;
+    if (_isEditableTarget(e.target)) return; // textarea handler handles its own case
+    if (webviewSpacePtt("pressed")) e.preventDefault();
+  }
+  function _onWinSpaceUp(e: KeyboardEvent) {
+    if (e.code !== "Space" && e.key !== " ") return;
+    if (_isEditableTarget(e.target)) return;
+    webviewSpacePtt("released");
+  }
+
   onMount(() => {
     void (async () => {
       try {
@@ -322,10 +348,14 @@
         // browser dev mode without webview drag-drop — fall back to DOM drop on the chat container.
       }
     })();
+    window.addEventListener("keydown", _onWinSpaceDown, true);
+    window.addEventListener("keyup", _onWinSpaceUp, true);
   });
   onDestroy(() => {
     unlistenDragDrop?.();
     unlistenDragDrop = null;
+    window.removeEventListener("keydown", _onWinSpaceDown, true);
+    window.removeEventListener("keyup", _onWinSpaceUp, true);
   });
 
   async function start() {
@@ -678,7 +708,27 @@
             rows="2"
             bind:value={instruction}
             onpaste={onPaste}
-            onkeydown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chat.running ? cancel() : start(); } }}
+            onkeydown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                chat.running ? cancel() : start();
+                return;
+              }
+              // Webview-level Space-PTT fallback: only engages when the
+              // textarea is empty (i.e. the user isn't mid-sentence) and the
+              // configured hotkey is bare Space. Without this, Chromium's
+              // input pipeline lets Space type a literal space inside Lucid
+              // even though the OS-level WH_KEYBOARD_LL hook tries to swallow
+              // it. See `webviewSpacePtt` in $lib/voice.
+              if (e.key === " " && !e.repeat && !instruction) {
+                if (webviewSpacePtt("pressed")) e.preventDefault();
+              }
+            }}
+            onkeyup={(e) => {
+              if (e.key === " ") {
+                webviewSpacePtt("released");
+              }
+            }}
           ></textarea>
           <button type="button"
                   class="mic mic-{dictateState}"

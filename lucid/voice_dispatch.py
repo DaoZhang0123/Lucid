@@ -119,6 +119,14 @@ the transcript and return STRICT JSON with these fields:
                        language: stop / cancel / abort / never mind /
                        don't do that / 停 / 停止 / 取消 / 算了 /
                        不要了 / 别跑了 / arrete / annule / laisse tomber.
+                       IMPORTANT: faster-whisper frequently mis-hears
+                       "取消" (qǔ xiāo) as one of its homophones —
+                       "取效", "取笑", "取销", "曲消", "去消", "取小",
+                       "取下". When the rest of the sentence makes it
+                       obvious the user wants to cancel (e.g. "取效刚刚
+                       的任务" / "取笑当前任务"), treat it as thread_abort
+                       with high confidence. Do NOT downgrade just because
+                       the character is "wrong".
                        ONLY pick this when has_running_thread = true OR
                        when the user explicitly says "cancel everything
                        in the queue". Otherwise fall back to thread_new.

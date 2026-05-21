@@ -191,6 +191,23 @@ export async function reloadVoiceConfig(): Promise<void> {
   if (cfg) voiceConfigLoaded = true;
 }
 
+/** Webview-level fallback for the bare-Space PTT hotkey (5/21).
+ *
+ * Tauri/WebView2 routes keystrokes through Chromium's own input pipeline which
+ * can bypass our `WH_KEYBOARD_LL` swallow → in Lucid's own textarea, Space
+ * still types a literal space and the Rust-side hold timer never fires. The
+ * chat composer calls this on keydown / keyup of Space when the textarea is
+ * empty (i.e. the user clearly isn't mid-sentence), so the same long-press
+ * machinery used by the Rust hook runs in-process. Returns true if the event
+ * was consumed (caller should `preventDefault`), false otherwise. */
+export function webviewSpacePtt(kind: "pressed" | "released"): boolean {
+  if (!cfg?.enabled) return false;
+  const hk = (cfg.hotkey || "").trim().toLowerCase();
+  if (hk !== "space" && hk !== "spacebar") return false;
+  onHotkeyEvent(kind);
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Config & hotkey wiring
 // ---------------------------------------------------------------------------
@@ -520,7 +537,7 @@ async function onRecorderStop(): Promise<void> {
 
   if (dispatch.intent === "thread_abort") {
     void invoke("voice_dispatch_abort", {
-      args: { targetHint: cleaned, transcript: result.text || "" },
+      args: { targetHint: cleaned, transcript: result.text || "", uiLocale: get(i18nLocale) ?? "" },
     }).catch((e) => {
       // Fallback to the old blunt path so we never leave a runaway task on
       // screen because of a sidecar hiccup.
@@ -592,7 +609,7 @@ function commitResult(): void {
   switch (intent) {
     case "thread_abort":
       void invoke("voice_dispatch_abort", {
-        args: { targetHint: text, transcript: text },
+        args: { targetHint: text, transcript: text, uiLocale: get(i18nLocale) ?? "" },
       }).catch((e) => {
         console.warn("voice_dispatch_abort failed, falling back to cancel+clear:", e);
         void cancelTask().catch((err) => console.warn("cancelTask failed:", err));

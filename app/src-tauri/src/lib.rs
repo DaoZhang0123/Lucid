@@ -145,6 +145,7 @@ pub fn run() {
             sidecar::schedule_update,
             sidecar::schedule_delete,
             sidecar::schedule_run_now,
+            sidecar::auto_chat_rules_defaults,
             sidecar::doze_status,
             sidecar::doze_run_now,
             sidecar::doze_clear_processed,

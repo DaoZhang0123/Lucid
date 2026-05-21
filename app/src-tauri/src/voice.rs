@@ -205,6 +205,13 @@ pub struct DispatchAbortArgs {
     pub target_hint: Option<String>,
     #[serde(default)]
     pub transcript: Option<String>,
+    #[serde(default)]
+    pub ui_locale: Option<String>,
+    /// "voice" (default) or "text" — used by the sidecar to phrase the
+    /// urgent-thread title / instruction / system prompt correctly when the
+    /// abort was initiated by typing rather than speaking.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// Spawn the urgent (priority=0) thread that owns the cancel decision. The
@@ -219,6 +226,12 @@ pub async fn voice_dispatch_abort(args: DispatchAbortArgs) -> Result<Value, Stri
     }
     if let Some(t) = args.transcript {
         params["transcript"] = json!(t);
+    }
+    if let Some(l) = args.ui_locale {
+        params["ui_locale"] = json!(l);
+    }
+    if let Some(s) = args.source {
+        params["source"] = json!(s);
     }
     sidecar::instance().request("voice_dispatch_abort", params).await
 }

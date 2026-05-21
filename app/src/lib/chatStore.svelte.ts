@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { get } from "svelte/store";
-import { _ } from "svelte-i18n";
+import { _, locale as i18nLocale } from "svelte-i18n";
 
 function t(key: string, values?: Record<string, string | number | boolean | Date | null | undefined>): string {
   try {
@@ -15,6 +15,17 @@ function t(key: string, values?: Record<string, string | number | boolean | Date
 // 由 startTask 设为 true；handleEvent 里下一次 thread_changed 后重置。
 // 避免本轮刚 push 的用户消息被 thread 创建事件冲掉。
 let _skipNextThreadChangedClear = false;
+
+// Typed-text intent dispatch (5/21): when a task is currently running and
+// the user types a short message, route it through the SAME LLM-based
+// `voice_dispatch` classifier the voice path uses (see lucid/voice_dispatch.py).
+// If the LLM picks `thread_abort`, we spawn a priority=0 urgent thread that
+// auto-preempts the running task. The previous keyword/regex approach
+// (取消/stop/annule…) was scrapped because it could not catch arbitrary
+// phrasings like "别忙了" / "let's not do that after all" / ASR homophones.
+// Long messages (> 100 chars) skip dispatch — they're almost never just
+// "cancel" and the extra LLM round-trip would add noticeable latency.
+const _DISPATCH_MAX_CHARS = 100;
 
 export type ChatItem =
   | { kind: "user"; text: string }
@@ -383,6 +394,53 @@ export async function startTask(
   fileRefs: FileRef[] = [],
 ): Promise<void> {
   if (!text) return;
+  // Abort-intent fast path (5/21): when a task is currently running and
+  // the user types a SHORT message (≤100 chars, no attachments), ask the
+  // LLM `voice_dispatch` classifier to decide whether this is an abort
+  // request. If yes → route via `voice_dispatch_abort` (priority=0 urgent
+  // thread that auto-preempts the running task). If no → fall through to
+  // normal enqueue. This replaces the previous regex keyword check so the
+  // model can recognize arbitrary phrasings ("let's not do that after all",
+  // "别忙了", ASR homophones like 取效/取笑) without a hand-maintained list.
+  if (chat.running && !fileRefs.length && text.trim().length <= _DISPATCH_MAX_CHARS) {
+    try {
+      const dispatch: any = await invoke("voice_dispatch", {
+        args: {
+          text,
+          mode: "auto",
+          context: {
+            hasRunningThread: true,
+            activeInputFocus: false,
+            lastUserText: null,
+            locale: (get(i18nLocale) ?? navigator.language ?? "en").split("-")[0].toLowerCase(),
+          },
+        },
+      });
+      if (dispatch && dispatch.intent === "thread_abort") {
+        push({ kind: "user", text });
+        push({ kind: "system", text: t("chat.abort_request_sent") });
+        try {
+          await invoke("voice_dispatch_abort", {
+            args: {
+              targetHint: dispatch.cleaned_text || text,
+              transcript: text,
+              uiLocale: get(i18nLocale) ?? "",
+              source: "text",
+            },
+          });
+          void refreshThreadList();
+          return;
+        } catch (e) {
+          push({ kind: "system", text: `urgent cancel failed, falling back: ${e}` });
+        }
+      }
+      // intent !== "thread_abort" → fall through to normal enqueue below.
+    } catch (e) {
+      // Dispatcher unreachable (sidecar down, LLM error, etc) — silently
+      // fall through to the normal enqueue path so user input is never lost.
+      console.warn("voice_dispatch for typed text failed:", e);
+    }
+  }
   // 用户气泡先落地；附件 chip 由后端持久化的 user_attachments 事件统一驱动
   // （live 实时事件 + 重新打开 thread 重放）。
   push({ kind: "user", text });
