@@ -37,7 +37,7 @@ Lucid:   *taskbar UIA listener sees a new Teams message (no LLM confirm needed)*
 | Auto-reply to messages | Official bots only; registration required; can't persist state; can't see full context | ✅ **Controls your real client.** Reads any message, sees full history, replies as you, stateful. |
 | Setup | Hours of glue code | Install, pick an LLM, type a sentence |
 | Fails when an app updates its API | Constantly | Only if the UI changes visually |
-| Cost | Vendor lock-in | Bring-your-own LLM (Anthropic / Copilot) |
+| Cost | Vendor lock-in | Bring-your-own LLM (Anthropic / GitHub Copilot / OpenAI / Gemini) |
 | Diversity & inclusion | Rarely considered | ✅ **Hold the spacebar to speak; speech is transcribed and run directly** — makes Lucid usable for people with limited mobility (or anyone who prefers voice over typing). |
 
 ---
@@ -58,8 +58,10 @@ Download `lucid_<version>_x64-setup.exe` from a release, run it, launch **Lucid*
 
 On first run, open **Settings** and pick an LLM provider:
 
-- **GitHub Copilot** — click *Sign in to GitHub Copilot*, do the device-code flow. Free as long as you have a Copilot subscription.
+- **GitHub Copilot** — click *Sign in to GitHub Copilot*, do the device-code flow. Free as long as you have a Copilot subscription. Default model `claude-opus-4.6`; the model dropdown is auto-populated from Copilot's `/models` endpoint, so any model your subscription unlocks (Claude Opus 4.x, GPT-5.x, Gemini 2.x, …) shows up automatically.
 - **Anthropic** — paste an `sk-ant-…` key.
+- **OpenAI** — paste an `sk-…` key (OpenAI-compatible base URLs are also supported, e.g. Azure / proxy gateways).
+- **Gemini** — paste a Google AI Studio API key.
 
 ---
 

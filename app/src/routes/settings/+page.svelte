@@ -5,7 +5,7 @@
   import { SUPPORTED_LOCALES, LOCALE_LABELS, saveLocale, type SupportedLocale } from "$lib/i18n";
   import { reloadVoiceConfig } from "$lib/voice";
 
-  type Provider = "anthropic" | "copilot" | "proxy";
+  type Provider = "anthropic" | "copilot" | "openai" | "gemini" | "proxy";
 
   // Mirror current i18n locale into a local $state so <select bind:value> works.
   // The store is also read directly in the change handler to persist + apply.
@@ -27,13 +27,36 @@
   let anthApiKey = $state("");
   let anthModel = $state("claude-opus-4-5-20250929");
   let anthBaseUrl = $state("https://api.anthropic.com");
+  // openai (direct)
+  let openaiApiKey = $state("");
+  let openaiModel = $state("gpt-5");
+  let openaiBaseUrl = $state("https://api.openai.com/v1");
+  // gemini (direct, OpenAI-compatible endpoint)
+  let geminiApiKey = $state("");
+  let geminiModel = $state("gemini-2.5-pro");
+  let geminiBaseUrl = $state("https://generativelanguage.googleapis.com/v1beta/openai/");
   // copilot
-  let copModel = $state("claude-opus-4-6");
+  let copModel = $state("claude-opus-4.6");
+  // Models are fetched dynamically from the user's Copilot plan via the
+  // `/models` endpoint when the provider is copilot AND the user is logged in.
+  // The static preset list was removed because Copilot rotates models faster
+  // than UI ships — and because some models (gpt-5.x reasoning family) only
+  // expose `/responses`, which we route to automatically.
+  type CopilotModelInfo = {
+    id: string;
+    name: string;
+    vendor: string;
+    supports_chat: boolean;
+    supports_responses: boolean;
+    preview: boolean;
+    policy_state: string | null;
+  };
+  let copilotModels = $state<CopilotModelInfo[]>([]);
+  let copilotModelsLoading = $state(false);
+  let copilotModelsError = $state<string>("");
 
-  // Curated model presets shown in the <select> dropdowns. The user can
-  // always pick "(custom…)" to type any model id the backend currently
-  // accepts — model catalogues drift faster than we can ship UI updates,
-  // so the presets are advisory rather than authoritative.
+  // Curated Anthropic-direct presets (Anthropic's API doesn't expose a
+  // discovery endpoint we can hit without a paid call, so this stays static).
   const ANTH_MODEL_PRESETS = [
     "claude-opus-4-7-20260201",
     "claude-opus-4-6-20251201",
@@ -41,16 +64,23 @@
     "claude-sonnet-4-6-20260201",
     "claude-sonnet-4-5-20250929",
   ];
-  const COPILOT_MODEL_PRESETS = [
-    "claude-opus-4-7",
-    "claude-opus-4-6",
-    "claude-sonnet-4-6",
-    "claude-sonnet-4-5",
-    "gpt-5.5",
+  // OpenAI direct API — the catalogue rotates fast; presets are advisory.
+  const OPENAI_MODEL_PRESETS = [
     "gpt-5",
-    "gemini-3.5-pro",
-    "gemini-3.5-flash",
+    "gpt-5-mini",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "o3",
+    "o3-mini",
+  ];
+  // Gemini via the OpenAI-compatible endpoint. Same caveat — advisory only.
+  const GEMINI_MODEL_PRESETS = [
     "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.0-pro",
+    "gemini-2.0-flash",
   ];
   const MODEL_CUSTOM_SENTINEL = "__custom__";
 
@@ -218,6 +248,8 @@
         proxy: { base_url: string; model: string; api_key: string };
         anthropic: { api_key: string; model: string; base_url: string };
         copilot: { model: string };
+        openai?: { api_key: string; model: string; base_url: string };
+        gemini?: { api_key: string; model: string; base_url: string };
         voice?: {
           enabled: boolean | null;
           engine: string;
@@ -237,6 +269,8 @@
       path = cfg.path;
       if (cfg.provider === "anthropic" || cfg.provider === "copilot") {
         provider = cfg.provider;
+      } else if (cfg.provider === "openai" || cfg.provider === "gemini") {
+        provider = cfg.provider;
       } else if (cfg.provider === "proxy") {
         // Proxy provider has been removed from the settings UI; map any
         // legacy stored value to anthropic so the form has a valid selection.
@@ -249,7 +283,18 @@
       if (cfg.anthropic?.api_key) anthApiKey = cfg.anthropic.api_key;
       if (cfg.anthropic?.model) anthModel = cfg.anthropic.model;
       if (cfg.anthropic?.base_url) anthBaseUrl = cfg.anthropic.base_url;
-      if (cfg.copilot?.model) copModel = cfg.copilot.model;
+      if (cfg.copilot?.model) {
+        // Legacy dash form ("claude-opus-4-6") is still in older configs;
+        // normalise to Copilot's canonical dot form so the dynamic model
+        // dropdown matches it once loaded.
+        copModel = cfg.copilot.model.replace(/^(claude-(?:opus|sonnet|haiku))-(\d+)-(\d+)$/, "$1-$2.$3");
+      }
+      if (cfg.openai?.api_key) openaiApiKey = cfg.openai.api_key;
+      if (cfg.openai?.model) openaiModel = cfg.openai.model;
+      if (cfg.openai?.base_url) openaiBaseUrl = cfg.openai.base_url;
+      if (cfg.gemini?.api_key) geminiApiKey = cfg.gemini.api_key;
+      if (cfg.gemini?.model) geminiModel = cfg.gemini.model;
+      if (cfg.gemini?.base_url) geminiBaseUrl = cfg.gemini.base_url;
       if (typeof cfg.temperature === "number") temperature = cfg.temperature;
       if (typeof cfg.top_p === "number") topP = cfg.top_p;
       if (cfg.emergency_hotkey) emergencyHotkey = cfg.emergency_hotkey;
@@ -291,6 +336,7 @@
     }
     await refreshCopilotStatus();
     void refreshModelStatus();
+    if (copStatus.logged_in) void refreshCopilotModels();
   });
 
   onDestroy(() => {
@@ -318,6 +364,8 @@
           proxy: { base_url: baseUrl, model, api_key: apiKey },
           anthropic: { api_key: anthApiKey, model: anthModel, base_url: anthBaseUrl },
           copilot: { model: copModel },
+          openai: { api_key: openaiApiKey, model: openaiModel, base_url: openaiBaseUrl },
+          gemini: { api_key: geminiApiKey, model: geminiModel, base_url: geminiBaseUrl },
         },
       });
       // Try a hot reload; if a task is running it'll be rejected — user needs to wait.
@@ -464,6 +512,7 @@
             copDevice = null;
             copBusy = false;
             await refreshCopilotStatus();
+            void refreshCopilotModels();
             // 自动切到 copilot provider 并保存
             provider = "copilot";
             await save();
@@ -515,6 +564,36 @@
       await refreshCopilotStatus();
     } catch (e) {
       copError = String(e);
+    }
+  }
+
+  async function refreshCopilotModels(opts: { force?: boolean } = {}) {
+    copilotModelsLoading = true;
+    copilotModelsError = "";
+    try {
+      const r = (await invoke("copilot_list_models", { forceRefresh: !!opts.force })) as {
+        models: CopilotModelInfo[];
+        default: string;
+        error?: string;
+      };
+      if (r.error) {
+        copilotModelsError = r.error;
+        copilotModels = [];
+      } else {
+        // Sort: vendor (Anthropic > OpenAI > Google > others), then id.
+        const order: Record<string, number> = { Anthropic: 0, "OpenAI": 1, Google: 2 };
+        copilotModels = (r.models || []).slice().sort((a, b) => {
+          const oa = order[a.vendor] ?? 99;
+          const ob = order[b.vendor] ?? 99;
+          if (oa !== ob) return oa - ob;
+          return a.id.localeCompare(b.id);
+        });
+      }
+    } catch (e) {
+      copilotModelsError = String(e);
+      copilotModels = [];
+    } finally {
+      copilotModelsLoading = false;
     }
   }
 
@@ -594,6 +673,8 @@
             <select bind:value={provider}>
               <option value="anthropic">{$_("settings.provider_anthropic")}</option>
               <option value="copilot">{$_("settings.provider_copilot")}</option>
+              <option value="openai">{$_("settings.provider_openai")}</option>
+              <option value="gemini">{$_("settings.provider_gemini")}</option>
             </select>
           </label>
 
@@ -632,28 +713,56 @@
             </label>
           {:else if provider === "copilot"}
             <h3>{$_("settings.copilot_section_title")}</h3>
-            <label>
-              model
-              <select
-                value={COPILOT_MODEL_PRESETS.includes(copModel) ? copModel : MODEL_CUSTOM_SENTINEL}
-                onchange={(e) => {
-                  const v = (e.currentTarget as HTMLSelectElement).value;
-                  if (v !== MODEL_CUSTOM_SENTINEL) copModel = v;
-                  else if (COPILOT_MODEL_PRESETS.includes(copModel)) copModel = "";
-                }}
-              >
-                {#each COPILOT_MODEL_PRESETS as m}
-                  <option value={m}>{m}</option>
-                {/each}
-                <option value={MODEL_CUSTOM_SENTINEL}>{$_("settings.model_custom_option")}</option>
-              </select>
-            </label>
-            {#if !COPILOT_MODEL_PRESETS.includes(copModel)}
+            {#if copStatus.logged_in}
               <label>
-                {$_("settings.model_custom_label")}
+                model
+                {#if copilotModelsLoading && copilotModels.length === 0}
+                  <select disabled>
+                    <option>…</option>
+                  </select>
+                {:else if copilotModels.length > 0}
+                  <select
+                    value={copilotModels.some(m => m.id === copModel) ? copModel : MODEL_CUSTOM_SENTINEL}
+                    onchange={(e) => {
+                      const v = (e.currentTarget as HTMLSelectElement).value;
+                      if (v !== MODEL_CUSTOM_SENTINEL) copModel = v;
+                      else if (copilotModels.some(m => m.id === copModel)) copModel = "";
+                    }}
+                  >
+                    {#each copilotModels as m}
+                      <option value={m.id}>{m.name}{m.preview ? " (preview)" : ""}{m.supports_responses && !m.supports_chat ? " · responses" : ""}</option>
+                    {/each}
+                    <option value={MODEL_CUSTOM_SENTINEL}>{$_("settings.model_custom_option")}</option>
+                  </select>
+                {:else}
+                  <select disabled>
+                    <option>—</option>
+                  </select>
+                {/if}
+              </label>
+              <div class="copilot-models-meta">
+                <button type="button" onclick={() => refreshCopilotModels({ force: true })} disabled={copilotModelsLoading}>
+                  {copilotModelsLoading ? "…" : "⟳"}
+                </button>
+                {#if copilotModelsError}
+                  <span class="err">{copilotModelsError}</span>
+                {:else if copilotModels.length > 0}
+                  <span class="hint">{copilotModels.length} models</span>
+                {/if}
+              </div>
+              {#if copilotModels.length > 0 && !copilotModels.some(m => m.id === copModel)}
+                <label>
+                  {$_("settings.model_custom_label")}
+                  <input type="text" bind:value={copModel} placeholder={$_("settings.copilot_model_placeholder")} />
+                </label>
+                <p class="hint">{$_("settings.model_custom_hint")}</p>
+              {/if}
+            {:else}
+              <label>
+                model
                 <input type="text" bind:value={copModel} placeholder={$_("settings.copilot_model_placeholder")} />
               </label>
-              <p class="hint">{$_("settings.model_custom_hint")}</p>
+              <p class="hint">{$_("settings.copilot_login_required_for_models") /* fall back to plain id entry until logged in */}</p>
             {/if}
             <div class="copilot-status">
               {#if copStatus.logged_in}
@@ -675,6 +784,72 @@
               {/if}
               {#if copError}<p class="err">{copError}</p>{/if}
             </div>
+          {:else if provider === "openai"}
+            <h3>{$_("settings.openai_section_title")}</h3>
+            <label>
+              api_key
+              <input type="password" bind:value={openaiApiKey} placeholder={$_("settings.openai_api_key_placeholder")} />
+            </label>
+            <label>
+              model
+              <select
+                value={OPENAI_MODEL_PRESETS.includes(openaiModel) ? openaiModel : MODEL_CUSTOM_SENTINEL}
+                onchange={(e) => {
+                  const v = (e.currentTarget as HTMLSelectElement).value;
+                  if (v !== MODEL_CUSTOM_SENTINEL) openaiModel = v;
+                  else if (OPENAI_MODEL_PRESETS.includes(openaiModel)) openaiModel = "";
+                }}
+              >
+                {#each OPENAI_MODEL_PRESETS as m}
+                  <option value={m}>{m}</option>
+                {/each}
+                <option value={MODEL_CUSTOM_SENTINEL}>{$_("settings.model_custom_option")}</option>
+              </select>
+            </label>
+            {#if !OPENAI_MODEL_PRESETS.includes(openaiModel)}
+              <label>
+                {$_("settings.model_custom_label")}
+                <input type="text" bind:value={openaiModel} placeholder={$_("settings.openai_model_placeholder")} />
+              </label>
+              <p class="hint">{$_("settings.model_custom_hint")}</p>
+            {/if}
+            <label>
+              base_url
+              <input type="text" bind:value={openaiBaseUrl} placeholder={$_("settings.openai_base_url_placeholder")} />
+            </label>
+          {:else if provider === "gemini"}
+            <h3>{$_("settings.gemini_section_title")}</h3>
+            <label>
+              api_key
+              <input type="password" bind:value={geminiApiKey} placeholder={$_("settings.gemini_api_key_placeholder")} />
+            </label>
+            <label>
+              model
+              <select
+                value={GEMINI_MODEL_PRESETS.includes(geminiModel) ? geminiModel : MODEL_CUSTOM_SENTINEL}
+                onchange={(e) => {
+                  const v = (e.currentTarget as HTMLSelectElement).value;
+                  if (v !== MODEL_CUSTOM_SENTINEL) geminiModel = v;
+                  else if (GEMINI_MODEL_PRESETS.includes(geminiModel)) geminiModel = "";
+                }}
+              >
+                {#each GEMINI_MODEL_PRESETS as m}
+                  <option value={m}>{m}</option>
+                {/each}
+                <option value={MODEL_CUSTOM_SENTINEL}>{$_("settings.model_custom_option")}</option>
+              </select>
+            </label>
+            {#if !GEMINI_MODEL_PRESETS.includes(geminiModel)}
+              <label>
+                {$_("settings.model_custom_label")}
+                <input type="text" bind:value={geminiModel} placeholder={$_("settings.gemini_model_placeholder")} />
+              </label>
+              <p class="hint">{$_("settings.model_custom_hint")}</p>
+            {/if}
+            <label>
+              base_url
+              <input type="text" bind:value={geminiBaseUrl} placeholder={$_("settings.gemini_base_url_placeholder")} />
+            </label>
           {/if}
 
           <h3>{$_("settings.sampling_section_title")}</h3>

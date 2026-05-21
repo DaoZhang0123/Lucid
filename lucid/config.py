@@ -100,8 +100,26 @@ class CopilotConfig:
     api_key / cached token 保存在 state_file（默认 ~/.lucid/copilot.json），
     不应写入 config.toml。这里只放公开选项。
     """
-    model: str = "claude-opus-4-6"
+    model: str = "claude-opus-4.6"
     state_file: str = ""          # 留空则默认 user data dir / copilot.json
+
+
+@dataclass
+class OpenAIConfig:
+    """OpenAI 直连。https://api.openai.com/v1 的 chat completions 端点。"""
+    api_key: str = ""             # 留空则读 OPENAI_API_KEY 环境变量
+    model: str = "gpt-5"
+    base_url: str = "https://api.openai.com/v1"
+
+
+@dataclass
+class GeminiConfig:
+    """Google Gemini 直连，走其 OpenAI 兼容端点
+    （https://generativelanguage.googleapis.com/v1beta/openai/）。
+    """
+    api_key: str = ""             # 留空则读 GEMINI_API_KEY / GOOGLE_API_KEY 环境变量
+    model: str = "gemini-2.5-pro"
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 
 @dataclass
@@ -110,6 +128,8 @@ class LLMConfig:
     #   "proxy"     OpenAI 兼容代理 (LiteLLM / OpenClaw 等，默认)
     #   "anthropic" Anthropic 原生 API
     #   "copilot"   GitHub Copilot OAuth (内置 device-code 登录)
+    #   "openai"    OpenAI 直连 (api.openai.com/v1)
+    #   "gemini"    Google Gemini 直连 (generativelanguage.googleapis.com/v1beta/openai)
     provider: str = "anthropic"
     model: str = "claude-opus-4-5"
     max_tokens: int = 16384
@@ -135,6 +155,8 @@ class LLMConfig:
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
     copilot: CopilotConfig = field(default_factory=CopilotConfig)
+    openai: OpenAIConfig = field(default_factory=OpenAIConfig)
+    gemini: GeminiConfig = field(default_factory=GeminiConfig)
 
 
 @dataclass
@@ -582,10 +604,14 @@ def load_config(path: str | Path | None = None) -> Config:
     proxy_raw = llm_raw.pop("proxy", None)
     anthropic_raw = llm_raw.pop("anthropic", None)
     copilot_raw = llm_raw.pop("copilot", None)
+    openai_raw = llm_raw.pop("openai", None)
+    gemini_raw = llm_raw.pop("gemini", None)
     _apply(cfg.llm, llm_raw)
     _apply(cfg.llm.proxy, proxy_raw)
     _apply(cfg.llm.anthropic, anthropic_raw)
     _apply(cfg.llm.copilot, copilot_raw)
+    _apply(cfg.llm.openai, openai_raw)
+    _apply(cfg.llm.gemini, gemini_raw)
     _apply(cfg.screenshot, raw.get("screenshot"))
     _apply(cfg.safety, raw.get("safety"))
     _apply(cfg.input, raw.get("input"))

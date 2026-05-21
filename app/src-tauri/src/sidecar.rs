@@ -585,6 +585,16 @@ pub async fn copilot_logout() -> Result<Value, String> {
     instance().request("copilot_logout", json!({})).await
 }
 
+#[tauri::command]
+pub async fn copilot_list_models(force_refresh: Option<bool>) -> Result<Value, String> {
+    instance()
+        .request(
+            "copilot_list_models",
+            json!({ "force_refresh": force_refresh.unwrap_or(false) }),
+        )
+        .await
+}
+
 // ---- Thread (conversation) management ----
 
 #[tauri::command]
@@ -961,6 +971,12 @@ pub async fn read_settings() -> Result<Value, String> {
     let mut anthropic_model = String::new();
     let mut anthropic_base_url = String::new();
     let mut copilot_model = String::new();
+    let mut openai_api_key = String::new();
+    let mut openai_model = String::new();
+    let mut openai_base_url = String::new();
+    let mut gemini_api_key = String::new();
+    let mut gemini_model = String::new();
+    let mut gemini_base_url = String::new();
     // ---- voice section ----
     let mut v_enabled: Option<bool> = None;
     let mut v_engine = String::new();
@@ -1006,6 +1022,16 @@ pub async fn read_settings() -> Result<Value, String> {
             }
             "[llm.copilot]" => {
                 if let Some(v) = parse_kv(l, "model") { copilot_model = v; }
+            }
+            "[llm.openai]" => {
+                if let Some(v) = parse_kv(l, "api_key")  { openai_api_key  = v; }
+                if let Some(v) = parse_kv(l, "model")    { openai_model    = v; }
+                if let Some(v) = parse_kv(l, "base_url") { openai_base_url = v; }
+            }
+            "[llm.gemini]" => {
+                if let Some(v) = parse_kv(l, "api_key")  { gemini_api_key  = v; }
+                if let Some(v) = parse_kv(l, "model")    { gemini_model    = v; }
+                if let Some(v) = parse_kv(l, "base_url") { gemini_base_url = v; }
             }
             "[safety]" => {
                 if let Some(v) = parse_kv(l, "emergency_hotkey") { emergency_hotkey = v; }
@@ -1056,6 +1082,16 @@ pub async fn read_settings() -> Result<Value, String> {
         "copilot": {
             "model": copilot_model,
         },
+        "openai": {
+            "api_key": openai_api_key,
+            "model": openai_model,
+            "base_url": openai_base_url,
+        },
+        "gemini": {
+            "api_key": gemini_api_key,
+            "model": gemini_model,
+            "base_url": gemini_base_url,
+        },
         "voice": {
             "enabled": v_enabled,
             "engine": v_engine,
@@ -1102,6 +1138,20 @@ pub struct ProviderCopilotPatch {
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ProviderOpenAIPatch {
+    pub api_key: Option<String>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ProviderGeminiPatch {
+    pub api_key: Option<String>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct VoicePatch {
     pub enabled: Option<bool>,
     pub engine: Option<String>,
@@ -1137,6 +1187,8 @@ pub struct SettingsPatch {
     pub proxy: Option<ProviderProxyPatch>,
     pub anthropic: Option<ProviderAnthropicPatch>,
     pub copilot: Option<ProviderCopilotPatch>,
+    pub openai: Option<ProviderOpenAIPatch>,
+    pub gemini: Option<ProviderGeminiPatch>,
     pub voice: Option<VoicePatch>,
     pub ui: Option<UiPatch>,
 }
@@ -1170,6 +1222,16 @@ pub async fn write_settings(patch: SettingsPatch) -> Result<Value, String> {
     }
     if let Some(p) = &patch.copilot {
         if let Some(v) = &p.model { want.entry("[llm.copilot]").or_default().push(("model", v.clone())); }
+    }
+    if let Some(p) = &patch.openai {
+        if let Some(v) = &p.api_key  { want.entry("[llm.openai]").or_default().push(("api_key",  v.clone())); }
+        if let Some(v) = &p.model    { want.entry("[llm.openai]").or_default().push(("model",    v.clone())); }
+        if let Some(v) = &p.base_url { want.entry("[llm.openai]").or_default().push(("base_url", v.clone())); }
+    }
+    if let Some(p) = &patch.gemini {
+        if let Some(v) = &p.api_key  { want.entry("[llm.gemini]").or_default().push(("api_key",  v.clone())); }
+        if let Some(v) = &p.model    { want.entry("[llm.gemini]").or_default().push(("model",    v.clone())); }
+        if let Some(v) = &p.base_url { want.entry("[llm.gemini]").or_default().push(("base_url", v.clone())); }
     }
     if let Some(v) = &patch.emergency_hotkey { want.entry("[safety]").or_default().push(("emergency_hotkey", v.clone())); }
     if let Some(p) = &patch.voice {

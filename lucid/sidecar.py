@@ -1473,6 +1473,10 @@ class Sidecar:
             return self.cfg.llm.anthropic.model
         if provider == "copilot":
             return self.cfg.llm.copilot.model
+        if provider == "openai":
+            return self.cfg.llm.openai.model
+        if provider == "gemini":
+            return self.cfg.llm.gemini.model
         return self.cfg.llm.proxy.model
 
     # ---- Copilot OAuth (device-code) ----
@@ -1495,6 +1499,49 @@ class Sidecar:
     def _rpc_copilot_logout(self, _params: dict[str, Any]) -> dict[str, Any]:
         self._copilot_manager().logout()
         return {"ok": True}
+
+    def _rpc_copilot_list_models(self, params: dict[str, Any]) -> dict[str, Any]:
+        """List models available on the user's Copilot plan.
+
+        Returns `{models:[{id,name,vendor,supports_chat,supports_responses,
+        preview,policy_state}], default}`. Filters to models with at least one
+        supported chat-style endpoint and `model_picker_enabled=True` so the
+        UI doesn't surface embeddings / completion-only models.
+        """
+        from .llm_client import fetch_copilot_models
+
+        tm = self._copilot_manager()
+        if not tm.status().get("logged_in"):
+            return {"models": [], "default": "claude-opus-4.6", "error": "not_logged_in"}
+        try:
+            raw = fetch_copilot_models(tm, force_refresh=bool(params.get("force_refresh")))
+        except Exception as e:
+            return {"models": [], "default": "claude-opus-4.6", "error": str(e)}
+
+        items: list[dict[str, Any]] = []
+        for m in raw:
+            if not isinstance(m, dict):
+                continue
+            if m.get("model_picker_enabled") is False:
+                continue
+            eps = m.get("supported_endpoints") or []
+            if not isinstance(eps, list):
+                eps = []
+            supports_chat = "/chat/completions" in eps
+            supports_responses = "/responses" in eps
+            if not (supports_chat or supports_responses):
+                continue
+            policy = m.get("policy") or {}
+            items.append({
+                "id": m.get("id") or "",
+                "name": m.get("name") or m.get("id") or "",
+                "vendor": m.get("vendor") or "",
+                "supports_chat": supports_chat,
+                "supports_responses": supports_responses,
+                "preview": bool(m.get("preview", False)),
+                "policy_state": policy.get("state") if isinstance(policy, dict) else None,
+            })
+        return {"models": items, "default": "claude-opus-4.6"}
 
     # ---- runtime config reload (settings page 保存后可热重载) ----
 

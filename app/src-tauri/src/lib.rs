@@ -98,6 +98,7 @@ pub fn run() {
             sidecar::copilot_login_begin,
             sidecar::copilot_login_poll,
             sidecar::copilot_logout,
+            sidecar::copilot_list_models,
             sidecar::reload_config,
             sidecar::thread_new,
             sidecar::thread_list,

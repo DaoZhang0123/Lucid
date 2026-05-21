@@ -272,13 +272,15 @@ footer .sep{margin:0 10px;color:var(--line)}
 <section id="arch">
   <div class="ch-head">
     <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 10 6-10 6L2 8l10-6Z"/><path d="m2 16 10 6 10-6"/><path d="m2 12 10 6 10-6"/></svg></div>
-    <div class="ch-text"><div class="ch-num">CHAPTER 01</div><h2>Architecture</h2><div class="sub">Pure-vision agent &middot; three-layer process model &middot; two public LLM backends</div></div>
+    <div class="ch-text"><div class="ch-num">CHAPTER 01</div><h2>Architecture</h2><div class="sub">Pure-vision agent &middot; three-layer process model &middot; four public LLM backends</div></div>
   </div>
 
-  <p>Lucid does not depend on MCP, application plug-ins, or app APIs. The model is <strong>Claude Opus 4.x</strong> via two public backends, plus a hidden internal proxy for development.</p>
+  <p>Lucid does not depend on MCP, application plug-ins, or app APIs. The agent is multi-provider: pick whichever LLM you have access to. <strong>Claude Opus 4.x</strong> is the recommended driver, but GPT-5.x and Gemini 2.x also work end-to-end.</p>
   <p>
     <span class="badge"><span class="dot teal"></span>Anthropic API &middot; <code>claude-opus-4-5-20250929</code></span>
-    <span class="badge"><span class="dot purple"></span>GitHub Copilot OAuth &middot; <code>claude-opus-4-6</code></span>
+    <span class="badge"><span class="dot purple"></span>GitHub Copilot OAuth &middot; <code>claude-opus-4.6</code> (and any model your subscription unlocks &mdash; <code>/models</code> auto-discovery)</span>
+    <span class="badge"><span class="dot green"></span>OpenAI &middot; <code>gpt-5.x</code> (any OpenAI-compatible base URL)</span>
+    <span class="badge"><span class="dot rose"></span>Google Gemini &middot; <code>gemini-2.x</code></span>
     <span class="badge"><span class="dot gold"></span>Internal proxy (dev only)</span>
   </p>
 
@@ -466,11 +468,11 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="ch-text"><div class="ch-num">CHAPTER 06</div><h2>Voice input</h2><div class="sub">Push-to-talk &middot; fully offline &middot; focus-aware</div></div>
   </div>
 
-  <p>Speak a sentence and Lucid either opens a new thread, aborts the current one, or appends to the input box.</p>
+  <p>Speak a sentence &mdash; or just type one &mdash; and Lucid either opens a new thread, aborts the current one, or appends to the input box. Voice and typed text share the same intent classifier (see below) so &ldquo;cancel that&rdquo; works whether you say it or type it.</p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="6" rx="2"/></svg>Trigger</h3>
   <div class="fgrid">
-    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 12h10"/></svg></div><h4>Hold <kbd>Space</kbd> &ge; 5 s</h4><p>Accessibility-first: no modifier combos by default.</p></div>
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 12h10"/></svg></div><h4>Hold <kbd>Space</kbd> &ge; 5 s</h4><p>Accessibility-first: no modifier combos by default. A <code>WH_KEYBOARD_LL</code> hook handles it globally; a webview-level fallback covers the case where Lucid&rsquo;s own window has focus (Chromium otherwise eats the keystroke).</p></div>
     <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></div><h4>Configurable</h4><p><code>hotkey</code>, <code>hold_threshold_ms</code>, <code>stop_mode</code> (<code>release</code> / <code>tap_again</code> / <code>auto_silence</code>).</p></div>
     <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11h6M9 15h6"/><rect x="3" y="4" width="18" height="18" rx="2"/></svg></div><h4>Focus-aware</h4><p>When a text input or IME composition is active, hold is ignored &mdash; Space stays Space.</p></div>
   </div>
@@ -482,14 +484,14 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="feat"><div class="fi rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg></div><h4>&le; 1.5 s</h4><p>Stop &rarr; text on CPU for the small models.</p></div>
   </div>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>Intent dispatch <span class="status plan"><span class="pulse"></span>planned</span></h3>
-  <p>After transcription, a small classification LLM (~150 max tokens) decides one of three actions:</p>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>Intent dispatch <span class="status"><span class="pulse"></span>LIVE</span></h3>
+  <p>After transcription &mdash; or, for short typed messages (&le; 100 chars) sent while a thread is running &mdash; a small classification LLM (~150 max tokens) decides one of three actions:</p>
   <div class="steps">
     <div class="step"><div><div class="stt"><code>thread_new</code></div><div class="sd">Clearly a new task ("open Notepad and write hello").</div></div></div>
-    <div class="step"><div><div class="stt"><code>thread_abort</code></div><div class="sd">Stop the current run ("cancel", "stop", "never mind").</div></div></div>
+    <div class="step"><div><div class="stt"><code>thread_abort</code></div><div class="sd">Stop the current run ("cancel", "stop", "never mind"). Routed through <code>voice_dispatch_abort</code> as a priority-0 urgent thread; the prompt is source-aware (says <em>typed</em> or <em>said&nbsp;(voice)</em>) so the LLM never invents a phantom voice request.</div></div></div>
     <div class="step"><div><div class="stt"><code>dictation_append</code></div><div class="sd">Extend the input box ("&hellip;and also mention&hellip;").</div></div></div>
   </div>
-  <p>If confidence is low, the overlay shows quick-pick chips so the user resolves it in one frame. Today the overlay sits top-centre with waveform + countdown.</p>
+  <p>If confidence is low, the voice overlay shows quick-pick chips when it falls back to <code>result</code> mode (no main-window dictation sink). The overlay sits top-centre with waveform + countdown.</p>
 </section>
 
 <footer>
@@ -757,11 +759,11 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="ch-text"><div class="ch-num">CHAPTER 06</div><h2>语音输入</h2><div class="sub">按住说话 · 完全离线 · 焦点感知</div></div>
   </div>
 
-  <p>说一句话，Lucid 自动决定是开新线程、打断当前线程、还是追加到输入框。</p>
+  <p>说一句话——或者直接打字——Lucid 自动决定是开新线程、打断当前线程、还是追加到输入框。语音转写和键入文本走<strong>同一个</strong>意图分类器，所以无论你说还是打字，&ldquo;取消&rdquo; 都管用。</p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="6" rx="2"/></svg>触发</h3>
   <div class="fgrid">
-    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 12h10"/></svg></div><h4>长按 <kbd>Space</kbd> ≥ 5 秒</h4><p>无障碍优先：默认不要组合键。</p></div>
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 12h10"/></svg></div><h4>长按 <kbd>Space</kbd> ≥ 5 秒</h4><p>无障碍优先：默认不要组合键。全局走 <code>WH_KEYBOARD_LL</code>，Lucid 自身窗口聚焦时还有一个 webview 级 fallback（否则 Chromium 会把 Space 吃掉）。</p></div>
     <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></div><h4>可配置</h4><p><code>hotkey</code>、<code>hold_threshold_ms</code>、<code>stop_mode</code>（<code>release</code> / <code>tap_again</code> / <code>auto_silence</code>）。</p></div>
     <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11h6M9 15h6"/><rect x="3" y="4" width="18" height="18" rx="2"/></svg></div><h4>焦点感知</h4><p>文本框或输入法合成中时，长按被忽略——Space 还是 Space。</p></div>
   </div>
@@ -773,14 +775,14 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="feat"><div class="fi rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg></div><h4>≤ 1.5 秒</h4><p>CPU 上 small 模型停录 → 文字。</p></div>
   </div>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>意图分发 <span class="status plan"><span class="pulse"></span>计划中</span></h3>
-  <p>转写之后，一个小分类 LLM（独立短系统提示，~150 token）从三种动作里挑一：</p>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>意图分发 <span class="status"><span class="pulse"></span>已落地</span></h3>
+  <p>转写之后——或者，运行中输入框打入的短文本（≤ 100 字）——一个小分类 LLM（独立短系统提示，~150 token）从三种动作里挑一：</p>
   <div class="steps">
     <div class="step"><div><div class="stt"><code>thread_new</code></div><div class="sd">显然是新任务（"打开记事本写 hello"）。</div></div></div>
-    <div class="step"><div><div class="stt"><code>thread_abort</code></div><div class="sd">叫停当前（"取消"、"停下"、"算了"）。</div></div></div>
+    <div class="step"><div><div class="stt"><code>thread_abort</code></div><div class="sd">叫停当前（"取消"、"停下"、"算了"）。走 <code>voice_dispatch_abort</code>，作为 priority=0 紧急线程入队；prompt 区分来源（<em>typed</em> 或 <em>said&nbsp;(voice)</em>），不会把打字的请求伪装成语音。</div></div></div>
     <div class="step"><div><div class="stt"><code>dictation_append</code></div><div class="sd">补充输入框（"……再加一句……"）。</div></div></div>
   </div>
-  <p>置信度低时，浮层弹快选 chips，用户一步定夺。当前浮层挂在屏幕顶部居中，带波形和倒计时。</p>
+  <p>仅当浮层退到 <code>result</code> 兜底（没有主窗 sink）时才弹快选 chips。浮层挂在屏幕顶部居中，带波形和倒计时。</p>
 </section>
 
 <footer>
@@ -1048,11 +1050,11 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="ch-text"><div class="ch-num">CHAPITRE 06</div><h2>Entrée vocale</h2><div class="sub">Push-to-talk · entièrement hors ligne · attentif au focus</div></div>
   </div>
 
-  <p>Dites une phrase et Lucid ouvre un nouveau fil, interrompt le fil courant ou ajoute au champ d'entrée.</p>
+  <p>Dites une phrase &mdash; ou tapez-la &mdash; et Lucid ouvre un nouveau fil, interrompt le fil courant ou ajoute au champ d'entrée. Voix et texte tapé partagent le même classifieur d'intention : « annule ça » fonctionne dans les deux cas.</p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="18" height="6" rx="2"/></svg>Déclencheur</h3>
   <div class="fgrid">
-    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 12h10"/></svg></div><h4>Maintenir <kbd>Espace</kbd> ≥ 5 s</h4><p>Accessibilité d'abord : pas de combo par défaut.</p></div>
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M7 12h10"/></svg></div><h4>Maintenir <kbd>Espace</kbd> ≥ 5 s</h4><p>Accessibilité d'abord : pas de combo par défaut. Hook global <code>WH_KEYBOARD_LL</code> ; un repli dans le webview prend le relais quand Lucid lui-même a le focus (sinon Chromium avale la touche).</p></div>
     <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></div><h4>Configurable</h4><p><code>hotkey</code>, <code>hold_threshold_ms</code>, <code>stop_mode</code> (<code>release</code> / <code>tap_again</code> / <code>auto_silence</code>).</p></div>
     <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11h6M9 15h6"/><rect x="3" y="4" width="18" height="18" rx="2"/></svg></div><h4>Attentif au focus</h4><p>Si un champ texte ou une composition IME est actif, l'appui long est ignoré — Espace reste Espace.</p></div>
   </div>
@@ -1064,14 +1066,14 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="feat"><div class="fi rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg></div><h4>≤ 1,5 s</h4><p>Arrêt → texte sur CPU pour les petits modèles.</p></div>
   </div>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>Dispatch d'intention <span class="status plan"><span class="pulse"></span>prévu</span></h3>
-  <p>Après la transcription, un petit LLM de classification (~150 tokens) choisit parmi trois actions :</p>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>Dispatch d'intention <span class="status"><span class="pulse"></span>EN PROD</span></h3>
+  <p>Après la transcription &mdash; ou pour un texte court (&le; 100 caractères) tapé pendant qu'un fil tourne &mdash; un petit LLM de classification (~150 tokens) choisit parmi trois actions :</p>
   <div class="steps">
     <div class="step"><div><div class="stt"><code>thread_new</code></div><div class="sd">Clairement une nouvelle tâche (« ouvre Notepad et écris hello »).</div></div></div>
-    <div class="step"><div><div class="stt"><code>thread_abort</code></div><div class="sd">Stopper la passe en cours (« annule », « stop », « laisse tomber »).</div></div></div>
+    <div class="step"><div><div class="stt"><code>thread_abort</code></div><div class="sd">Stopper la passe en cours (« annule », « stop », « laisse tomber »). Passe par <code>voice_dispatch_abort</code> en fil urgent priority=0 ; le prompt est conscient de la source (<em>typed</em> ou <em>said&nbsp;(voice)</em>) pour ne pas inventer une demande vocale fictive.</div></div></div>
     <div class="step"><div><div class="stt"><code>dictation_append</code></div><div class="sd">Compléter le champ d'entrée (« …et mentionne aussi… »).</div></div></div>
   </div>
-  <p>Quand la confiance est faible, l'overlay propose des chips pour trancher en un coup. Pour l'instant, l'overlay reste en haut au centre, avec waveform et compte à rebours.</p>
+  <p>Si la confiance est faible, l'overlay propose des chips uniquement quand il retombe en mode <code>result</code> (pas de sink dans la fenêtre principale). L'overlay reste en haut au centre, avec waveform et compte à rebours.</p>
 </section>
 
 <footer>

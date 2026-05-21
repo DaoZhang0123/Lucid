@@ -383,25 +383,179 @@ class AnthropicClient:
 
 # ------------------------------ GitHub Copilot ------------------------------
 
+# IDE 伪装头，对齐 openclaw / copilot.vim 等已知良好实现
+_COPILOT_IDE_HEADERS: dict[str, str] = {
+    "Editor-Version": "vscode/1.96.2",
+    "Editor-Plugin-Version": "copilot-chat/0.35.0",
+    "User-Agent": "GitHubCopilotChat/0.26.7",
+    "Copilot-Integration-Id": "vscode-chat",
+    "Openai-Organization": "github-copilot",
+}
+
+# Process-wide cache: { model_id: [supported_endpoints] }
+_COPILOT_MODELS_CACHE: list[dict[str, Any]] | None = None
+
+
+def fetch_copilot_models(token_manager: Any, *, force_refresh: bool = False) -> list[dict[str, Any]]:
+    """Fetch the list of available Copilot models from `/models`.
+
+    Returns the raw `data` array from the endpoint. Cached per process.
+    `token_manager` must expose `.get_active() -> (token, base_url)`.
+    """
+    global _COPILOT_MODELS_CACHE
+    if _COPILOT_MODELS_CACHE is not None and not force_refresh:
+        return _COPILOT_MODELS_CACHE
+    token, base_url = token_manager.get_active()
+    headers = dict(_COPILOT_IDE_HEADERS)
+    headers["Authorization"] = f"Bearer {token}"
+    headers["Accept"] = "application/json"
+    url = base_url.rstrip("/") + "/models"
+    with _build_openai_http_client() as client:
+        r = client.get(url, headers=headers, timeout=_CHAT_TIMEOUT_SEC)
+        r.raise_for_status()
+        body = r.json()
+    data = body.get("data") if isinstance(body, dict) else body
+    if not isinstance(data, list):
+        data = []
+    _COPILOT_MODELS_CACHE = data
+    return data
+
+
+def _copilot_supported_endpoints(token_manager: Any, model: str) -> list[str]:
+    """Look up the `supported_endpoints` field for `model`. Empty list if unknown."""
+    try:
+        models = fetch_copilot_models(token_manager)
+    except Exception:
+        return []
+    for m in models:
+        if m.get("id") == model:
+            eps = m.get("supported_endpoints") or []
+            return [e for e in eps if isinstance(e, str)]
+    return []
+
+
+# ---- OpenAI chat-completions <-> Responses API translation ----------------
+
+def _openai_messages_to_responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Translate OpenAI chat messages → Responses API `input` items."""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if role == "tool":
+            # OpenAI tool result → Responses function_call_output
+            out.append({
+                "type": "function_call_output",
+                "call_id": m.get("tool_call_id") or m.get("id") or "",
+                "output": content if isinstance(content, str) else json.dumps(content or ""),
+            })
+            continue
+        if role == "assistant" and m.get("tool_calls"):
+            # Surface text first (if any) as a message, then each tool_call.
+            text_str = ""
+            if isinstance(content, str):
+                text_str = content
+            elif isinstance(content, list):
+                parts: list[str] = []
+                for p in content:
+                    if isinstance(p, dict) and p.get("type") == "text":
+                        parts.append(p.get("text") or "")
+                text_str = "".join(parts)
+            if text_str:
+                out.append({
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text_str}],
+                })
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                out.append({
+                    "type": "function_call",
+                    "call_id": tc.get("id") or "",
+                    "name": fn.get("name") or "",
+                    "arguments": fn.get("arguments") or "{}",
+                })
+            continue
+        # system / user / assistant (plain) → role+content with input_text/input_image parts
+        items: list[dict[str, Any]] = []
+        if isinstance(content, str):
+            if content:
+                items.append({"type": "input_text", "text": content})
+        elif isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                ptype = part.get("type")
+                if ptype == "text":
+                    txt = part.get("text") or ""
+                    if txt:
+                        items.append({"type": "input_text", "text": txt})
+                elif ptype == "image_url":
+                    iu = part.get("image_url")
+                    url = iu.get("url") if isinstance(iu, dict) else iu
+                    if isinstance(url, str) and url:
+                        items.append({"type": "input_image", "image_url": url})
+        if items:
+            # Responses API expects assistant prior content as output_text.
+            if role == "assistant":
+                items = [
+                    ({"type": "output_text", "text": it["text"]} if it.get("type") == "input_text" else it)
+                    for it in items
+                ]
+            out.append({"role": role or "user", "content": items})
+    return out
+
+
+def _openai_tools_to_responses_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """OpenAI `{type:function, function:{name,...}}` → Responses `{type:function, name, ...}`."""
+    out: list[dict[str, Any]] = []
+    for t in tools or []:
+        if not isinstance(t, dict):
+            continue
+        if t.get("type") != "function":
+            out.append(t)
+            continue
+        fn = t.get("function") or {}
+        out.append({
+            "type": "function",
+            "name": fn.get("name") or "",
+            "description": fn.get("description") or "",
+            "parameters": fn.get("parameters") or {"type": "object", "properties": {}},
+        })
+    return out
+
+
 class CopilotClient:
     """GitHub Copilot —— OpenAI 兼容形态，但要动态拿 token + base_url。
 
     每次 chat() 前问一下 token manager；如果 token 即将过期，manager 会自动刷新。
+
+    Routes to `/chat/completions` for classic models and to `/responses` for
+    models whose `supported_endpoints` only includes Responses API
+    (e.g. gpt-5.2 / 5.4 / 5.5 reasoning models).
     """
 
-    # IDE 伪装头，对齐 openclaw / copilot.vim 等已知良好实现
-    _IDE_HEADERS = {
-        "Editor-Version": "vscode/1.96.2",
-        "Editor-Plugin-Version": "copilot-chat/0.35.0",
-        "User-Agent": "GitHubCopilotChat/0.26.7",
-        "Copilot-Integration-Id": "vscode-chat",
-        "Openai-Organization": "github-copilot",
-    }
+    _IDE_HEADERS = _COPILOT_IDE_HEADERS  # backward-compat alias
 
     def __init__(self, *, token_manager: Any, model: str) -> None:
         # token_manager: lucid.auth.copilot.CopilotTokenManager
         self._tm = token_manager
         self.model = model
+
+    def _pick_endpoint(self) -> str:
+        eps = _copilot_supported_endpoints(self._tm, self.model)
+        if not eps:
+            # Unknown model — assume classic chat path; the upstream will raise
+            # a clean error if it doesn't exist.
+            return "/chat/completions"
+        if "/chat/completions" in eps:
+            return "/chat/completions"
+        if "/responses" in eps:
+            return "/responses"
+        # Future-proof: take whatever non-websocket endpoint comes first.
+        for e in eps:
+            if not e.startswith("ws"):
+                return e
+        return eps[0]
 
     def chat(
         self,
@@ -412,12 +566,30 @@ class CopilotClient:
         temperature: float | None = None,
         top_p: float | None = None,
     ) -> LLMResponse:
+        endpoint = self._pick_endpoint()
+        if endpoint == "/responses":
+            return self._chat_via_responses(
+                messages, tools, max_tokens,
+                temperature=temperature, top_p=top_p,
+            )
+        return self._chat_via_completions(
+            messages, tools, max_tokens,
+            temperature=temperature, top_p=top_p,
+        )
+
+    def _chat_via_completions(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int,
+        *,
+        temperature: float | None,
+        top_p: float | None,
+    ) -> LLMResponse:
         token, base_url = self._tm.get_active()
-        # 不缓存 OpenAI client：base_url/token 可能在 30 分钟后变更
         from openai import OpenAI
 
         headers = dict(self._IDE_HEADERS)
-        # Copilot vision 必须显式开关
         if _messages_have_image(messages):
             headers["Copilot-Vision-Request"] = "true"
         client = OpenAI(
@@ -439,11 +611,6 @@ class CopilotClient:
         if top_p is not None:
             kwargs["top_p"] = top_p
         resp = client.chat.completions.create(**kwargs)
-        # Copilot occasionally returns an empty `choices` list when the
-        # request is rejected by content filtering or the upstream model is
-        # transiently unavailable. Indexing [0] then raises an opaque
-        # `IndexError: list index out of range`. Convert to a descriptive
-        # RuntimeError so the retry layer can act on it.
         choices = getattr(resp, "choices", None) or []
         if not choices:
             raise RuntimeError(
@@ -461,6 +628,82 @@ class CopilotClient:
             ))
         return LLMResponse(text=text, tool_calls=calls)
 
+    def _chat_via_responses(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int,
+        *,
+        temperature: float | None,
+        top_p: float | None,
+    ) -> LLMResponse:
+        token, base_url = self._tm.get_active()
+        headers = dict(self._IDE_HEADERS)
+        headers["Authorization"] = f"Bearer {token}"
+        headers["Content-Type"] = "application/json"
+        headers["Accept"] = "application/json"
+        if _messages_have_image(messages):
+            headers["Copilot-Vision-Request"] = "true"
+
+        body: dict[str, Any] = {
+            "model": self.model,
+            "input": _openai_messages_to_responses_input(messages),
+            "max_output_tokens": max_tokens,
+        }
+        rt = _openai_tools_to_responses_tools(tools)
+        if rt:
+            body["tools"] = rt
+        # NOTE: gpt-5.x reasoning models on `/responses` reject `temperature`
+        # and `top_p` ("Unsupported parameter"). Sampling-style controls are
+        # replaced by `reasoning.effort` on those models. We deliberately do
+        # NOT forward `temperature` / `top_p` here — Lucid's defaults of 0.2/1
+        # are meaningless for a reasoning trace anyway. If a future Responses
+        # model accepts them again, we can opt back in based on the model's
+        # `capabilities.supports` flags.
+        _ = (temperature, top_p)  # acknowledged-but-intentionally-unused
+
+        url = base_url.rstrip("/") + "/responses"
+        with _build_openai_http_client() as http:
+            r = http.post(url, json=body, headers=headers, timeout=_CHAT_TIMEOUT_SEC)
+            if r.status_code >= 400:
+                # Surface upstream message verbatim so the retry layer / user can see it.
+                try:
+                    err_body = r.json()
+                except Exception:
+                    err_body = r.text
+                raise RuntimeError(
+                    f"Copilot /responses {r.status_code} (model={self.model}): {err_body}"
+                )
+            data = r.json()
+
+        text_parts: list[str] = []
+        calls: list[ToolCall] = []
+        output = data.get("output") or []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            itype = item.get("type")
+            if itype == "message":
+                for part in item.get("content") or []:
+                    if isinstance(part, dict) and part.get("type") == "output_text":
+                        t = part.get("text") or ""
+                        if t:
+                            text_parts.append(t)
+            elif itype == "function_call":
+                calls.append(ToolCall(
+                    id=item.get("call_id") or item.get("id") or "",
+                    name=item.get("name") or "",
+                    arguments_json=item.get("arguments") or "{}",
+                ))
+            # `reasoning` items are intentionally skipped (no surfaceable text).
+
+        if not text_parts and not calls:
+            raise RuntimeError(
+                f"Copilot /responses returned no output (model={self.model}); "
+                "likely a content-filter / upstream rejection—safe to retry."
+            )
+        return LLMResponse(text="".join(text_parts), tool_calls=calls)
+
 
 __all__ = [
     "LLMClient",
@@ -470,6 +713,7 @@ __all__ = [
     "AnthropicClient",
     "CopilotClient",
     "build_llm_client",
+    "fetch_copilot_models",
 ]
 
 
@@ -512,23 +756,48 @@ def build_llm_client(cfg: "Any", api_key_override: str | None) -> LLMClient:
     proxy_key = api_key_override or _resolve_proxy_key(proxy.api_key)
     has_proxy = bool(proxy_key)
 
+    oa = getattr(cfg.llm, "openai", None)
+    openai_key = (
+        (api_key_override if raw_provider == "openai" else "")
+        or (oa.api_key if oa else "")
+        or os.environ.get("OPENAI_API_KEY", "")
+    )
+    has_openai = bool(oa and openai_key)
+
+    gm = getattr(cfg.llm, "gemini", None)
+    gemini_key = (
+        (api_key_override if raw_provider == "gemini" else "")
+        or (gm.api_key if gm else "")
+        or os.environ.get("GEMINI_API_KEY", "")
+        or os.environ.get("GOOGLE_API_KEY", "")
+    )
+    has_gemini = bool(gm and gemini_key)
+
     # 把"auto" / 未知值，或显式 provider 但凭据缺失的情况，按优先级回退
     def _auto_pick() -> str:
         if has_anthropic:
             return "anthropic"
         if has_copilot:
             return "copilot"
+        if has_openai:
+            return "openai"
+        if has_gemini:
+            return "gemini"
         if has_proxy:
             return "proxy"
         return "anthropic"  # 没有任何凭据时，让下面 anthropic 分支报详细错
 
-    if raw_provider not in ("anthropic", "copilot", "proxy"):
+    valid_providers = ("anthropic", "copilot", "proxy", "openai", "gemini")
+    has_for = {
+        "anthropic": has_anthropic,
+        "copilot": has_copilot,
+        "proxy": has_proxy,
+        "openai": has_openai,
+        "gemini": has_gemini,
+    }
+    if raw_provider not in valid_providers:
         provider = _auto_pick()
-    elif raw_provider == "anthropic" and not has_anthropic and (has_copilot or has_proxy):
-        provider = _auto_pick()
-    elif raw_provider == "copilot" and not has_copilot and (has_anthropic or has_proxy):
-        provider = _auto_pick()
-    elif raw_provider == "proxy" and not has_proxy and (has_anthropic or has_copilot):
+    elif not has_for[raw_provider] and any(v for k, v in has_for.items() if k != raw_provider):
         provider = _auto_pick()
     else:
         provider = raw_provider
@@ -559,6 +828,28 @@ def build_llm_client(cfg: "Any", api_key_override: str | None) -> LLMClient:
         except CopilotAuthError as e:
             raise RuntimeError(str(e))
         return CopilotClient(token_manager=tm, model=c.model)
+    if provider == "openai":
+        if not openai_key:
+            raise RuntimeError(
+                "缺少 OpenAI API Key：请设置 OPENAI_API_KEY 环境变量，"
+                "或在设置页 OpenAI.api_key 填入。"
+            )
+        return OpenAIChatClient(
+            base_url=oa.base_url if oa else "https://api.openai.com/v1",
+            api_key=openai_key,
+            model=oa.model if oa else "gpt-5",
+        )
+    if provider == "gemini":
+        if not gemini_key:
+            raise RuntimeError(
+                "缺少 Gemini API Key：请设置 GEMINI_API_KEY / GOOGLE_API_KEY 环境变量，"
+                "或在设置页 Gemini.api_key 填入。"
+            )
+        return OpenAIChatClient(
+            base_url=gm.base_url if gm else "https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key=gemini_key,
+            model=gm.model if gm else "gemini-2.5-pro",
+        )
     # proxy
     if not proxy_key:
         raise RuntimeError(
