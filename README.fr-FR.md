@@ -12,7 +12,9 @@ Un véritable assistant IA qui agit comme un humain sur ordinateur : sans MCP, c
 
 **Langues :** [English](README.md) · [简体中文](README.zh-CN.md) · **Français**
 
-<video src="Docs/Teams.mp4" controls width="720">Votre navigateur ne prend pas en charge la vidéo intégrée. <a href="Docs/Teams.mp4">Télécharger la démo</a>.</video>
+> **Vidéo de démo** — auto-réponse de bout en bout : l'écouteur UIA de la barre des tâches capte le message entrant → `launch_app` ouvre Teams → des clics pilotés par la vision naviguent dans la conversation → l'agent tape la réponse et appuie sur Entrée. Sans MCP, sans API ; tout passe par le vrai client.
+
+https://github.com/user-attachments/assets/4d2107b6-02d3-4726-a207-dcfb5db006de
 
 ```
 Teams (entrant) :  « Tell me a joke about dog and cat »
@@ -23,8 +25,6 @@ Lucid :  *l'écouteur UIA de la barre des tâches voit un nouveau message Teams 
           → click(champ de saisie) → type("…texte de la blague…") → key("enter")
           → « Fait. Répondu dans Teams avec la blague. »
 ```
-
-Lucid est livré comme une appli de bureau Windows (`lucid.exe` comme moteur + GUI Tauri/WebView2). Voici ce qu'il sait déjà faire et une bonne brassée d'exemples de prompts.
 
 ---
 
@@ -37,13 +37,16 @@ Lucid est livré comme une appli de bureau Windows (`lucid.exe` comme moteur + G
 | Auto-réponse aux messages | Bots officiels seulement ; approbation requise ; pas d'état ; ne voit pas l'historique complet | ✅ **Contrôle votre vrai client.** Lit n'importe quel message, voit l'historique complet, répond en votre nom, avec persistance d'état. |
 | Mise en place | Des heures de glue code | Installer, choisir un LLM, taper une phrase |
 | Casse à chaque mise à jour d'API | En permanence | Seulement si l'UI change visuellement |
-| Coût | Verrouillage fournisseur | Apportez votre propre LLM (Anthropic / Copilot / proxy) |
+| Coût | Verrouillage fournisseur | Apportez votre propre LLM (Anthropic / Copilot) |
+| Diversité & inclusion | Rarement pris en compte | ✅ **Maintenez la barre d'espace pour parler ; la parole est transcrite et exécutée directement** — Lucid devient utilisable pour les personnes à mobilité réduite (ou pour quiconque préfère la voix au clavier). |
 
 ---
 
 ## Architecture, en bref
 
 ![Architecture de Lucid](Docs/arch.fr-FR.png)
+
+> **Pour aller plus loin :** [Aperçu technique de Lucid](Docs/lucid.html) — architecture, pyramide de captures, moniteur de barre des tâches, apprentissage Doze, skills, voix.
 
 Données utilisateur : `~/.lucid/` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
 
@@ -57,7 +60,6 @@ Au premier lancement, ouvrez **Paramètres** et choisissez un backend LLM :
 
 - **GitHub Copilot** — cliquez sur *Sign in to GitHub Copilot* et suivez le flux device-code. Gratuit tant que vous avez un abonnement Copilot.
 - **Anthropic** — collez une clé `sk-ant-…`.
-- **Proxy** — pointez vers n'importe quel endpoint compatible OpenAI (par ex. [litellm-ghc-proxy-lite](https://github.com/codetrek/litellm-ghc-proxy)).
 
 ---
 
@@ -91,8 +93,6 @@ npm run tauri build
 # → app\src-tauri\target\release\bundle\nsis\lucid_<ver>_x64-setup.exe
 ```
 
-La coquille Rust attend `lucid.exe` à côté d'elle (ou installé sous `%LOCALAPPDATA%\lucid\`) ; copiez la sortie PyInstaller avant de lancer la build de dev.
-
 ---
 
 ## Utilisation en CLI (sans GUI)
@@ -102,12 +102,11 @@ Lancez les commandes depuis la racine du dépôt (`D:\Project\Lucid`).
 Si votre provider demande une clé, définissez-la d'abord :
 
 ```powershell
-# provider proxy
-$env:LITELLM_MASTER_KEY = "your_proxy_key"
-
 # provider anthropic
 $env:ANTHROPIC_API_KEY = "sk-ant-..."
 ```
+
+(Pour GitHub Copilot, faites le flow device-code depuis **Paramètres** dans l'UI — aucune variable d'environnement nécessaire.)
 
 Puis exécutez :
 
@@ -128,7 +127,7 @@ cd D:\Project\Lucid
 ..\.venv\Scripts\python.exe -m lucid "Ouvre Notepad, tape hello world, enregistre sur le Bureau"
 ```
 
-Si vous voyez `missing api_key (config .api_key or LITELLM_MASTER_KEY environment variable)`, renseignez `[llm.proxy].api_key` dans `~/.lucid/config.toml` ou exportez `LITELLM_MASTER_KEY`.
+Si vous voyez `missing api_key`, renseignez `[llm.anthropic].api_key` dans `~/.lucid/config.toml`, exportez `ANTHROPIC_API_KEY`, ou basculez sur le provider Copilot depuis **Paramètres**.
 
 `Ctrl+C` pour interrompre. Lancer la souris dans le **coin haut-gauche** déclenche le fail-safe de PyAutoGUI.
 
@@ -143,15 +142,19 @@ Sections clés :
 | Section | Ce qu'elle contrôle |
 | --- | --- |
 | `[llm]` | provider, max_tokens, prompt-cache, temperature/top-p, rétention des captures |
-| `[llm.anthropic]` / `[llm.copilot]` / `[llm.proxy]` | model + endpoint + clé par provider |
+| `[llm.anthropic]` / `[llm.copilot]` | model + endpoint + clé par provider |
 | `[logging]` | dossier de log par exécution, niveaux texte/image (`DEBUG/INFO/WARNING/ERROR/OFF`), `png/jpg`, rotation |
 | `[screenshot]` | intervalles des trois niveaux, redimensionnement, rétention par niveau, seuil de détection de changement |
 | `[safety]` | raccourci d'arrêt d'urgence (`ctrl+alt+esc`), vérif de clic, garde dialogues |
 | `[input]` | `chinese_input = "clipboard"` (recommandé) ou `unicode_sendinput`, délai entre actions |
 | `[visual_notify]` | fréquence de polling, seuil dHash, cooldown LLM, instruction auto-chat |
+| `[taskbar_uia]` | écouteur barre des tâches événementiel, zéro LLM (diffs Name / HelpText du sous-arbre Shell_TrayWnd) ; tourne en parallèle de `[visual_notify]` et supprime son step-2 quand il déclenche en premier |
 | `[doze]` | limites de la réflexion en veille |
+| `[voice]` | raccourci push-to-talk (par défaut barre d'espace maintenue), moteur Whisper + taille de modèle, envoi automatique |
 | `[memory]` / `[tools]` | mémoire long terme + astuces : on/off et limites |
 | `[fileio]` / `[shell]` | activation / sandbox des `read_file` / `write_file` / `run_shell` |
+| `[skills]` | répertoire des skills + injection de la liste « ## Available skills » dans le system prompt |
+| `[ui]` | langue de l'UI (`en` / `zh-CN` / `fr-FR`), thème, préférences de hot-reload |
 
 Sauvegarder dans Paramètres recharge le sidecar à chaud.
 
@@ -160,7 +163,7 @@ Sauvegarder dans Paramètres recharge le sidecar à chaud.
 ## Avertissement
 
 - Le modèle **prend complètement le contrôle de votre souris et de votre clavier**. À utiliser sur un bureau que vous pouvez interrompre, ou en VM.
-- Les captures sont envoyées au backend LLM choisi (Anthropic / GitHub Copilot upstream / votre proxy).
+- Les captures sont envoyées au backend LLM choisi (Anthropic / GitHub Copilot upstream).
   **Fermez ou minimisez les fenêtres sensibles (mots de passe, banque, messages privés) avant de lancer une tâche.**
 - L'auto-réponse de la barre des tâches embarque une politique de sécurité codée en dur côté system prompt (pas de divulgation de codes / adresses, pas de clic sur payer / accepter, escalade-et-arrêt en cas de doute), mais vérifiez quand même quelles applis vous mettez en liste blanche.
 
