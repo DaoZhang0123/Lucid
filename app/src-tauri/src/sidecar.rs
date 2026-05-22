@@ -177,6 +177,19 @@ fn lucid_home() -> std::path::PathBuf {
     base.join(".lucid")
 }
 
+/// Sidecar boot temporary directory.
+///
+/// PyInstaller onefile extracts its runtime payload to TEMP/TMP on startup.
+/// Some machines have aggressive policy/AV rules on the default Temp location,
+/// which can surface as random `Bad Image` DLL errors on first launch.
+/// We route extraction to a dedicated, user-writable Lucid-owned directory.
+fn sidecar_runtime_tmp() -> std::path::PathBuf {
+    if let Ok(p) = std::env::var("LUCID_SIDECAR_TMP") {
+        return std::path::PathBuf::from(p);
+    }
+    lucid_home().join("runtime_tmp")
+}
+
 /// How to invoke the python sidecar. Resolution priority:
 ///   1. `LUCID_SIDECAR_EXE`  → spawn that binary directly with `--sidecar`.
 ///   2. Bundled `resources/lucid/lucid.exe` (PyInstaller output for packaged builds).
@@ -216,6 +229,16 @@ fn build_command(app: &AppHandle) -> (Command, String) {
 fn configure_common(cmd: &mut Command, cfg_path: &str) {
     if let Ok(cwd) = std::env::var("LUCID_CWD") {
         cmd.current_dir(cwd);
+    }
+    let tmp_dir = sidecar_runtime_tmp();
+    if let Err(e) = std::fs::create_dir_all(&tmp_dir) {
+        log::warn!("create_dir_all {}: {e}", tmp_dir.display());
+    } else {
+        // Ensure PyInstaller onefile uses Lucid's own temp root instead of
+        // the default system temp directory.
+        cmd.env("TMP", &tmp_dir);
+        cmd.env("TEMP", &tmp_dir);
+        cmd.env("TMPDIR", &tmp_dir);
     }
     // Make the config path discoverable even if --config is dropped or wrapped.
     cmd.env("LUCID_CONFIG", cfg_path);
