@@ -52,6 +52,8 @@ Lucid:   launch_app("PowerPoint") → New blank presentation
           → "Done. Draft deck ready in PowerPoint."
 ```
 
+> **More demos:** [See all demo videos and scenarios](README.demos.md)
+
 ---
 
 ## Why Lucid?

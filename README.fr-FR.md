@@ -52,6 +52,8 @@ Lucid :  launch_app("PowerPoint") → nouvelle présentation vierge
           → « Fait. Brouillon de présentation prêt dans PowerPoint. »
 ```
 
+> **Plus de démos :** [Voir toutes les vidéos et scénarios](README.demos.md)
+
 ---
 
 ## Pourquoi Lucid ?
