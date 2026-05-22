@@ -26,3 +26,4 @@ Docs/Competitor/
 Docs/internal/
 # Pre-fetched voice models (downloaded by packaging/fetch_voice_model.py)
 packaging/build_assets/
+demo/

@@ -26,6 +26,32 @@ Lucid :  *l'écouteur UIA de la barre des tâches voit un nouveau message Teams 
           → « Fait. Répondu dans Teams avec la blague. »
 ```
 
+> **Deuxième démo** — entrée vocale + clics précis. Maintenez la barre d'espace, parlez ; Lucid transcrit en local avec Whisper, puis pilote Teams uniquement par la vision (sans API Teams).
+
+https://github.com/user-attachments/assets/b32124f2-0964-457a-9e61-88eba614f9a0
+
+```
+Voix (barre d'espace) :  « Send greetings to Dao Zhang in Teams. »
+          ↓
+Lucid :  transcription → launch_app("Microsoft Teams")
+          → click(recherche) → type("Dao Zhang") → click(premier résultat)
+          → click(champ de saisie) → type("Hi Dao, just sending greetings — hope you're well!") → key("enter")
+          → « Fait. Salutations envoyées dans Teams. »
+```
+
+> **Troisième démo** — scénario bureautique : Lucid entend la demande, ouvre PowerPoint et rédige la présentation de bout en bout.
+
+https://github.com/user-attachments/assets/12d4a7d8-33c1-4579-a65b-8b26f6180869
+
+```
+Voix / chat :  « Create a PowerPoint about Microsoft's latest AI strategy. »
+          ↓
+Lucid :  launch_app("PowerPoint") → nouvelle présentation vierge
+          → plan des diapos (titre, piliers, Copilot, Azure AI, feuille de route, résumé)
+          → click(titre) → type(…) → add_slide → saisie des puces → répéter
+          → « Fait. Brouillon de présentation prêt dans PowerPoint. »
+```
+
 ---
 
 ## Pourquoi Lucid ?

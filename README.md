@@ -26,6 +26,32 @@ Lucid:   *taskbar UIA listener sees a new Teams message (no LLM confirm needed)*
           → "Done. Replied in Teams with the joke."
 ```
 
+> **Second demo** — voice input + precise clicking. Hold the spacebar, speak the request; Lucid transcribes it locally with Whisper, then drives Teams entirely by vision (no Teams API).
+
+https://github.com/user-attachments/assets/b32124f2-0964-457a-9e61-88eba614f9a0
+
+```
+Voice (hold spacebar):  "Send greetings to Dao Zhang in Teams."
+          ↓
+Lucid:   transcribe → launch_app("Microsoft Teams")
+          → click(search) → type("Dao Zhang") → click(top result)
+          → click(chat input) → type("Hi Dao, just sending greetings — hope you're well!") → key("enter")
+          → "Done. Greetings sent in Teams."
+```
+
+> **Third demo** — workplace scenario: Lucid hears the request, opens PowerPoint and drafts the deck end-to-end.
+
+https://github.com/user-attachments/assets/12d4a7d8-33c1-4579-a65b-8b26f6180869
+
+```
+Voice / chat:  "Create a PowerPoint about Microsoft's latest AI strategy."
+          ↓
+Lucid:   launch_app("PowerPoint") → New blank presentation
+          → outline slides (title, pillars, Copilot, Azure AI, roadmap, summary)
+          → click(title) → type(…) → add_slide → type bullets → repeat
+          → "Done. Draft deck ready in PowerPoint."
+```
+
 ---
 
 ## Why Lucid?
