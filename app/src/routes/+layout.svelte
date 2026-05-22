@@ -47,6 +47,15 @@
     <div class="splash-title">Lucid</div>
     <div class="splash-sub">Vision Agent for Windows</div>
   </div>
+{:else if appWindow.label !== "main"}
+  <!-- Auxiliary Tauri windows (voice-overlay, future popups) get NO custom
+       titlebar / ConfirmModal / DisclaimerGate. SvelteKit child +layout.svelte
+       files still compose with this root layout, so we must explicitly skip
+       the chrome here — otherwise the overlay shows the main window's dark
+       titlebar (or its light-theme #f3f4f6 ≈ white variant) on top of the
+       transparent rounded overlay pill, which looks like a stray window
+       frame. The overlay's own +layout.svelte handles its transparent body. -->
+  {@render children()}
 {:else}
   <div class="root">
     <div class="titlebar" data-tauri-drag-region>
@@ -68,9 +77,7 @@
     </div>
   </div>
   <ConfirmModal />
-  {#if appWindow.label === "main"}
-    <DisclaimerGate />
-  {/if}
+  <DisclaimerGate />
 {/if}
 
 <style>

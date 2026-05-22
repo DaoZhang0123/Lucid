@@ -207,7 +207,7 @@ hotkey = "Space"
 # 长按多少毫秒进入录音；0 = 经典 PTT（按下即录）。<1000 容易误触发，设置页会警告。
 hold_threshold_ms = 3000
 # release（松开即停）/ tap_again（再点一下停，残障友好默认）/ auto_silence（VAD 1.5s 自动停）
-stop_mode = "tap_again"
+stop_mode = "release"
 # beep（听觉提示）/ vibrate-tray（托盘抖动，纯视觉）/ silent
 start_feedback = "beep"
 # 焦点感知：输入框聚焦时不抢 Space，让原生空格行为生效

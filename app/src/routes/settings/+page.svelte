@@ -178,7 +178,7 @@
   let vLanguage = $state("auto");
   let vHotkey = $state("Space");
   let vHoldThresholdMs = $state(5000);
-  let vStopMode = $state("tap_again");
+  let vStopMode = $state("release");
   let vStartFeedback = $state("beep");
   let vMode = $state("auto");
   let vAutoSend = $state(false);
@@ -336,6 +336,7 @@
     }
     await refreshCopilotStatus();
     void refreshModelStatus();
+    void refreshLocalModels();
     if (copStatus.logged_in) void refreshCopilotModels();
   });
 
@@ -438,6 +439,22 @@
     }
   }
 
+  // Models physically present on this machine (user cache + bundle). Drives
+  // the "model" dropdown so users can only pick from sizes that won't
+  // trigger a surprise download on first PTT. Refreshed after every
+  // successful download.
+  let vLocalModels = $state<string[]>([]);
+
+  async function refreshLocalModels() {
+    try {
+      const r = (await invoke("voice_list_local_models")) as { models: string[] };
+      vLocalModels = Array.isArray(r?.models) ? r.models : [];
+    } catch (e) {
+      console.warn("voice_list_local_models failed:", e);
+      vLocalModels = [];
+    }
+  }
+
   async function downloadModel(size?: string) {
     const target = (size || vModelPickerChoice || vModelSize || "small").trim();
     vModelDownloading = true;
@@ -455,6 +472,7 @@
         // After a successful download, switch the active model to what the
         // user just downloaded — that's almost always what they want.
         vModelSize = target;
+        await refreshLocalModels();
         await refreshModelStatus();
       } else {
         vModelDownloadError = r?.error || "unknown error";
@@ -887,7 +905,20 @@
           </label>
           <label>
             {$_("settings.voice_model_label")}
-            <input type="text" bind:value={vModelSize} placeholder="tiny | small | medium | large-v3" oninput={() => { vModelDownloadResult = ""; vModelDownloadError = ""; void refreshModelStatus(); }} />
+            <select
+              bind:value={vModelSize}
+              onchange={() => { vModelDownloadResult = ""; vModelDownloadError = ""; void refreshModelStatus(); }}
+            >
+              {#each vLocalModels as m (m)}
+                <option value={m}>{m}</option>
+              {/each}
+              {#if vModelSize && !vLocalModels.includes(vModelSize)}
+                <option value={vModelSize}>{vModelSize} (not downloaded)</option>
+              {/if}
+              {#if vLocalModels.length === 0 && !vModelSize}
+                <option value="" disabled>—</option>
+              {/if}
+            </select>
           </label>
           <div class="row">
             <button type="button" onclick={openModelPicker} disabled={vModelDownloading}>

@@ -503,7 +503,7 @@ class VoiceConfig:
     # ---- trigger (a11y-first single-key long-press) ----
     hotkey: str = "Space"            # any single key or combo
     hold_threshold_ms: int = 5000    # 0 = classic PTT (record on press)
-    stop_mode: str = "tap_again"     # release | tap_again | auto_silence
+    stop_mode: str = "release"      # release | tap_again | auto_silence
     start_feedback: str = "beep"     # beep | vibrate-tray | silent
     focus_aware: bool = True         # don't steal Space when an editable is focused
     # ---- text routing ----

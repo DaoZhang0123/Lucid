@@ -1409,6 +1409,7 @@ class Sidecar:
         "installed_apps_list",
         "voice_status", "voice_config",
         "voice_model_status",
+        "voice_list_local_models",
     })
 
     def _sidecar_busy(self) -> bool:
@@ -1687,6 +1688,20 @@ class Sidecar:
         size = (params.get("model_size") or self.cfg.voice.model_size or "tiny").strip()
         endpoint = (params.get("hf_endpoint") or self.cfg.voice.hf_endpoint or "").strip()
         return voice_mod.download_voice_model(size, endpoint)
+
+    def _rpc_voice_list_local_models(self, _params: dict[str, Any]) -> dict[str, Any]:
+        """List Whisper models present in the user cache or the bundle.
+
+        Used by the Settings page to populate the "model" dropdown — users
+        only pick from sizes already on disk, so the first PTT press never
+        triggers a surprise network download. Newly-downloaded sizes show
+        up after the next call.
+        """
+        from . import voice as voice_mod
+        return {
+            "models": voice_mod.list_local_models(),
+            "current": (self.cfg.voice.model_size or "tiny").strip(),
+        }
 
     def _rpc_transcribe_audio(self, params: dict[str, Any]) -> dict[str, Any]:
         # NOTE: intentionally NOT gated by ``cfg.voice.enabled`` — that flag only

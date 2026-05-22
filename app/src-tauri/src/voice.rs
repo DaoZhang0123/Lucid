@@ -275,6 +275,14 @@ pub async fn voice_download_model(args: ModelArgs) -> Result<Value, String> {
     sidecar::instance().request("voice_download_model", p).await
 }
 
+/// List Whisper models that are cached on disk (user dir or bundled). The
+/// Settings page uses this to populate the model dropdown — users can only
+/// pick from sizes already present, so PTT never triggers a network DL.
+#[tauri::command]
+pub async fn voice_list_local_models() -> Result<Value, String> {
+    sidecar::instance().request("voice_list_local_models", json!({})).await
+}
+
 #[tauri::command]
 pub async fn voice_config() -> Result<Value, String> {
     sidecar::instance().request("voice_config", json!({})).await

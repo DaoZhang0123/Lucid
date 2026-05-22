@@ -162,6 +162,7 @@ pub fn run() {
             voice::voice_config,
             voice::voice_model_status,
             voice::voice_download_model,
+            voice::voice_list_local_models,
             voice::voice_overlay_show,
             voice::voice_overlay_hide,
             voice::voice_overlay_set_state,

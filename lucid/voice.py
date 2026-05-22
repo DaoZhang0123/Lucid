@@ -202,6 +202,57 @@ def model_cache_location(model_size: str) -> str:
     return ""
 
 
+def list_local_models() -> list[str]:
+    """Return the model_size short names that are cached on this machine.
+
+    Scans ``~/.lucid/voice/models/`` (user cache, populated by HF downloads
+    AND by ``_seed_user_cache_from_bundle``) plus the in-bundle voice_models
+    dir as a fallback. Each top-level entry is a HuggingFace cache dir
+    ``models--<owner>--<repo>``; we reverse-map it to a faster-whisper short
+    name via ``_FW_REPO``.
+
+    Used by the Settings page to populate the "model" dropdown so users
+    only see models that are actually present (avoids first-PTT download
+    surprises). Returned list is de-duplicated and sorted by a coarse
+    quality order.
+    """
+    # Make sure pre-bundled models are visible in the user cache.
+    try:
+        _seed_user_cache_from_bundle()
+    except Exception:
+        pass
+    # Reverse map: HF cache subdir name -> faster-whisper short name.
+    rev: dict[str, str] = {}
+    for short, repo in _FW_REPO.items():
+        rev["models--" + repo.replace("/", "--")] = short
+    found: set[str] = set()
+    roots: list[Path] = [models_dir()]
+    bundled = _bundled_voice_models_root()
+    if bundled is not None:
+        roots.append(bundled)
+    for root in roots:
+        try:
+            entries = list(root.iterdir())
+        except Exception:
+            continue
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            short = rev.get(entry.name)
+            if short:
+                found.add(short)
+    # Stable order roughly by quality/size.
+    order = [
+        "tiny", "tiny.en", "base", "base.en",
+        "distil-small.en", "small", "small.en",
+        "medium", "medium.en",
+        "distil-medium.en", "distil-large-v2", "distil-large-v3",
+        "large-v1", "large-v2", "large-v3",
+    ]
+    rank = {name: i for i, name in enumerate(order)}
+    return sorted(found, key=lambda n: (rank.get(n, 999), n))
+
+
 def download_voice_model(model_size: str, hf_endpoint: str = "") -> dict[str, Any]:
     """Pre-download a faster-whisper model into the user cache.
 
