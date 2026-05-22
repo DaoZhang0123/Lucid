@@ -72,7 +72,7 @@ Lucid:   launch_app("PowerPoint") → New blank presentation
 
 ![Lucid architecture](Docs/arch.png)
 
-> **Deep dive:** [Lucid technical overview](Docs/lucid.html) — architecture, screenshot pyramid, taskbar monitor, doze learning, skills, voice.
+> **Deep dive:** [Lucid technical overview](https://daozhang0123.github.io/Lucid/lucid.html) — architecture, screenshot pyramid, taskbar monitor, doze learning, skills, voice.
 
 User data: `~/.lucid/` (config, logs, schedules, memory, icons cache, Copilot token).
 

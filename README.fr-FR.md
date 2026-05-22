@@ -72,7 +72,7 @@ Lucid :  launch_app("PowerPoint") → nouvelle présentation vierge
 
 ![Architecture de Lucid](Docs/arch.fr-FR.png)
 
-> **Pour aller plus loin :** [Aperçu technique de Lucid](Docs/lucid.html) — architecture, pyramide de captures, moniteur de barre des tâches, apprentissage Doze, skills, voix.
+> **Pour aller plus loin :** [Aperçu technique de Lucid](https://daozhang0123.github.io/Lucid/lucid.html) — architecture, pyramide de captures, moniteur de barre des tâches, apprentissage Doze, skills, voix.
 
 Données utilisateur : `~/.lucid/` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
 

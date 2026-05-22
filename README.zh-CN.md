@@ -72,7 +72,7 @@ Lucid：  扫描桌面 → 定位源文档 → 读取内容
 
 ![Lucid 架构](Docs/arch.zh-CN.png)
 
-> **深入了解：** [Lucid 技术总览](Docs/lucid.html) —— 架构、截图金字塔、任务栏监听、打盹学习、技能、语音。
+> **深入了解：** [Lucid 技术总览](https://daozhang0123.github.io/Lucid/lucid.html) —— 架构、截图金字塔、任务栏监听、打盹学习、技能、语音。
 
 用户数据：`~/.lucid/`（配置、日志、计划、记忆、图标缓存、Copilot token）。
 
