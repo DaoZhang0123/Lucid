@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import subprocess
 import threading
 import time
 import traceback
@@ -372,6 +373,14 @@ class Sidecar:
         self._scheduler = scheduler_mod.Scheduler(self._on_schedule_fire)
         self._taskbar_monitor: TaskbarMonitor | None = None
         self._taskbar_uia_monitor: TaskbarUiaMonitor | None = None
+        # UIA watchdog: a background thread that detects when the UIA
+        # channel has silently died (thread crashed, COM disconnected) and
+        # restarts the monitor. Without this, an unrecoverable
+        # CONNECT_E_NOCONNECTION or unhandled exception in `_uia_main`
+        # would leave auto-reply broken until the user manually restarts
+        # Lucid (which is exactly the symptom report).
+        self._uia_watchdog_thread: threading.Thread | None = None
+        self._uia_watchdog_stop = threading.Event()
         # Per-tick whitelist for visual_notify auto_chat (set right before
         # tick_once() fires; consumed by the LLM-confirm prompt and by the
         # taskbar_notify_confirmed enqueue gate). Empty = no filter (legacy).
@@ -800,11 +809,13 @@ class Sidecar:
                 )
                 self._taskbar_uia_monitor.start()
                 self._append_startup_log("taskbar_uia_monitor started")
+                self._start_uia_watchdog()
         except Exception as exc:
             _writeln({"event": "taskbar_uia_start_failed",
                       "message": f"{type(exc).__name__}: {exc}"})
 
     def _stop_taskbar_monitor(self) -> None:
+        self._stop_uia_watchdog()
         if self._taskbar_uia_monitor is not None:
             try:
                 self._taskbar_uia_monitor.stop()
@@ -818,6 +829,101 @@ class Sidecar:
         except Exception:
             pass
         self._taskbar_monitor = None
+
+    # ---- UIA watchdog ----
+    # Auto-recovery for the UIA channel. The dedicated UIA (MTA) thread
+    # inside TaskbarUiaMonitor parks on a Win32 COM apartment and is the
+    # *only* path for taskbar notification events to reach the sidecar.
+    # If it dies (CONNECT_E_NOCONNECTION on COM teardown, explorer.exe
+    # restart, unhandled exception in `_uia_main`, etc.) there is no
+    # built-in restart — the sidecar keeps running, NDJSON I/O keeps
+    # working, but auto-reply silently stops detecting anything. The
+    # user-visible symptom is exactly "close Lucid then reopen and it
+    # works again" (a fresh sidecar reinitialises COM).
+    #
+    # The watchdog polls two health signals every WATCHDOG_INTERVAL_SEC:
+    #   1. Is `_uia_thread` still alive?
+    #   2. Has *any* UIA activity (raw COM probe / sweep tick) been
+    #      observed in the last WATCHDOG_STALE_SEC seconds?
+    # If either fails, call `restart()` and emit
+    # `taskbar_uia_watchdog_restart` so the recovery is visible in logs.
+
+    _UIA_WATCHDOG_INTERVAL_SEC = 30.0
+    # Sweep runs every 60s by default. Allow 3 missed sweeps before we
+    # call the channel dead — leaves headroom for slow GC / CPU spikes
+    # without falsely tearing down a healthy COM apartment.
+    _UIA_WATCHDOG_STALE_SEC = 240.0
+
+    def _start_uia_watchdog(self) -> None:
+        if self._uia_watchdog_thread and self._uia_watchdog_thread.is_alive():
+            return
+        self._uia_watchdog_stop.clear()
+        self._uia_watchdog_thread = threading.Thread(
+            target=self._uia_watchdog_loop,
+            name="lucid-uia-watchdog",
+            daemon=True,
+        )
+        self._uia_watchdog_thread.start()
+
+    def _stop_uia_watchdog(self) -> None:
+        self._uia_watchdog_stop.set()
+        t = self._uia_watchdog_thread
+        self._uia_watchdog_thread = None
+        if t is not None:
+            try:
+                t.join(timeout=2)
+            except Exception:
+                pass
+
+    def _uia_watchdog_loop(self) -> None:
+        interval = self._UIA_WATCHDOG_INTERVAL_SEC
+        stale_ms = int(self._UIA_WATCHDOG_STALE_SEC * 1000)
+        # Skip the very first tick — start() seeds last_activity_ms but the
+        # COM init + first sweep can take a few seconds on slow machines.
+        if self._uia_watchdog_stop.wait(interval):
+            return
+        while not self._uia_watchdog_stop.is_set():
+            mon = self._taskbar_uia_monitor
+            if mon is None:
+                # Monitor was torn down externally; exit cleanly.
+                return
+            try:
+                thread_alive = mon.is_thread_alive()
+                last_ms = mon.last_activity_ms()
+                now_ms = int(time.time() * 1000)
+                age_ms = now_ms - last_ms
+                needs_restart = (not thread_alive) or (age_ms > stale_ms)
+                if needs_restart:
+                    reason = (
+                        "uia_thread_dead" if not thread_alive
+                        else f"stale_{age_ms // 1000}s"
+                    )
+                    try:
+                        _writeln({
+                            "event": "taskbar_uia_watchdog_restart",
+                            "reason": reason,
+                            "thread_alive": thread_alive,
+                            "last_activity_age_ms": age_ms,
+                            "stale_threshold_ms": stale_ms,
+                        })
+                    except Exception:
+                        pass
+                    try:
+                        mon.restart()
+                    except Exception as exc:
+                        try:
+                            _writeln({
+                                "event": "taskbar_uia_watchdog_restart_failed",
+                                "message": f"{type(exc).__name__}: {exc}",
+                            })
+                        except Exception:
+                            pass
+            except Exception:
+                # Never let the watchdog itself die — it is our last
+                # line of defence against a silently-dead UIA channel.
+                pass
+            if self._uia_watchdog_stop.wait(interval):
+                return
 
     def _on_uia_bump_visual_cooldown(
         self, reason: str, app_candidates: list[str], suppress_sec: float
@@ -2763,6 +2869,226 @@ class Sidecar:
                   "queue": self._queue_snapshot()})
 
 
+_SIDECAR_LOCK_FD: Any = None  # kept alive at module scope so the OS lock survives serve()
+
+
+def _read_lock_pid(lock_path: Path) -> int:
+    """Read the PID written into the lockfile by a previous sidecar.
+
+    Returns 0 on any failure (missing file, empty, non-numeric, etc.) —
+    callers must treat 0 as "unknown, do not try to kill".
+    """
+    try:
+        text = lock_path.read_text(encoding="ascii", errors="ignore").strip()
+        return int(text.split()[0]) if text else 0
+    except Exception:
+        return 0
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if sys.platform != "win32":
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError, OSError):
+            return False
+    # Windows: OpenProcess(QUERY_LIMITED_INFORMATION) and check exit code.
+    try:
+        import ctypes
+        from ctypes import wintypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return False
+        try:
+            code = wintypes.DWORD()
+            ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+            if not ok:
+                return False
+            return int(code.value) == STILL_ACTIVE
+        finally:
+            k32.CloseHandle(h)
+    except Exception:
+        return False
+
+
+def _process_image_name(pid: int) -> str:
+    """Best-effort lookup of the executable basename for ``pid`` on Windows.
+
+    Used as a safety check before ``taskkill`` so we don't accidentally kill
+    an unrelated process that happens to inherit a stale PID. Returns
+    lowercase image name (e.g. ``"lucid.exe"``, ``"python.exe"``) or "".
+    """
+    if sys.platform != "win32" or pid <= 0:
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(len(buf))
+            # QueryFullProcessImageNameW: format flag 0 = full Win32 path.
+            ok = k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size))
+            if not ok:
+                return ""
+            return os.path.basename(buf.value).lower()
+        finally:
+            k32.CloseHandle(h)
+    except Exception:
+        return ""
+
+
+def _kill_orphan_sidecar(pid: int) -> bool:
+    """Force-kill a stale sidecar identified by ``pid`` if it really is one.
+
+    Safety gates:
+      * pid != current pid and != parent pid (never suicide / never kill Tauri)
+      * image name looks like a sidecar binary (lucid.exe / python.exe / pythonw.exe)
+      * uses ``taskkill /F /T`` so any child processes also die
+
+    Returns True if the process is gone (either we killed it, or it was
+    already dead by the time we looked).
+    """
+    if pid <= 0:
+        return False
+    my_pid = os.getpid()
+    if pid == my_pid:
+        return False
+    try:
+        ppid = os.getppid()
+    except Exception:
+        ppid = 0
+    if pid == ppid:
+        # Never kill the Tauri host — it would taskkill /F /T us right back.
+        return False
+    if not _pid_is_alive(pid):
+        return True
+    img = _process_image_name(pid)
+    # Whitelist: only kill things that look like a sidecar. PyInstaller-frozen
+    # builds report ``lucid.exe`` (or whatever the bundled exe is named);
+    # dev runs report ``python.exe`` / ``pythonw.exe``.
+    if img and not any(
+        name in img for name in ("lucid.exe", "python.exe", "pythonw.exe")
+    ):
+        return False
+    if sys.platform == "win32":
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 9)
+        except Exception:
+            return False
+    # Give the OS a moment to reap and release file locks.
+    for _ in range(20):
+        if not _pid_is_alive(pid):
+            return True
+        time.sleep(0.05)
+    return not _pid_is_alive(pid)
+
+
+def _try_lock_fd(fd: int) -> bool:
+    """Attempt the platform-appropriate exclusive non-blocking lock on ``fd``.
+
+    Returns True on success, False if another process holds it.
+    """
+    try:
+        if sys.platform == "win32":
+            import msvcrt  # stdlib on Windows
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl  # type: ignore[import-not-found]
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _acquire_sidecar_singleton_lock() -> tuple[bool, str]:
+    """Acquire a process-wide singleton lock so a second sidecar exits early.
+
+    Returns ``(acquired, lock_path)``. When ``acquired`` is False the caller
+    MUST exit immediately — a previous sidecar is already attached to UIA /
+    holding the COM event subscriptions; spawning a second one poisons the
+    first (observed: ``CONNECT_E_NOCONNECTION`` "事件无法调用任何订户" in
+    uia-probe.jsonl, killing the entire taskbar monitor thread).
+
+    Orphan recovery: if the lock is held but the PID recorded in the file is
+    an unrelated zombie/orphan (e.g. previous Tauri was force-killed before
+    ``shutdown_blocking`` could run ``taskkill /F /T``), the previous
+    sidecar process now silently owns the lock forever and EVERY subsequent
+    launch fails to start a sidecar at all (Rust supervisor respawns us
+    every 1s, we keep losing the lock, no UIA monitor ever attaches, the
+    user sees "auto-reply doesn't work — closing+reopening Lucid fixes
+    it"). We detect that case here: read the recorded PID, validate it
+    really is a sidecar process (image name whitelist + not our parent
+    Tauri), force-kill it via ``taskkill /F /T``, then retry the lock
+    exactly once. Logs the recovery via stderr so the launch log captures
+    why we killed something.
+    """
+    global _SIDECAR_LOCK_FD
+    lock_dir = Path.home() / ".lucid" / "run"
+    try:
+        lock_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return True, ""  # best-effort; never block startup on filesystem oddity
+    lock_path = lock_dir / "sidecar.lock"
+    try:
+        fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    except Exception:
+        return True, str(lock_path)
+
+    if not _try_lock_fd(fd):
+        os.close(fd)
+        # Orphan-recovery path. Read the recorded PID and try to clean it up.
+        stale_pid = _read_lock_pid(lock_path)
+        killed = _kill_orphan_sidecar(stale_pid)
+        if not killed:
+            return False, str(lock_path)
+        # Reopen and retry exactly once. If the lock STILL fails, somebody
+        # else (legitimate second instance, or a sidecar that respawned in
+        # the gap) holds it — defer to the caller's "exit immediately" path.
+        try:
+            fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+        except Exception:
+            return False, str(lock_path)
+        if not _try_lock_fd(fd):
+            os.close(fd)
+            return False, str(lock_path)
+        try:
+            sys.stderr.write(
+                f"sidecar: killed orphan pid={stale_pid} holding {lock_path}\n"
+            )
+        except Exception:
+            pass
+
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode("ascii"))
+    except Exception:
+        pass
+    _SIDECAR_LOCK_FD = fd
+    return True, str(lock_path)
+
+
 def run_sidecar(cfg: Config) -> int:
     """供 __main__ 调用的入口。"""
     # Tauri 子进程通过管道传 UTF-8 字节，但 Windows 上 Python 默认 stdin/stdout
@@ -2776,6 +3102,39 @@ def run_sidecar(cfg: Config) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace", newline="\n")
         except (AttributeError, OSError):
             pass
+    # Singleton guard: refuse to start a second sidecar against the same
+    # user profile. A second instance would race the first on UIA event
+    # subscriptions and silently kill the taskbar monitor (see docstring
+    # on _acquire_sidecar_singleton_lock). Emit one NDJSON event so the
+    # Tauri supervisor / user logs make the cause obvious, then exit.
+    acquired, lock_path = _acquire_sidecar_singleton_lock()
+    if not acquired:
+        try:
+            _writeln({
+                "event": "sidecar_singleton_skip",
+                "reason": "another lucid sidecar is already holding the lock",
+                "lock": lock_path,
+                "pid": os.getpid(),
+            })
+        except Exception:
+            pass
+        try:
+            startup_log = Path.home() / ".lucid" / "logs" / f"startup-{time.strftime('%Y%m%d')}.log"
+            startup_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(startup_log, "a", encoding="utf-8") as fh:
+                fh.write(
+                    f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] sidecar_singleton_skip pid={os.getpid()} lock={lock_path}\n"
+                )
+        except Exception:
+            pass
+        # Brief sleep so an over-eager respawn loop in the parent doesn't
+        # spin at 100% CPU re-spawning us — gives the human a chance to
+        # see the log and kill the duplicate parent.
+        try:
+            time.sleep(2.0)
+        except Exception:
+            pass
+        return 0
     set_dpi_aware()
     try:
         return Sidecar(cfg).serve()

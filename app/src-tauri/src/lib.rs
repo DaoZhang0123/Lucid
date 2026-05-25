@@ -55,6 +55,23 @@ pub fn run() {
     );
 
     tauri::Builder::default()
+        // Single-instance guard MUST be the first plugin: if a second
+        // copy of Lucid.exe is launched (double-click installer "Run after
+        // install" + desktop shortcut, NSIS reinstall, etc.), the callback
+        // here fires inside the *already running* process and the second
+        // process exits immediately — *before* it spawns its own Python
+        // sidecar. Without this, two sidecars race on UIA event
+        // subscriptions and one of them silently crashes with
+        // CONNECT_E_NOCONNECTION "事件无法调用任何订户", killing the
+        // taskbar monitor and breaking all auto-reply detection.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            log::warn!("single_instance: second launch suppressed; focusing existing window");
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(

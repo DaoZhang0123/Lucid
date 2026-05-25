@@ -128,10 +128,23 @@ def _has_any(text: str, needles: tuple[str, ...]) -> bool:
 #   ' Microsoft Teams |新活动'             -> 'Microsoft Teams'
 #   ' 微信'                                -> '微信'
 #   ' 微信 (3条新消息)'                     -> '微信'
+#   '微  信 - 1 个运行窗口'                -> '微信'  (WeChat 4.x 自更新后任务栏
+#                                                     标题在 CJK 字符之间插入了
+#                                                     一到多个空格做视觉间距)
 _APP_NAME_STRIP_RE = re.compile(
     r"\s*[-—–|(（]\s*\d.*$"      # tail like " - 1 个运行窗口" or " (3 条新消息)"
     r"|\s*\|.*$"                  # tail like " |新活动"
     r"|\s*-\s*\d.*$"
+)
+
+# 删掉两个 CJK 字符之间的空白。Windows 上一些 app（如 WeChat 4.x、QQ）会在
+# 任务栏标题里给汉字之间塞装饰性空格（"微  信"），导致下游 auto_chat_apps
+# 白名单 exact-match 失败。ASCII 名字（Microsoft Teams 等）不受影响，因为
+# 两边都不是 CJK。
+_CJK_INNER_SPACE_RE = re.compile(
+    r"([\u3000-\u303F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF])"
+    r"\s+"
+    r"(?=[\u3000-\u303F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF])"
 )
 
 
@@ -146,6 +159,14 @@ def _extract_app_name(raw_name: str) -> str:
     if half >= 1 and parts[:half] == parts[half:half * 2]:
         name = " ".join(parts[:half] + parts[half * 2:])
     name = _APP_NAME_STRIP_RE.sub("", name).strip()
+    # Collapse decorative whitespace between adjacent CJK chars
+    # ("微  信" -> "微信"). Run repeatedly so "微 信 6" style triple-word
+    # decoration also fully collapses.
+    while True:
+        collapsed = _CJK_INNER_SPACE_RE.sub(r"\1", name)
+        if collapsed == name:
+            break
+        name = collapsed
     return name
 
 
@@ -261,6 +282,18 @@ class TaskbarUiaMonitor:
         # thread; read under the same lock from the UIA thread sweep.
         self._recent_event_apps_ms: dict[str, int] = {}
         self._recent_apps_lock = threading.Lock()
+        # Watchdog support: any UIA activity (raw COM probe, sweep tick,
+        # event emission) bumps this timestamp. An external watchdog
+        # (Sidecar._uia_watchdog_loop) reads `last_activity_ms()` and
+        # decides whether to call `restart()` when the channel has gone
+        # silent for too long. We seed with "now" so a freshly-started
+        # monitor isn't immediately judged stale before its first sweep.
+        self._last_activity_ms: int = _ts_ms()
+
+    def _mark_activity(self) -> None:
+        """Update the watchdog activity timestamp. Thread-safe enough — a
+        single 64-bit int store under CPython is atomic via the GIL."""
+        self._last_activity_ms = _ts_ms()
 
     # ----- lifecycle -----
 
@@ -271,6 +304,7 @@ class TaskbarUiaMonitor:
         if self._uia_thread and self._uia_thread.is_alive():
             return
         self._stop.clear()
+        self._mark_activity()
         self._uia_thread = threading.Thread(
             target=self._uia_main, name="lucid-taskbar-uia", daemon=True
         )
@@ -301,6 +335,43 @@ class TaskbarUiaMonitor:
         if self._worker_thread:
             self._worker_thread.join(timeout=2)
         self._emit({"event": "taskbar_uia_stopped"})
+
+    # ----- watchdog API -----
+
+    def last_activity_ms(self) -> int:
+        """Most recent timestamp of *any* observed UIA activity (raw COM
+        callback, snapshot sweep tick, or event emission)."""
+        return int(self._last_activity_ms)
+
+    def is_thread_alive(self) -> bool:
+        """True if the dedicated UIA (MTA) thread is still running.
+
+        When ``_uia_main`` returns due to an unhandled exception (COM apartment
+        teardown, CONNECT_E_NOCONNECTION, etc.) the thread dies and no event
+        will ever fire again. A watchdog observing False here should call
+        ``restart()`` to bring the channel back."""
+        t = self._uia_thread
+        return bool(t and t.is_alive())
+
+    def restart(self) -> None:
+        """Stop the monitor and start it again. Safe to call from any thread
+        that is NOT the UIA worker thread itself."""
+        try:
+            self.stop()
+        except Exception:
+            pass
+        # Reset per-thread state so start() can recreate everything cleanly.
+        self._uia_thread = None
+        self._worker_thread = None
+        self._iuia = None
+        self._com_handler = None
+        self._watched_roots.clear()
+        self._watched_native_elements.clear()
+        self._per_button_attached.clear()
+        with self._state_lock:
+            self._state.clear()
+        self._sweep_prev_unread.clear()
+        self.start()
 
     def reload_prefs(self) -> None:
         """Re-read ``~/.lucid/taskbar_sources.json``. Call after doze writes."""
@@ -820,6 +891,11 @@ class TaskbarUiaMonitor:
         visual fallback for that app.
         """
         now_ms = _ts_ms()
+        # Sweep ran ⇒ UIA channel is alive at least at the COM-walk level
+        # (even if event subscriptions are dead). The watchdog uses this
+        # heartbeat to distinguish "channel dead" from "no notifications
+        # happened recently" — the latter is the common case.
+        self._mark_activity()
         snapshot: dict[str, dict[str, str]] = {}
         newly_attached = 0
 
@@ -962,6 +1038,12 @@ class TaskbarUiaMonitor:
 
     def _append_probe(self, record: dict[str, Any]) -> None:
         """Best-effort diagnostic write. Never raises."""
+        # Any probe entry — including raw COM callbacks before filtering —
+        # counts as channel activity from the watchdog's perspective. The
+        # sweep error path also lands here, so an UIA channel that's still
+        # spinning on errors looks "alive" (errors will be visible in the
+        # log) rather than triggering a watchdog restart loop.
+        self._mark_activity()
         try:
             with open(self._probe_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")

@@ -255,20 +255,38 @@ fn configure_common(cmd: &mut Command, cfg_path: &str) {
 }
 
 /// Spawn the sidecar once; auto-respawn on unexpected exit.
+///
+/// Backoff guard: if the sidecar exits more than `MAX_FAST_EXITS` times
+/// within `FAST_WINDOW_SECS` seconds (each exit lasting less than
+/// `FAST_EXIT_SECS`), we stop respawning and emit a sticky
+/// `sidecar_giving_up` event so the frontend can surface "the agent
+/// backend keeps crashing, please restart Lucid" to the user. Without
+/// this guard, a stuck-orphan + lock-fail loop would respawn forever at
+/// 1 Hz, masking the real failure mode (see lucid/sidecar.py
+/// `_acquire_sidecar_singleton_lock`).
 pub fn supervise(app: AppHandle) {
+    const MAX_FAST_EXITS: usize = 5;
+    const FAST_WINDOW_SECS: u64 = 30;
+    const FAST_EXIT_SECS: u64 = 5;
+
     tauri::async_runtime::spawn(async move {
+        // Rolling window of recent fast-exit timestamps (monotonic seconds).
+        let mut fast_exits: Vec<std::time::Instant> = Vec::new();
         loop {
             if instance().shutting_down.load(Ordering::SeqCst) {
                 log::info!("supervise: shutting_down flag set; exiting loop");
                 break;
             }
-            match spawn_once(&app).await {
+            let spawn_started = std::time::Instant::now();
+            let outcome = spawn_once(&app).await;
+            let lived_secs = spawn_started.elapsed().as_secs();
+            match outcome {
                 Ok(code) => {
                     let _ = app.emit(
                         EVENT_SIDECAR,
-                        json!({"kind": "exit", "code": code}),
+                        json!({"kind": "exit", "code": code, "lived_secs": lived_secs}),
                     );
-                    log::warn!("sidecar exited code={code:?}");
+                    log::warn!("sidecar exited code={code:?} after {lived_secs}s");
                     if instance().shutting_down.load(Ordering::SeqCst) {
                         log::info!("supervise: clean exit during shutdown; not respawning");
                         break;
@@ -286,6 +304,38 @@ pub fn supervise(app: AppHandle) {
                     }
                 }
             }
+
+            // Track only *fast* exits — a long-lived sidecar that finally
+            // dies is not a crashloop. Drop anything outside the rolling
+            // window so a long quiet period clears the counter.
+            let now = std::time::Instant::now();
+            if lived_secs < FAST_EXIT_SECS {
+                fast_exits.push(now);
+            }
+            fast_exits.retain(|t| now.duration_since(*t).as_secs() < FAST_WINDOW_SECS);
+
+            if fast_exits.len() >= MAX_FAST_EXITS {
+                let _ = app.emit(
+                    EVENT_SIDECAR,
+                    json!({
+                        "kind": "giving_up",
+                        "fast_exits": fast_exits.len(),
+                        "window_secs": FAST_WINDOW_SECS,
+                        "reason":
+                            "sidecar exited rapidly too many times; suspected \
+                             stale singleton lock held by an orphan process. \
+                             Restart Lucid (or kill stray python.exe/lucid.exe) \
+                             and reopen.",
+                    }),
+                );
+                log::error!(
+                    "supervise: giving up after {} fast exits in {}s",
+                    fast_exits.len(),
+                    FAST_WINDOW_SECS
+                );
+                break;
+            }
+
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     });
