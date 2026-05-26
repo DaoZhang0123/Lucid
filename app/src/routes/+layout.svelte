@@ -45,7 +45,7 @@
       <span class="crab" aria-hidden="true">🦀</span>
     </div>
     <div class="splash-title">Lucid</div>
-    <div class="splash-sub">Vision Agent for Windows</div>
+    <div class="splash-sub">Eyes on screen, hands on mouse</div>
   </div>
 {:else if appWindow.label !== "main"}
   <!-- Auxiliary Tauri windows (voice-overlay, future popups) get NO custom

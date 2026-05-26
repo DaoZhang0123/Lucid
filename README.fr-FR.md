@@ -6,30 +6,16 @@
   <img src="image/banner_French.png" alt="Lucid — Les yeux à l'écran, les mains sur la souris." />
 </p>
 
-> **Un regard limpide pour votre bureau Windows — un véritable agent visuel qui se sert de l'ordinateur comme un humain : sans MCP, contrôle direct de vos applications Windows, auto-réponse continue quand vous êtes absent.**
-> Dites à Lucid ce que vous voulez faire. Il scrute l'écran, manipule la souris ; quand vous n'êtes pas là, il lit les messages entrants et répond poliment à votre place.
+<p align="center">
+  <em><strong>D'où vient le nom ?</strong> <em>Lucid</em> — clair, perspicace, l'esprit transparent. Notre mascotte est un petit crabe : il avance de côté sans jamais quitter l'écran des yeux — exactement ce que fait l'agent.</em>
+</p>
+
+**Un regard limpide pour votre bureau Windows — un véritable agent visuel qui se sert de l'ordinateur comme un humain : sans MCP, contrôle direct de vos applications Windows, auto-réponse continue quand vous êtes absent.**
+Dites à Lucid ce que vous voulez faire. Il scrute l'écran, manipule la souris ; quand vous n'êtes pas là, il lit les messages entrants et répond poliment à votre place.
 
 - **Sans MCP. Sans API par application. Sans plugin de navigateur.** Juste la **vision multimodale d'un grand modèle** qui pilote votre vrai clavier et votre vraie souris.
 - **Sans UIA ni arbre d'accessibilité non plus.** Lucid envoie l'écran directement au modèle de vision et lit les coordonnées sur une grille superposée à l'image — WeChat, Electron, jeux, UI dessinées à la main (tout ce qu'UIA ne voit pas) sont pilotés de la même façon.
 > **Contrairement aux bots officiels (WeChat, Slack, Teams) — Lucid contrôle votre vrai client**, donc il peut lire n'importe quel message, voir tout l'historique, répondre en votre nom, avec persistance d'état et sans enregistrement.
-
-> **D'où vient le nom ?** *Lucid* — clair, perspicace, l'esprit transparent. Notre mascotte est un petit crabe : il avance de côté sans jamais quitter l'écran des yeux — exactement ce que fait l'agent.
-
-> **Vidéo de démo** — auto-réponse de bout en bout : l'écouteur UIA de la barre des tâches capte le message entrant → `launch_app` ouvre Teams → des clics pilotés par la vision naviguent dans la conversation → l'agent tape la réponse et appuie sur Entrée. Sans MCP, sans API ; tout passe par le vrai client.
-
-https://github.com/user-attachments/assets/4d2107b6-02d3-4726-a207-dcfb5db006de
-
-```
-Teams (entrant) :  « Tell me a joke about dog and cat »
-          ↓
-Lucid :  *l'écouteur UIA de la barre des tâches voit un nouveau message Teams (pas besoin de confirmation LLM)*
-          → launch_app("Microsoft Teams")  → ouvre la conversation, lit la demande
-          → invente une blague sur un chien et un chat
-          → click(champ de saisie) → type("…texte de la blague…") → key("enter")
-          → « Fait. Répondu dans Teams avec la blague. »
-```
-
-> **Plus de démos :** [Voir toutes les vidéos et scénarios](README.demos.md)
 
 ---
 
@@ -47,17 +33,41 @@ Lucid :  *l'écouteur UIA de la barre des tâches voit un nouveau message Teams 
 
 ---
 
-## Architecture, en bref
+## Vidéo de démo
 
-![Architecture de Lucid](Docs/arch.fr-FR.png)
+Auto-réponse de bout en bout : l'écouteur UIA de la barre des tâches capte le message entrant → `launch_app` ouvre Teams → des clics pilotés par la vision naviguent dans la conversation → l'agent tape la réponse et appuie sur Entrée. Sans MCP, sans API ; tout passe par le vrai client.
+
+https://github.com/user-attachments/assets/4d2107b6-02d3-4726-a207-dcfb5db006de
+
+```
+Teams (entrant) :  « Tell me a joke about dog and cat »
+          ↓
+Lucid :  *l'écouteur UIA de la barre des tâches voit un nouveau message Teams (pas besoin de confirmation LLM)*
+          → launch_app("Microsoft Teams")  → ouvre la conversation, lit la demande
+          → invente une blague sur un chien et un chat
+          → click(champ de saisie) → type("…texte de la blague…") → key("enter")
+          → « Fait. Répondu dans Teams avec la blague. »
+```
+
+> **Plus de démos :** [Voir toutes les vidéos et scénarios](README.demos.md)
+
+---
+
+## Architecture
+
+![Architecture de Lucid](image/architecture.png)
 
 > **Pour aller plus loin :** [Aperçu technique de Lucid](https://daozhang0123.github.io/Lucid/lucid.html) — architecture, pyramide de captures, moniteur de barre des tâches, apprentissage Doze, skills, voix.
-
-Données utilisateur : `~/.lucid/` (config, logs, planifs, mémoire, cache d'icônes, jeton Copilot).
 
 ---
 
 ## Installation (utilisateurs finaux)
+
+| | Pris en charge à ce jour |
+| --- | --- |
+| **OS** | Windows 10 / 11 (x64) |
+| **Fournisseurs LLM** | GitHub Copilot &middot; Anthropic &middot; OpenAI (+ toute base URL compatible OpenAI) &middot; Google Gemini |
+| **Modèles (qualité observée)** | **Claude Opus 4.7** &asymp; **GPT-5.5** &nbsp;&gt;&nbsp; Claude Opus 4.6 &nbsp;&gt;&nbsp; Gemini 3.5 Flash |
 
 Téléchargez `lucid_<version>_x64-setup.exe` depuis une release, lancez l'installateur, démarrez **Lucid** depuis le menu Démarrer.
 
@@ -176,6 +186,6 @@ Sauvegarder dans Paramètres recharge le sidecar à chaud.
 
 ---
 
-## Stargazers
+## Star History
 
-[![GitHub stars](https://img.shields.io/github/stars/DaoZhang0123/Lucid?style=social)](https://github.com/DaoZhang0123/Lucid/stargazers)
+[![Star History Chart](https://api.star-history.com/svg?repos=DaoZhang0123/Lucid&type=Date)](https://www.star-history.com/#DaoZhang0123/Lucid&Date)

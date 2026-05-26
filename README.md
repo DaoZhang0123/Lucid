@@ -6,30 +6,16 @@
   <img src="image/banner.png" alt="Lucid — Eyes on screen, hands on mouse." />
 </p>
 
-> **A clear-eyed assistant for your Windows desktop — a true "human-like computer-use" vision agent: no MCP, direct control of your Windows apps, continuous auto-reply while you're away.**
-> Tell Lucid what you want done. It scopes out the screen, works the mouse, reads incoming messages while you're away, and quietly replies on your behalf.
+<p align="center">
+  <em><strong>Why "Lucid"?</strong> <em>Lucid</em> — clear, perceptive, transparent of mind. Our mascot is a little crab: walking sideways while keeping both eyes wide open on the screen — exactly what the agent does.</em>
+</p>
+
+**A clear-eyed assistant for your Windows desktop — a true "human-like computer-use" vision agent: no MCP, direct control of your Windows apps, continuous auto-reply while you're away.**
+Tell Lucid what you want done. It scopes out the screen, works the mouse, reads incoming messages while you're away, and quietly replies on your behalf.
 
 - **No MCP. No per-app APIs. No browser plugins.** Just a **vision-capable LLM** driving your real keyboard and mouse.
 - **No UIA, no accessibility tree either.** Lucid feeds the screen straight to the vision model and reads coordinates off a grid overlay on the image — so WeChat, Electron, games, custom-drawn UIs (anything UIA can't see) all work the same way.
 - **Unlike official bots (WeChat, etc.), Lucid controls your actual client** — so it can read any message, see any context, and reply as you, with full state persistence and no registration overhead.
-
-> **Why "Lucid"?** *Lucid* — clear, perceptive, transparent of mind. Our mascot is a little crab: walking sideways while keeping both eyes wide open on the screen — exactly what the agent does.
-
-> **Demo video** — end-to-end auto-reply: taskbar UIA listener picks up the incoming message → `launch_app` opens Teams → vision-driven clicks navigate the chat → the agent types the reply and hits Enter. No MCP, no API; everything runs through the real client.
-
-https://github.com/user-attachments/assets/4d2107b6-02d3-4726-a207-dcfb5db006de
-
-```
-Teams (incoming):  "Tell me a joke about dog and cat"
-          ↓
-Lucid:   *taskbar UIA listener sees a new Teams message (no LLM confirm needed)*
-          → launch_app("Microsoft Teams")  → open the chat, read the request
-          → think up a joke about a dog and a cat
-          → click(chat input) → type("…joke text…") → key("enter")
-          → "Done. Replied in Teams with the joke."
-```
-
-> **More demos:** [See all demo videos and scenarios](README.demos.md)
 
 ---
 
@@ -47,17 +33,41 @@ Lucid:   *taskbar UIA listener sees a new Teams message (no LLM confirm needed)*
 
 ---
 
-## Architecture, briefly
+## Demo video
 
-![Lucid architecture](Docs/arch.png)
+End-to-end auto-reply: taskbar UIA listener picks up the incoming message → `launch_app` opens Teams → vision-driven clicks navigate the chat → the agent types the reply and hits Enter. No MCP, no API; everything runs through the real client.
+
+https://github.com/user-attachments/assets/4d2107b6-02d3-4726-a207-dcfb5db006de
+
+```
+Teams (incoming):  "Tell me a joke about dog and cat"
+          ↓
+Lucid:   *taskbar UIA listener sees a new Teams message (no LLM confirm needed)*
+          → launch_app("Microsoft Teams")  → open the chat, read the request
+          → think up a joke about a dog and a cat
+          → click(chat input) → type("…joke text…") → key("enter")
+          → "Done. Replied in Teams with the joke."
+```
+
+> **More demos:** [See all demo videos and scenarios](README.demos.md)
+
+---
+
+## Architecture
+
+![Lucid architecture](image/architecture.png)
 
 > **Deep dive:** [Lucid technical overview](https://daozhang0123.github.io/Lucid/lucid.html) — architecture, screenshot pyramid, taskbar monitor, doze learning, skills, voice.
-
-User data: `~/.lucid/` (config, logs, schedules, memory, icons cache, Copilot token).
 
 ---
 
 ## Install (end users)
+
+| | Supported today |
+| --- | --- |
+| **OS** | Windows 10 / 11 (x64) |
+| **LLM providers** | GitHub Copilot &middot; Anthropic &middot; OpenAI (+ any OpenAI-compatible base URL) &middot; Google Gemini |
+| **Models (by observed quality)** | **Claude Opus 4.7** &asymp; **GPT-5.5** &nbsp;&gt;&nbsp; Claude Opus 4.6 &nbsp;&gt;&nbsp; Gemini 3.5 Flash |
 
 Download `lucid_<version>_x64-setup.exe` from a release, run it, launch **Lucid** from the Start menu.
 
@@ -176,6 +186,6 @@ GUI Settings hot-reloads the sidecar after saving.
 
 ---
 
-## Stargazers
+## Star History
 
-[![GitHub stars](https://img.shields.io/github/stars/DaoZhang0123/Lucid?style=social)](https://github.com/DaoZhang0123/Lucid/stargazers)
+[![Star History Chart](https://api.star-history.com/svg?repos=DaoZhang0123/Lucid&type=Date)](https://www.star-history.com/#DaoZhang0123/Lucid&Date)

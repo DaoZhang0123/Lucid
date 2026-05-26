@@ -264,6 +264,7 @@ footer .sep{margin:0 10px;color:var(--line)}
     <li><a href="#doze"><span class="n">4</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>Doze</a></li>
     <li><a href="#skills"><span class="n">5</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 8l10 6 10-6-10-6Z"/><path d="M6 11v6c0 2 3 3 6 3s6-1 6-3v-6"/></svg>Skills</a></li>
     <li><a href="#voice"><span class="n">6</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>Voice</a></li>
+    <li><a href="#testing"><span class="n">7</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Testing</a></li>
   </ol>
 </nav>
 
@@ -272,25 +273,27 @@ footer .sep{margin:0 10px;color:var(--line)}
 <section id="arch">
   <div class="ch-head">
     <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 10 6-10 6L2 8l10-6Z"/><path d="m2 16 10 6 10-6"/><path d="m2 12 10 6 10-6"/></svg></div>
-    <div class="ch-text"><div class="ch-num">CHAPTER 01</div><h2>Architecture</h2><div class="sub">Pure-vision agent &middot; three-layer process model &middot; four public LLM backends</div></div>
+    <div class="ch-text"><div class="ch-num">CHAPTER 01</div><h2>Architecture</h2><div class="sub">Pure-vision agent &middot; vendor-neutral LLM &middot; from feature to test</div></div>
   </div>
 
-  <p>Lucid does not depend on MCP, application plug-ins, or app APIs. The agent is multi-provider: pick whichever LLM you have access to. <strong>Claude Opus 4.x</strong> is the recommended driver, but GPT-5.x and Gemini 2.x also work end-to-end.</p>
+  <p>Lucid does not depend on MCP, application plug-ins, or app APIs. Any vision-capable LLM with tool-use can drive the loop &mdash; Lucid auto-discovers the models your subscription unlocks, so swapping providers is a config line, not a refactor. The four backends below are wired in today; adding a fifth is one Python file.</p>
   <p>
     <span class="badge"><span class="dot teal"></span>Anthropic API &middot; <code>claude-opus-4-5-20250929</code></span>
     <span class="badge"><span class="dot purple"></span>GitHub Copilot OAuth &middot; <code>claude-opus-4.6</code> (and any model your subscription unlocks &mdash; <code>/models</code> auto-discovery)</span>
     <span class="badge"><span class="dot green"></span>OpenAI &middot; <code>gpt-5.x</code> (any OpenAI-compatible base URL)</span>
     <span class="badge"><span class="dot rose"></span>Google Gemini &middot; <code>gemini-2.x</code></span>
-    <span class="badge"><span class="dot gold"></span>Internal proxy (dev only)</span>
   </p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="11" width="20" height="6" rx="1.5"/><rect x="2" y="19" width="20" height="2" rx="1"/></svg>Three-layer process model</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 6-6"/></svg>Engine pipeline</h3>
   <div class="fgrid">
-    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div><h4>GUI &middot; Tauri WebView</h4><p>SvelteKit pages: Chat, Schedules, Templates, Memory, Doze, Settings.</p></div>
-    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M10 13h4M10 17h4"/></svg></div><h4>Rust shell &middot; Tauri main</h4><p>Sidecar lifecycle, system tray, global hotkey, DPAPI-encrypted credentials.</p></div>
-    <div class="feat"><div class="fi gold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg></div><h4>Engine &middot; <code>lucid.exe</code></h4><p>Python 3.14 sidecar: ReAct loop, screenshot pyramid, taskbar, scheduler, doze, memory.</p></div>
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3"/></svg></div><h4>Perception</h4><p>Screenshot pyramid L0&ndash;L3 with a token budget. Default: don&rsquo;t send pixels unless the model asks.</p></div>
+    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg></div><h4>Decision</h4><p>Vision-capable LLM with tool-use returns <code>computer</code>, <code>launch_app</code>, <code>region</code>, <code>screenshot</code>&hellip; The model is swappable; system prompt is the only place it&rsquo;s pinned.</p></div>
+    <div class="feat"><div class="fi rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-12V5l-8-3-8 3v5c0 8 8 12 8 12Z"/></svg></div><h4>Safety</h4><p>Danger-word filter, coordinate sanity check, HITL gate, PyAutoGUI fail-safe corner, panic hotkey.</p></div>
+    <div class="feat"><div class="fi gold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div><h4>Action</h4><p>PyAutoGUI for clicks &amp; scroll, Win32 SendInput for IME-safe typing, clipboard fallback for long text.</p></div>
+    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 12 2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg></div><h4>Verify</h4><p>L3 pixel-diff around the cursor before and after each click; <code>pixel_change_ratio &lt; 0.5%</code> warns &ldquo;may have missed&rdquo;.</p></div>
+    <div class="feat"><div class="fi blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10Z"/></svg></div><h4>Memory</h4><p>Tips, icons, skills, templates merge into per-app <code>tips.md</code> and the icon atlas &mdash; what the agent learned (Chapter 4) is consumed here.</p></div>
   </div>
-  <p>UI &harr; engine is JSON-RPC over stdio. User data lives at <code>~/.lucid/</code> (config, logs, schedules, memory, icons, token).</p>
+  <p>Every step writes a screenshot + tool JSON + verify diff into <code>~/.lucid/logs/&lt;task&gt;/events.jsonl</code>. That trace is exactly what the test harness in Chapter 07 replays and judges &mdash; no fixtures, no mocks, the real desktop is the test bed.</p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>Why pure-vision?</h3>
   <div class="fgrid">
@@ -302,7 +305,7 @@ footer .sep{margin:0 10px;color:var(--line)}
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>ReAct loop</h3>
   <div class="steps">
     <div class="step"><div><div class="stt">observe</div><div class="sd">Capture screen at the level the model chose (L0&ndash;L3).</div></div></div>
-    <div class="step"><div><div class="stt">think</div><div class="sd">Claude returns <code>tool_use</code>: <code>computer</code>, <code>launch_app</code>, <code>region</code>, &hellip;</div></div></div>
+    <div class="step"><div><div class="stt">think</div><div class="sd">The LLM returns <code>tool_use</code>: <code>computer</code>, <code>launch_app</code>, <code>region</code>, &hellip;</div></div></div>
     <div class="step"><div><div class="stt">safety</div><div class="sd">Safety Layer screens danger words, coordinates, HITL gate.</div></div></div>
     <div class="step"><div><div class="stt">act</div><div class="sd">Execute via PyAutoGUI / Win32 SendInput / clipboard.</div></div></div>
     <div class="step"><div><div class="stt">verify</div><div class="sd">Post-step L3 pixel-diff if <code>click_verify_enabled</code>.</div></div></div>
@@ -339,51 +342,52 @@ footer .sep{margin:0 10px;color:var(--line)}
     <div class="feat"><div class="fi rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div><h4>Recompression budget</h4><p>Old screenshots are downscaled + JPEG'd, then replaced with a text placeholder. Forces "transcribe in the same turn".</p></div>
     <div class="feat"><div class="fi blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10Z"/></svg></div><h4>DPI-aware coordinates</h4><p>Per-Monitor V2, <code>mss</code> physical pixels, active-app pin defends against focus jumps.</p></div>
   </div>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Why this design?</h3>
+  <p>Images are the single biggest token sink in a long thread, so we never auto-capture. Four explicit levels let the model ask for <em>just enough</em> pixels &mdash; L0 free, L1 cheap overview, L2 grid for reading coords, L3 the 210&times;210 tile that catches the most common failure (&ldquo;clicked on nothing&rdquo;). Re-compressing history and forcing in-turn transcription teaches the model a posture: <strong>&ldquo;I don&rsquo;t always need to look &mdash; I just need to act.&rdquo;</strong> A 50-turn thread stays affordable where naive screenshotting would burn 80&nbsp;% of the budget on pixels.</p>
 </section>
 
 <section id="taskbar">
   <div class="ch-head">
     <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div>
-    <div class="ch-text"><div class="ch-num">CHAPTER 03</div><h2>Taskbar notification monitor</h2><div class="sub">Two parallel channels &middot; whichever fires first wins</div></div>
+    <div class="ch-text"><div class="ch-num">CHAPTER 03</div><h2>Taskbar notification monitor</h2><div class="sub">UIA snapshot sweep &middot; visual diff fallback &middot; per-app preference</div></div>
   </div>
 
-  <p>Action Center (WinRT <code>UserNotificationListener</code>) doesn't catch Teams / WeChat reliably, so Lucid runs <strong>two parallel channels</strong>.</p>
+  <p>Action Center (WinRT <code>UserNotificationListener</code>) misses Teams / WeChat too often, so Lucid runs <strong>two parallel channels</strong>. UIA fires first when the app cooperates; the visual diff is the safety net for everything else.</p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>Channel A &mdash; UIA (default, event-driven) <span class="status"><span class="pulse"></span>LIVE</span></h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>Channel A &mdash; UIA snapshot sweep <span class="status"><span class="pulse"></span>LIVE</span></h3>
   <div class="fgrid">
-    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg></div><h4>Property-change events</h4><p>Subscribes to <code>Name</code> / <code>HelpText</code> on the <code>Shell_TrayWnd</code> subtree.</p></div>
-    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20"/></svg></div><h4>Zero polling, zero tokens</h4><p>The event itself tells us <em>which app</em> and <em>what changed</em>.</p></div>
-    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div><h4>Cooldown + snapshot sweep</h4><p>Per-app cooldown so a single notification doesn't replay.</p></div>
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div><h4>Button-class whitelist</h4><p>Only <code>Taskbar.TaskListButtonAutomationPeer</code> (Win11 app buttons) and <code>SystemTray.NormalButton</code> (tray icons). Clock, volume, network, Show-Desktop sliver and chevron are filtered at the handler boundary &mdash; no log floods.</p></div>
+    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div><h4>500 ms snapshot sweep</h4><p>Win11 22H2+ XAML taskbar buttons accept <code>PropertyChanged</code> handlers but never call them back &mdash; UIA events alone miss everything. Lucid walks the dozen buttons every 500 ms, reads two properties, edge-detects against the previous snapshot. &lt;1 % of one core; tighter doesn&rsquo;t help, looser misses WeChat&rsquo;s ~1 s flash.</p></div>
+    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div><h4>Localised unread hints</h4><p><code>Name</code> matched against <code>未读 / 新消息 / 新活动 / unread / new message / new activity</code>; <code>HelpText</code> matched against <code>已请求注意 / attention requested / flashing</code>. WeChat never changes Name &mdash; only the HelpText flash &mdash; so we cover both.</p></div>
   </div>
-  <p><code>lucid/taskbar_uia.py</code> &middot; config <code>[taskbar_uia]</code></p>
+  <p><code>lucid/taskbar_uia_monitor.py</code> &middot; raw signals at <code>logs/taskbar-monitor/uia-events.jsonl</code> &middot; config <code>[taskbar_uia]</code></p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>Channel B &mdash; Visual two-step (fallback) <span class="status"><span class="pulse"></span>LIVE</span></h3>
   <div class="steps">
-    <div class="step"><div><div class="stt">Diff</div><div class="sd">Every <code>poll_interval_sec</code>, grab the bottom-centre strip (&asymp; bottom 120 px, x &isin; 25&ndash;75 %). dHash / pixel-diff; below threshold &rarr; done.</div></div></div>
-    <div class="step"><div><div class="stt">LLM confirm</div><div class="sd">On a real diff, ask "Is this a new chat notification? If yes, which app?" with the cropped strip attached. Output is structured.</div></div></div>
+    <div class="step"><div><div class="stt">Crop</div><div class="sd">Auto-detect the real taskbar height from <code>FindWindow("Shell_TrayWnd")</code>; default skip 100 px on the left (Win11 weather widget) and 100 px on the right (clock) so they never enter the strip.</div></div></div>
+    <div class="step"><div><div class="stt">Diff</div><div class="sd">Every <code>poll_interval_sec</code> (2 s default), dHash or pixel-diff over the strip; X-axis projection segments the changed columns so each segment is scored on its own.</div></div></div>
+    <div class="step"><div><div class="stt">LLM confirm</div><div class="sd">If a segment exceeds the threshold, attach the cropped strip and ask &ldquo;Is this a new chat notification? Which app?&rdquo; &mdash; structured output. Rejected segments enter a 30 s cooldown (&plusmn;20 px) so a hover / focus underline on the same icon doesn&rsquo;t burn LLM calls.</div></div></div>
   </div>
-  <p>X-projection segmentation isolates the changed column so the time / weather widget doesn't trigger false positives.</p>
+  <p><code>lucid/taskbar_monitor.py</code> &middot; config <code>[visual_notify]</code></p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>Arbitration</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>Arbitration &amp; per-app preference</h3>
   <ul>
-    <li>When UIA confirms first, Step 2 LLM is suppressed for <code>visual_suppress_after_uia_sec</code> (default 20 s).</li>
-    <li>Confirmed events are dedup'd in a strict-mode queue and may trigger auto-reply via <code>auto_chat_instruction</code>.</li>
-    <li>Per-app channel preference lives in <code>taskbar_sources.json</code> &mdash; doze learns and writes this file (Chapter 4).</li>
+    <li>UIA hit &rarr; calls <code>bump_external_cooldown()</code> on the visual monitor, suppressing Step-2 LLM for <code>visual_suppress_after_uia_sec</code> (20 s default).</li>
+    <li><code>~/.lucid/taskbar_sources.json</code> stores per-app source preference: <code>["uia"]</code> only, <code>["visual"]</code> only, or <code>["uia", "visual"]</code> with a <code>primary</code>. Defaults: Teams / Outlook / Slack / WeChat &rarr; UIA only. Visual stays as the safety net for the long-tail apps that paint their own badges without exposing UIA hints.</li>
+    <li>Doze drains <code>logs/taskbar-monitor/learn-queue.jsonl</code> &mdash; the queue carries <strong>both</strong> confirmed and rejected events, so the LLM also learns &ldquo;<em>this</em> widget is not a notification&rdquo; from counter-examples (Chapter 4).</li>
+    <li>Confirmed events are deduped through the strict-mode queue and can fire <code>auto_chat_instruction</code> to spawn an auto-reply task.</li>
   </ul>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Why this design?</h3>
+  <p>We tried each channel alone first. UIA alone is fast and free but silent on apps that paint their own badges (WeChat). Visual diff alone burns LLM calls on every clock tick and weather widget. The lesson: <strong>notifications are heterogeneous</strong> &mdash; no single mechanism covers them all. Two parallel channels plus a per-app preference file let the system <em>learn</em> who to trust on which path: most apps end up UIA-only (Teams, Outlook, Slack, WeChat after the HelpText flash route was found); visual stays as the safety net for the long tail. Counter-examples flow back through doze, and the steady-state cost trends toward zero.</p>
 </section>
 
 <section id="doze">
   <div class="ch-head">
     <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></div>
-    <div class="ch-text"><div class="ch-num">CHAPTER 04</div><h2>Doze learning</h2><div class="sub">Low-priority reflection on idle &middot; learns tips, icons, taskbar widgets</div></div>
+    <div class="ch-text"><div class="ch-num">CHAPTER 04</div><h2>Doze learning</h2><div class="sub">Low-priority reflection on idle &middot; learns tips and taskbar widgets</div></div>
   </div>
-
-  <p>
-    <span class="status"><span class="pulse"></span>v0 text &mdash; LIVE</span>&nbsp;
-    <span class="status"><span class="pulse"></span>v1 icon &mdash; LIVE</span>&nbsp;
-    <span class="status"><span class="pulse"></span>v1 taskbar-visual &mdash; LIVE</span>&nbsp;
-    <span class="status plan"><span class="pulse"></span>v2 heartbeat &mdash; planned</span>
-  </p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>When does it wake?</h3>
   <p>Every <code>tick_interval_sec</code> (60 s default) the worker checks four conditions; <strong>all must hold</strong>:</p>
@@ -395,25 +399,19 @@ footer .sep{margin:0 10px;color:var(--line)}
   </div>
   <p><em>User activity</em> means state-changing RPCs (<code>start_task</code>, <code>thread_new</code>, &hellip;). Polling like <code>ping</code> / <code>get_status</code> doesn't count. Any user activity during a pass <code>set()</code>s the cancel flag &mdash; <strong>the user never waits for doze</strong>.</p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4Z"/><path d="M4 14h16M9 4v5h5"/></svg>v0 &mdash; text channel</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4Z"/><path d="M4 14h16M9 4v5h5"/></svg>Text channel</h3>
   <p>One pass reads one unprocessed thread, builds a compact transcript (no images), shows the LLM existing tips / memory digest, and exposes only <code>learn_tip</code> / <code>remember</code> / <code>load_app_tips</code>. Output goes to <code>tools.md</code> and <code>apps/&lt;slug&gt;/tips.md</code>. Logs split per day at <code>~/.lucid/doze-YYYYMMDD.log</code>.</p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>v1 &mdash; icon channel</h3>
-  <p>Adds <code>propose_icon(image_filename, x, y, w, h, label, description?)</code>. The handler:</p>
-  <ul>
-    <li>validates the filename against the thread's <code>step_image</code> events</li>
-    <li>crops the PNG with PIL, dHash-compares against the existing atlas</li>
-    <li>enqueues to <code>icon_proposals/&lt;id&gt;.png</code> + <code>index.json</code> for human review on the <strong>/doze</strong> page</li>
-  </ul>
-  <p>The atlas is never written directly from doze &mdash; only accepted proposals make it in.</p>
-
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 6-6"/></svg>v1 &mdash; taskbar-visual learning</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 6-6"/></svg>Taskbar-visual learning</h3>
   <p>Visual Step 2 writes "diff seen but classifier said no" counter-examples to <code>logs/taskbar-monitor/learn-queue.jsonl</code>. Doze drains the queue, groups by <code>(app_slug, signature)</code>, and after &ge; 3 examples writes a <code>[taskbar_visual]</code> tip into <code>apps/&lt;slug&gt;/tips.md</code>. Next Step 2 call sees the tip via <code>load_app_tips</code> and stops re-flagging the same widget.</p>
 
   <div class="callout">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-12V5l-8-3-8 3v5c0 8 8 12 8 12Z"/></svg>
     <p><strong>Safety:</strong> the doze worker can never call GUI tools &mdash; the dispatch whitelist refuses anything outside its small tool set. Doze reads <code>events.jsonl</code> (no base64 images), not <code>messages.json</code>. Off by default; enable in <code>/settings &rarr; Doze</code>.</p>
   </div>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Why this design?</h3>
+  <p>Most agents only learn when the user gives explicit feedback. But the richest signal is &ldquo;what just happened, viewed in hindsight.&rdquo; <strong>Idle time is free</strong> &mdash; CPU is there, the user is away, the trace already exists. Doze is a low-priority secondary worker dispatching to a small <em>write-only</em> tool set (<code>learn_tip</code>, <code>remember</code>); it can never click anything, and is preempted the moment the user moves. The result is quiet, continuous self-improvement that never makes you wait.</p>
 </section>
 
 <section id="skills">
@@ -460,6 +458,9 @@ read_file("~/.lucid/skills/pptx/SKILL.md")
 learn_tip("PPTX skill installed at ~/.lucid/skills/pptx; entry: build.py")
 run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</code></pre>
   <p>RPC <code>install_skill_url</code> is restricted to user action (not LLM-triggered) and tags the result with <code>source: "online"</code> (untrusted) so the safety layer can decide.</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Why this design?</h3>
+  <p>There are <em>already</em> excellent skills in the wild &mdash; Anthropic's official catalogue, community repos, internal corporate knowledge bases. Reinventing them per user is wasted effort and dilutes quality. We adopted Anthropic's open <code>SKILL.md</code> format on purpose: <strong>any skill anyone has written elsewhere works here as-is</strong>, and the main loop becomes <em>discovery</em> &mdash; finding and adopting a good skill &mdash; not authoring. Progressive disclosure (one-line catalog &rarr; <code>read_skill</code> on demand) means a hundred skills cost almost nothing in tokens until the agent actually needs one.</p>
 </section>
 
 <section id="voice">
@@ -492,6 +493,41 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="step"><div><div class="stt"><code>dictation_append</code></div><div class="sd">Extend the input box ("&hellip;and also mention&hellip;").</div></div></div>
   </div>
   <p>If confidence is low, the voice overlay shows quick-pick chips when it falls back to <code>result</code> mode (no main-window dictation sink). The overlay sits top-centre with waveform + countdown.</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Why this design?</h3>
+  <p>Two reasons voice was built in from day one:</p>
+  <ol>
+    <li><strong>Speed for everyone.</strong> Speaking is roughly 3&times; faster than typing for most people, and you can do it while reading the screen. Most desktop assistants assume keyboard-only input &mdash; an unnecessary ceiling.</li>
+    <li><strong>Accessibility.</strong> The keyboard isn't an option for users with motor disabilities, RSI, or a temporary injury. A long-press hotkey + fully offline ASR means the entry point works without trusting the cloud or installing a separate accessibility stack.</li>
+  </ol>
+  <p>Push-to-talk (instead of an always-on wake word) keeps the CPU cold, never leaks audio, and avoids the &ldquo;wake-word fatigue&rdquo; that makes phone assistants feel unreliable.</p>
+</section>
+
+<section id="testing">
+  <div class="ch-head">
+    <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+    <div class="ch-text"><div class="ch-num">CHAPTER 07</div><h2>End-to-end test loop</h2><div class="sub">One JSON &middot; one Python runner &middot; one SKILL.md &middot; Copilot drives the iteration</div></div>
+  </div>
+
+  <p>The whole regression harness for a GUI agent is built from <strong>three files</strong>: a <code>queries.json</code> with ~60 real-desktop tasks, a 200-line <code>run.py</code> that only <em>enqueues</em> them into the sidecar&rsquo;s priority queue, and a <code>SKILL.md</code> that teaches VS Code Copilot how to read the resulting <code>manifest.json</code> and write the next iteration&rsquo;s fix plan. No pytest, no fixtures, no per-app mocks &mdash; the desktop itself is the test rig.</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M3 12h18M3 19h18"/></svg>Inputs &mdash; three plain files</h3>
+  <div class="fgrid">
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4Z"/><path d="M16 4v4h4"/></svg></div><h4><code>queries.json</code></h4><p>~60 real tasks across 15 categories (Notepad, Calculator, Edge, Office, WeChat, Teams&hellip;), each with an <code>instruction</code> and optional <code>expect_files</code>. Adding coverage is one JSON object.</p></div>
+    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4v16l7-4 7 4V4Z"/></svg></div><h4><code>run.py</code> &mdash; an enqueuer</h4><p>Boots the sidecar, fires <code>start_task</code> N times 300&nbsp;ms apart, watches each thread&rsquo;s <code>events.jsonl</code> mtime, and cancels just that task if it stalls past <code>--per-task-cap</code>&nbsp;s. The sidecar&rsquo;s own priority queue does the scheduling.</p></div>
+    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13l2 2 4-4"/></svg></div><h4><code>SKILL.md</code></h4><p>Anthropic Agent Skill that teaches VS Code Copilot the <em>analysis</em> protocol: verdict rules, subagent fan-out, severity / category-of-fix contract, output language. The analysis is a Copilot prompt &mdash; not Python.</p></div>
+  </div>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>Iteration loop <span class="status"><span class="pulse"></span>EVERY RELEASE</span></h3>
+  <div class="steps">
+    <div class="step"><div><div class="stt">Run</div><div class="sd"><code>python Test\run.py</code> &mdash; the sidecar executes ~60 queries on the real desktop (don&rsquo;t pre-clean it; clutter is part of the test). Each query backfills <code>status</code>, <code>final_text</code> and a <code>deliverables_snapshot</code> (file exists / size / mtime / contains-match, pinned at task close) into <code>manifest.json</code>.</div></div></div>
+    <div class="step"><div><div class="stt">Judge</div><div class="sd">Three-layer verdict per query: <strong>run</strong> (<code>status == "ok"</code>) &times; <strong>goal</strong> (a per-thread Copilot subagent reads <code>instruction</code> + <code>final_text</code> + <code>context.log</code> + 2&ndash;3 step screenshots and returns <code>pass</code> / <code>partial</code> / <code>fail</code>) &times; <strong>deliverables</strong> (<code>expect_files</code> snapshot). No brittle <code>expect_signal</code> grep &mdash; paraphrases pass, hallucinated success doesn&rsquo;t.</div></div></div>
+    <div class="step"><div><div class="stt">Iterate</div><div class="sd">Subagents fan out (4&ndash;6 in parallel); each ends with a machine-readable <code>severity:</code> / <code>category_of_fix:</code> pair (<code>prompt</code> / <code>tool</code> / <code>config</code> / <code>new-region</code> / <code>new-app-spec</code> / <code>bug-fix</code>). Copilot clusters them into <code>iteration-plan.md</code>: high-leverage fixes (&ge; 2 agree) first, single-thread blockers second, full per-thread table last. Pass a <code>baseline</code> run to surface regressions.</div></div></div>
+  </div>
+  <p>Net effect: every code change lands with a one-paragraph evidence trail (which categories regressed, which fix unblocked them) instead of vibes; onboarding a new app is &ldquo;add one JSON entry, re-run, read the plan.&rdquo;</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Why this design?</h3>
+  <p>Classic GUI test frameworks (Playwright, pytest+Selenium) make the developer spell out every assertion in code. But assertion is exactly what the agent should do &mdash; <em>it</em> knows what the goal looks like. So we flipped it: <code>queries.json</code> is the only contract, Copilot is the judge. Three benefits: (a) adding a case is one JSON line, not a fixture; (b) the judge tolerates paraphrase (&ldquo;a weekly report email&rdquo; &harr; &ldquo;draft email&rdquo;), so brittle string matches are gone; (c) the same SKILL.md that judges this release also writes the iteration plan for the next one. <strong>Tests and the learning loop become the same loop.</strong></p>
 </section>
 
 <footer>
@@ -557,6 +593,7 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <li><a href="#doze"><span class="n">4</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>打盹</a></li>
     <li><a href="#skills"><span class="n">5</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 8l10 6 10-6-10-6Z"/><path d="M6 11v6c0 2 3 3 6 3s6-1 6-3v-6"/></svg>技能</a></li>
     <li><a href="#voice"><span class="n">6</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>语音</a></li>
+    <li><a href="#testing"><span class="n">7</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>测试</a></li>
   </ol>
 </nav>
 
@@ -565,23 +602,27 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
 <section id="arch">
   <div class="ch-head">
     <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 10 6-10 6L2 8l10-6Z"/><path d="m2 16 10 6 10-6"/><path d="m2 12 10 6 10-6"/></svg></div>
-    <div class="ch-text"><div class="ch-num">CHAPTER 01</div><h2>架构</h2><div class="sub">纯视觉智能体 · 三层进程模型 · 两条公开 LLM 通道</div></div>
+    <div class="ch-text"><div class="ch-num">CHAPTER 01</div><h2>架构</h2><div class="sub">纯视觉智能体 · 大模型不绑定 · 功能到测试一条线</div></div>
   </div>
 
-  <p>Lucid 不依赖 MCP、不需要插件、不调用应用 API。模型采用 <strong>Claude Opus 4.x</strong>，公开走两条通道，另有一条仅开发用的内部代理。</p>
+  <p>Lucid 不依赖 MCP、不需要插件、不调用应用 API。任何带 tool-use 的多模态大模型都能驱动这个循环——Lucid 会自动发现你订阅里能用的模型，换厂商只是改一行配置，不是重构。下面四条通道是当前已接的，加第五条只需要一个 Python 文件。</p>
   <p>
     <span class="badge"><span class="dot teal"></span>Anthropic API · <code>claude-opus-4-5-20250929</code></span>
-    <span class="badge"><span class="dot purple"></span>GitHub Copilot OAuth · <code>claude-opus-4-6</code></span>
-    <span class="badge"><span class="dot gold"></span>内部代理（仅开发）</span>
+    <span class="badge"><span class="dot purple"></span>GitHub Copilot OAuth · <code>claude-opus-4-6</code>（订阅里能开的模型都自动发现）</span>
+    <span class="badge"><span class="dot green"></span>OpenAI · <code>gpt-5.x</code>（任何 OpenAI 兼容地址）</span>
+    <span class="badge"><span class="dot rose"></span>Google Gemini · <code>gemini-2.x</code></span>
   </p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="11" width="20" height="6" rx="1.5"/><rect x="2" y="19" width="20" height="2" rx="1"/></svg>三层进程模型</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 6-6"/></svg>引擎流水线</h3>
   <div class="fgrid">
-    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div><h4>GUI · Tauri WebView</h4><p>SvelteKit 页面：对话、计划、模板、记忆、打盹、设置。</p></div>
-    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M10 13h4M10 17h4"/></svg></div><h4>Rust 外壳 · Tauri main</h4><p>Sidecar 生命周期、系统托盘、全局热键、DPAPI 加密凭据。</p></div>
-    <div class="feat"><div class="fi gold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg></div><h4>引擎 · <code>lucid.exe</code></h4><p>Python 3.14 sidecar：ReAct 循环、截图金字塔、任务栏、调度、打盹、记忆。</p></div>
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3"/></svg></div><h4>感知</h4><p>截图金字塔 L0–L3，自带 token 预算。默认不送像素，除非模型主动要。</p></div>
+    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg></div><h4>决策</h4><p>带 tool-use 的多模态大模型返回 <code>computer</code>、<code>launch_app</code>、<code>region</code>、<code>screenshot</code>……模型可换，只在 system prompt 里声明。</p></div>
+    <div class="feat"><div class="fi rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-12V5l-8-3-8 3v5c0 8 8 12 8 12Z"/></svg></div><h4>安全</h4><p>危险词过滤、坐标合理性、HITL 闸门、PyAutoGUI fail-safe 角、紧急热键。</p></div>
+    <div class="feat"><div class="fi gold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div><h4>动作</h4><p>PyAutoGUI 走点击 / 滚动，Win32 SendInput 走 IME 安全输入，剪贴板兜底长文本。</p></div>
+    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 12 2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg></div><h4>核验</h4><p>每次点击前后各取一张 L3 做像素 diff；<code>pixel_change_ratio &lt; 0.5%</code> 即提示&ldquo;可能点空&rdquo;。</p></div>
+    <div class="feat"><div class="fi blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10Z"/></svg></div><h4>记忆</h4><p>tip、图标、技能、模板汇入每应用的 <code>tips.md</code> 与图标库——第 4 章学到的东西在这里被消费。</p></div>
   </div>
-  <p>UI ↔ 引擎走 stdio 上的 JSON-RPC。用户数据集中存在 <code>~/.lucid/</code>（配置、日志、计划、记忆、图标、令牌）。</p>
+  <p>每一步都把截图 + tool JSON + 核验 diff 写到 <code>~/.lucid/logs/&lt;任务&gt;/events.jsonl</code>。第 7 章的测试框架重放并审判的就是这条 trace——没有 fixture、没有 mock，真桌面就是测试床。</p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>为什么坚持纯视觉</h3>
   <div class="fgrid">
@@ -593,7 +634,7 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>ReAct 循环</h3>
   <div class="steps">
     <div class="step"><div><div class="stt">observe / 观察</div><div class="sd">按模型当下选择的等级（L0–L3）截屏。</div></div></div>
-    <div class="step"><div><div class="stt">think / 思考</div><div class="sd">Claude 返回 <code>tool_use</code>：<code>computer</code>、<code>launch_app</code>、<code>region</code>……</div></div></div>
+    <div class="step"><div><div class="stt">think / 思考</div><div class="sd">大模型返回 <code>tool_use</code>：<code>computer</code>、<code>launch_app</code>、<code>region</code>……</div></div></div>
     <div class="step"><div><div class="stt">safety / 安全</div><div class="sd">安全层过滤危险词、坐标、HITL 闸门。</div></div></div>
     <div class="step"><div><div class="stt">act / 执行</div><div class="sd">经 PyAutoGUI / Win32 SendInput / 剪贴板下发。</div></div></div>
     <div class="step"><div><div class="stt">verify / 核验</div><div class="sd">若开启 <code>click_verify_enabled</code>，事后取 L3 做像素 diff。</div></div></div>
@@ -630,51 +671,52 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="feat"><div class="fi rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div><h4>重压缩预算</h4><p>历史截图缩放 + JPEG 重压，再替换成文字占位。强制"同回合内转写关键信息"。</p></div>
     <div class="feat"><div class="fi blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10Z"/></svg></div><h4>DPI 感知坐标</h4><p>Per-Monitor V2，<code>mss</code> 物理像素，活动应用钉死，防焦点漂移。</p></div>
   </div>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>为什么这么设计</h3>
+  <p>截图是长会话里最大头的 token 成本，所以从不自动截。四个层级让模型按需点菜——L0 免费、L1 便宜的全屏、L2 带网格用于读坐标、L3 那张 210×210 的小图专治"以为点中其实点空"。历史截图重压 + 同回合内转写关键信息，是在教模型一种姿态：<strong>"很多时候不需要再看，只需要做"</strong>。50 回合的长任务也能扛得住成本——如果每步都截图，光像素就要烧掉 80% 的预算。</p>
 </section>
 
 <section id="taskbar">
   <div class="ch-head">
     <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div>
-    <div class="ch-text"><div class="ch-num">CHAPTER 03</div><h2>任务栏通知监听</h2><div class="sub">两条并行通道 · 先到者胜</div></div>
+    <div class="ch-text"><div class="ch-num">CHAPTER 03</div><h2>任务栏通知监听</h2><div class="sub">UIA 快照轮询 · 视觉 diff 兜底 · 按应用偏好</div></div>
   </div>
 
-  <p>Action Center（WinRT <code>UserNotificationListener</code>）在 Teams / 微信上不可靠，因此 Lucid 启了<strong>两条并行通道</strong>。</p>
+  <p>Action Center（WinRT <code>UserNotificationListener</code>）在 Teams / 微信上不可靠，因此 Lucid 启了<strong>两条并行通道</strong>。应用配合时 UIA 先到，其他情况由视觉 diff 兜底。</p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>通道 A — UIA（默认 · 事件驱动） <span class="status"><span class="pulse"></span>已落地</span></h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>通道 A — UIA 快照轮询 <span class="status"><span class="pulse"></span>已落地</span></h3>
   <div class="fgrid">
-    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg></div><h4>属性变化事件</h4><p>订阅 <code>Shell_TrayWnd</code> 子树的 <code>Name</code> / <code>HelpText</code> 变化。</p></div>
-    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20"/></svg></div><h4>零轮询零 token</h4><p>事件本身告诉我们"哪个应用"、"变了什么"。</p></div>
-    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div><h4>冷却 + 快照清扫</h4><p>每个应用单独冷却，避免同一通知反复触发。</p></div>
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div><h4>按钮类名白名单</h4><p>只看 <code>Taskbar.TaskListButtonAutomationPeer</code>（Win11 应用按钮）和 <code>SystemTray.NormalButton</code>（托盘图标）。时钟、音量、网络、Show Desktop 缝隙、Chevron 在 handler 边界直接过滤——日志不会被冲爆。</p></div>
+    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div><h4>500 ms 快照轮询</h4><p>Win11 22H2+ XAML 任务栏按钮接受 <code>PropertyChanged</code> handler 但永远不回调——光靠事件流什么都收不到。所以 Lucid 每 500 ms 扫一遍那十几个按钮，读两个属性，跟上一张快照做边沿检测。单核 &lt;1%；更短意义不大，更长会漏微信约 1 秒的 flash。</p></div>
+    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div><h4>多语言未读提示</h4><p><code>Name</code> 对照 <code>未读 / 新消息 / 新活动 / unread / new message / new activity</code>；<code>HelpText</code> 对照 <code>已请求注意 / attention requested / flashing</code>。微信不改 Name——只改 HelpText 的 flash 标志——这套规则两边都覆盖。</p></div>
   </div>
-  <p><code>lucid/taskbar_uia.py</code> · 配置位于 <code>[taskbar_uia]</code></p>
+  <p><code>lucid/taskbar_uia_monitor.py</code> · 原始信号落到 <code>logs/taskbar-monitor/uia-events.jsonl</code> · 配置位于 <code>[taskbar_uia]</code></p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>通道 B — 视觉两步（兜底） <span class="status"><span class="pulse"></span>已落地</span></h3>
   <div class="steps">
-    <div class="step"><div><div class="stt">Diff</div><div class="sd">每 <code>poll_interval_sec</code> 抓底部居中区（约底 120 px，x ∈ 25%–75%）。dHash / 像素 diff；阈值以下直接收工。</div></div></div>
-    <div class="step"><div><div class="stt">LLM 确认</div><div class="sd">真有变化时，附上裁剪片，问"是不是新消息？哪个应用？"，输出结构化。</div></div></div>
+    <div class="step"><div><div class="stt">裁剪</div><div class="sd">用 <code>FindWindow("Shell_TrayWnd")</code> 自动检测真实任务栏高度；默认左侧跳过 100 px（Win11 天气小部件）、右侧跳过 100 px（时钟），它们永远不会进入 strip。</div></div></div>
+    <div class="step"><div><div class="stt">Diff</div><div class="sd">每 <code>poll_interval_sec</code>（默认 2 秒）对 strip 做 dHash 或像素 diff；X 方向投影把变化列切成段，逐段评分。</div></div></div>
+    <div class="step"><div><div class="stt">LLM 确认</div><div class="sd">某段超过阈值时，附上裁剪片，问&ldquo;是不是新消息？哪个应用？&rdquo;，输出结构化。被拒分段进 30 秒冷却（±20 px）——同一图标的 hover / 焦点下划线不会反复烧 LLM。</div></div></div>
   </div>
-  <p>X 方向投影分段隔离变化列，避免时间/天气小部件误报。</p>
+  <p><code>lucid/taskbar_monitor.py</code> · 配置位于 <code>[visual_notify]</code></p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>仲裁</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>仲裁 &amp; 按应用偏好</h3>
   <ul>
-    <li>UIA 先确认时，第二步 LLM 被压制 <code>visual_suppress_after_uia_sec</code>（默认 20 秒）。</li>
+    <li>UIA 命中后调用视觉通道的 <code>bump_external_cooldown()</code>，第二步 LLM 被压制 <code>visual_suppress_after_uia_sec</code>（默认 20 秒）。</li>
+    <li><code>~/.lucid/taskbar_sources.json</code> 存每个应用的通道偏好：仅 <code>["uia"]</code>、仅 <code>["visual"]</code>、或 <code>["uia", "visual"]</code> 双开并指定 <code>primary</code>。默认：Teams / Outlook / Slack / 微信都走仅 UIA。视觉只给那些自己画 badge 、又不暴露 UIA 提示的长尾应用兼底。</li>
+    <li>打盹排干 <code>logs/taskbar-monitor/learn-queue.jsonl</code>——队列里<strong>同时包含</strong>确认事件和被拒事件，LLM 也会从反例里学到&ldquo;这个小部件不算通知&rdquo;（见第 4 章）。</li>
     <li>确认事件经 strict 模式队列去重，可触发 <code>auto_chat_instruction</code> 自动回复任务。</li>
-    <li>每个应用的通道偏好存在 <code>taskbar_sources.json</code>——打盹会学习并写回（见第 4 章）。</li>
   </ul>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>为什么这么设计</h3>
+  <p>我们先把两条通道分别试过。单 UIA 又快又便宜，但碰上自己画 badge 的应用（微信）就哑了；单视觉 diff 又每秒时钟、每个天气小部件都要烧 LLM。教训是：<strong>通知本来就是异构的</strong>，单一机制覆盖不了。两条并行通道加一份按应用偏好的文件，让系统去<em>学</em>——大多数应用最后都落到仅 UIA（Teams、Outlook、Slack，以及找到 HelpText flash 路径后的微信），视觉只给长尾应用兼底。被拒事件经打盹回流，稳态成本会越来越接近零。</p>
 </section>
 
 <section id="doze">
   <div class="ch-head">
     <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></div>
-    <div class="ch-text"><div class="ch-num">CHAPTER 04</div><h2>打盹学习</h2><div class="sub">空闲时低优先反思 · 学 tip、图标、任务栏小部件</div></div>
+    <div class="ch-text"><div class="ch-num">CHAPTER 04</div><h2>打盹学习</h2><div class="sub">空闲时低优先反思 · 学 tip 和任务栏小部件</div></div>
   </div>
-
-  <p>
-    <span class="status"><span class="pulse"></span>v0 文本 — 已落地</span>&nbsp;
-    <span class="status"><span class="pulse"></span>v1 图标 — 已落地</span>&nbsp;
-    <span class="status"><span class="pulse"></span>v1 任务栏视觉 — 已落地</span>&nbsp;
-    <span class="status plan"><span class="pulse"></span>v2 心跳 — 计划中</span>
-  </p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>什么时候会醒？</h3>
   <p>每 <code>tick_interval_sec</code>（默认 60 秒）worker 检查四个条件，<strong>必须全部满足</strong>：</p>
@@ -686,25 +728,19 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
   </div>
   <p><em>用户活动</em>指改变状态的 RPC（<code>start_task</code>、<code>thread_new</code>……）；轮询类如 <code>ping</code>、<code>get_status</code> 不算。打盹期间出现用户活动会立即 <code>set()</code> 取消标志——<strong>用户永远不会等打盹</strong>。</p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4Z"/><path d="M4 14h16M9 4v5h5"/></svg>v0 — 文本通道</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4Z"/><path d="M4 14h16M9 4v5h5"/></svg>文本通道</h3>
   <p>一次只读一条未处理线程，构造紧凑文本（无图），把现有 tip / 记忆摘要也喂给 LLM，仅暴露 <code>learn_tip</code> / <code>remember</code> / <code>load_app_tips</code>。落地到 <code>tools.md</code> 与 <code>apps/&lt;slug&gt;/tips.md</code>。日志按天切到 <code>~/.lucid/doze-YYYYMMDD.log</code>。</p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>v1 — 图标通道</h3>
-  <p>新增工具 <code>propose_icon(image_filename, x, y, w, h, label, description?)</code>，处理器会：</p>
-  <ul>
-    <li>对照线程的 <code>step_image</code> 事件校验文件名</li>
-    <li>用 PIL 裁出 PNG，与现有图标库做 dHash 对比</li>
-    <li>入队 <code>icon_proposals/&lt;id&gt;.png</code> + <code>index.json</code>，留给 <strong>/doze</strong> 页面人工审核</li>
-  </ul>
-  <p>图标库永远不会被打盹直接写入——只有被接受的提案才会进入。</p>
-
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 6-6"/></svg>v1 — 任务栏视觉学习</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 6-6"/></svg>任务栏视觉学习</h3>
   <p>视觉第二步若"看到 diff 但分类器说不算"，会把反例写到 <code>logs/taskbar-monitor/learn-queue.jsonl</code>。打盹排干该队列，按 <code>(app_slug, signature)</code> 聚合，达阈值（默认 ≥ 3）后向 <code>apps/&lt;slug&gt;/tips.md</code> 写入 <code>[taskbar_visual]</code> tip。下一次第二步通过 <code>load_app_tips</code> 看到 tip，就不再误报同一小部件。</p>
 
   <div class="callout">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-12V5l-8-3-8 3v5c0 8 8 12 8 12Z"/></svg>
     <p><strong>安全：</strong>打盹 worker 永远不能调 GUI 工具——dispatch 白名单只放它那一小撮。打盹只读 <code>events.jsonl</code>（已序列化，无 base64 图），不读可能含密的 <code>messages.json</code>。默认关闭，在 <code>/settings → 打盹</code> 启用。</p>
   </div>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>为什么这么设计</h3>
+  <p>多数智能体只在用户给反馈时才学。但最丰厚的学习信号其实是"刚才发生的事，事后冷静看一遍"。<strong>空闲时间是免费的</strong>——CPU 在那、用户不在、trace 已经写好了。打盹是低优先的二级 worker，dispatch 白名单只放<em>写</em>类工具（<code>learn_tip</code>、<code>remember</code>），永远点不了 GUI，用户一动手就立刻让位。换来的是<strong>安静、连续、不打扰</strong>的自我改进。</p>
 </section>
 
 <section id="skills">
@@ -751,6 +787,9 @@ read_file("~/.lucid/skills/pptx/SKILL.md")
 learn_tip("PPTX skill installed at ~/.lucid/skills/pptx; entry: build.py")
 run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</code></pre>
   <p>RPC <code>install_skill_url</code> 仅允许用户主动触发（LLM 不能调），结果标记 <code>source: "online"</code>（不可信），由安全层决定。</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>为什么这么设计</h3>
+  <p>外面<em>已经</em>有非常多优秀的 skill 了——Anthropic 官方仓库、社区项目、公司内部的知识库。每个用户都自己造一遍，是浪费、还是质量稀释。我们直接采用 Anthropic 开放的 <code>SKILL.md</code> 格式就是这个原因：<strong>任何人在任何地方写好的 skill，丢进来就能用</strong>；主循环不是"写"，而是"<em>发现</em>"——找到一个好 skill 并装上。渐进披露（一行目录 → 用时再 <code>read_skill</code>）让一百个 skill 在用到之前几乎不花 token。</p>
 </section>
 
 <section id="voice">
@@ -783,6 +822,41 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="step"><div><div class="stt"><code>dictation_append</code></div><div class="sd">补充输入框（"……再加一句……"）。</div></div></div>
   </div>
   <p>仅当浮层退到 <code>result</code> 兜底（没有主窗 sink）时才弹快选 chips。浮层挂在屏幕顶部居中，带波形和倒计时。</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>为什么这么设计</h3>
+  <p>一开始就把语音做进去，原因有两个：</p>
+  <ol>
+    <li><strong>对每个人都更快。</strong>绝大多数人说话比打字快 3 倍左右，而且能一边看屏幕一边说。多数桌面助手默认只接受键盘输入——这个天花板其实没必要存在。</li>
+    <li><strong>无障碍。</strong>对运动障碍、RSI 劳损、临时受伤、或者暂时不方便打字的用户来说，键盘根本不是选项。<strong>长按热键 + 完全本地的 ASR</strong> 意味着这个入口既不用信云、也不用单独装无障碍栈就能用。</li>
+  </ol>
+  <p>按住说话（而不是常听唤醒词）让 CPU 一直凉、永不漏音频，也不会有手机助手那种"唤醒词总不灵"的疲劳感。</p>
+</section>
+
+<section id="testing">
+  <div class="ch-head">
+    <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+    <div class="ch-text"><div class="ch-num">CHAPTER 07</div><h2>端到端回归测试</h2><div class="sub">一个 JSON · 一个 Python runner · 一份 SKILL.md · Copilot 负责分析与迭代</div></div>
+  </div>
+
+  <p>整套 GUI agent 的回归测试架子就三个文件：<code>queries.json</code> 里 60 来个真桌面任务、200 行的 <code>run.py</code> 只负责把任务推进 sidecar 的优先队列、再加一份 <code>SKILL.md</code> 告诉 VS Code Copilot 怎么读跑出来的 <code>manifest.json</code>、怎么写下一轮的修复计划。没有 pytest、没有 fixture、没有 per-app mock — 真桌面本身就是夹具。</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M3 12h18M3 19h18"/></svg>输入：三个普通文件</h3>
+  <div class="fgrid">
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4Z"/><path d="M16 4v4h4"/></svg></div><h4><code>queries.json</code></h4><p>15 个类别下 60 来个真任务（记事本、计算器、Edge、Office、微信、Teams…），每条带 <code>instruction</code> 和可选的 <code>expect_files</code>。扩 case 就是加一段 JSON。</p></div>
+    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4v16l7-4 7 4V4Z"/></svg></div><h4><code>run.py</code> — 只入队</h4><p>启 sidecar，每 300&nbsp;ms 喂一条 <code>start_task</code>；盯各线程 <code>events.jsonl</code> 的 mtime，超过 <code>--per-task-cap</code> s 没动就只 cancel 这一条，其余继续跑。调度交给 sidecar 自己的优先队列。</p></div>
+    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13l2 2 4-4"/></svg></div><h4><code>SKILL.md</code></h4><p>Anthropic Agent Skill 标准格式，把“怎么分析这一轮跑”写成给 VS Code Copilot 的协议：判定规则、子代理 fan-out、<code>severity</code> / <code>category_of_fix</code> 合约、输出语言。分析逻辑是 prompt，不是 Python。</p></div>
+  </div>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>迭代循环 <span class="status"><span class="pulse"></span>每个 RELEASE</span></h3>
+  <div class="steps">
+    <div class="step"><div><div class="stt">跑</div><div class="sd"><code>python Test\run.py</code> — sidecar 在真桌面跑 60 来条 query（别预清理，桌面乱本来就是测试条件）。每条收尾时把 <code>status</code>、<code>final_text</code> 和 <code>deliverables_snapshot</code>（文件是否存在 / 大小 / mtime / 子串命中，定格在 task close 那一刻）回填进 <code>manifest.json</code>。</div></div></div>
+    <div class="step"><div><div class="stt">判</div><div class="sd">每条 query 三层判定：<strong>运行层</strong>（<code>status == "ok"</code>）× <strong>目标层</strong>（per-thread Copilot 子代理读 <code>instruction</code> + <code>final_text</code> + <code>context.log</code> + 2–3 张 step 截图，返 <code>pass</code> / <code>partial</code> / <code>fail</code>）× <strong>交付层</strong>（<code>expect_files</code> 快照）。不再做脆弱的 <code>expect_signal</code> 子串匹配 — 同义说法照样过、模型谎称完成照样挂。</div></div></div>
+    <div class="step"><div><div class="stt">迭</div><div class="sd">子代理 fan-out（4–6 个并行），每个结尾必带机器可读的 <code>severity:</code> / <code>category_of_fix:</code>（<code>prompt</code> / <code>tool</code> / <code>config</code> / <code>new-region</code> / <code>new-app-spec</code> / <code>bug-fix</code>）。Copilot 把它们聚类成 <code>iteration-plan.md</code>：≥2 个子代理同意的高杠杆改动排第一、单线程 blocker 第二、完整逐线程表第三。传一个 <code>baseline</code> 还能跟上一轮对比看回归。</div></div></div>
+  </div>
+  <p>效果：每次改代码都带一段“哪些类别回归了 / 哪个修复解锁了它们”的证据，不是凭感觉；新接一个 app 就是“加一条 JSON、重跑、读 plan”。</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>为什么这么设计</h3>
+  <p>经典 GUI 测试框架（Playwright、pytest+Selenium）要求开发者把每条断言都写成代码。但"断言"这件事本来就该交给智能体——<em>它</em>才知道目标长什么样。所以我们把它翻过来：<code>queries.json</code> 是唯一的契约，Copilot 是裁判。这样有三个好处：(a) 加一条 case 就是加一行 JSON，不用写 fixture；(b) 裁判容忍同义表达（"一封周报邮件" ↔ "邮件草稿"），脆弱的字符串匹配消失了；(c) 评判这一版的同一份 SKILL.md，会顺手产出下一版的迭代计划。<strong>测试和学习闭环合并成了同一条回路。</strong></p>
 </section>
 
 <footer>
@@ -848,6 +922,7 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <li><a href="#doze"><span class="n">4</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>Doze</a></li>
     <li><a href="#skills"><span class="n">5</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 8l10 6 10-6-10-6Z"/><path d="M6 11v6c0 2 3 3 6 3s6-1 6-3v-6"/></svg>Skills</a></li>
     <li><a href="#voice"><span class="n">6</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v3"/></svg>Voix</a></li>
+    <li><a href="#testing"><span class="n">7</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Tests</a></li>
   </ol>
 </nav>
 
@@ -856,23 +931,27 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
 <section id="arch">
   <div class="ch-head">
     <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 10 6-10 6L2 8l10-6Z"/><path d="m2 16 10 6 10-6"/><path d="m2 12 10 6 10-6"/></svg></div>
-    <div class="ch-text"><div class="ch-num">CHAPITRE 01</div><h2>Architecture</h2><div class="sub">Agent purement visuel · modèle à trois processus · deux backends LLM publics</div></div>
+    <div class="ch-text"><div class="ch-num">CHAPITRE 01</div><h2>Architecture</h2><div class="sub">Agent purement visuel · LLM agnostique · de la fonctionnalité au test</div></div>
   </div>
 
-  <p>Lucid ne dépend ni de MCP, ni de plug-ins, ni d'API d'application. Le modèle est <strong>Claude Opus 4.x</strong>, accessible via deux backends publics plus un proxy interne réservé au développement.</p>
+  <p>Lucid ne dépend ni de MCP, ni de plug-ins, ni d'API d'application. N'importe quel LLM multimodal avec tool-use peut piloter la boucle — Lucid détecte automatiquement les modèles que votre abonnement débloque ; changer de fournisseur est une ligne de config, pas un refactor. Les quatre backends ci-dessous sont câblés aujourd'hui ; en ajouter un cinquième tient en un fichier Python.</p>
   <p>
     <span class="badge"><span class="dot teal"></span>API Anthropic · <code>claude-opus-4-5-20250929</code></span>
-    <span class="badge"><span class="dot purple"></span>GitHub Copilot OAuth · <code>claude-opus-4-6</code></span>
-    <span class="badge"><span class="dot gold"></span>Proxy interne (dev uniquement)</span>
+    <span class="badge"><span class="dot purple"></span>GitHub Copilot OAuth · <code>claude-opus-4-6</code> (et tout modèle débloqué par l'abonnement)</span>
+    <span class="badge"><span class="dot green"></span>OpenAI · <code>gpt-5.x</code> (toute base URL compatible OpenAI)</span>
+    <span class="badge"><span class="dot rose"></span>Google Gemini · <code>gemini-2.x</code></span>
   </p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="11" width="20" height="6" rx="1.5"/><rect x="2" y="19" width="20" height="2" rx="1"/></svg>Modèle à trois processus</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 6-6"/></svg>Pipeline du moteur</h3>
   <div class="fgrid">
-    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div><h4>GUI · Tauri WebView</h4><p>Pages SvelteKit : Chat, Planifications, Modèles, Mémoire, Doze, Paramètres.</p></div>
-    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M10 13h4M10 17h4"/></svg></div><h4>Coque Rust · Tauri main</h4><p>Cycle de vie du sidecar, tray, raccourci global, identifiants chiffrés DPAPI.</p></div>
-    <div class="feat"><div class="fi gold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg></div><h4>Moteur · <code>lucid.exe</code></h4><p>Sidecar Python 3.14 : boucle ReAct, pyramide de captures, barre des tâches, planification, doze, mémoire.</p></div>
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3"/></svg></div><h4>Perception</h4><p>Pyramide de captures L0–L3 avec budget de tokens. Par défaut : aucun pixel envoyé tant que le modèle ne demande pas.</p></div>
+    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg></div><h4>Décision</h4><p>LLM multimodal avec tool-use renvoie <code>computer</code>, <code>launch_app</code>, <code>region</code>, <code>screenshot</code>… Le modèle est interchangeable ; il n'est nommé que dans le system prompt.</p></div>
+    <div class="feat"><div class="fi rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-12V5l-8-3-8 3v5c0 8 8 12 8 12Z"/></svg></div><h4>Sécurité</h4><p>Filtre de mots dangereux, plausibilité des coords, HITL, coin fail-safe PyAutoGUI, raccourci panique.</p></div>
+    <div class="feat"><div class="fi gold"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div><h4>Action</h4><p>PyAutoGUI pour clics &amp; scroll, Win32 SendInput pour saisie IME-safe, presse-papier en repli sur les longs textes.</p></div>
+    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 12 2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg></div><h4>Vérification</h4><p>Diff pixel L3 autour du curseur avant et après chaque clic ; <code>pixel_change_ratio &lt; 0,5 %</code> avertit « clic peut-être manqué ».</p></div>
+    <div class="feat"><div class="fi blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10Z"/></svg></div><h4>Mémoire</h4><p>Astuces, icônes, skills, templates fusionnent dans <code>tips.md</code> par app et dans l'atlas d'icônes — ce qu'apprend l'agent (chapitre 4) est consommé ici.</p></div>
   </div>
-  <p>UI ↔ moteur en JSON-RPC sur stdio. Toutes les données utilisateur vivent sous <code>~/.lucid/</code>.</p>
+  <p>Chaque étape écrit une capture + le JSON de l'outil + le diff de vérification dans <code>~/.lucid/logs/&lt;tâche&gt;/events.jsonl</code>. Le harnais de tests du chapitre 7 rejoue et juge exactement cette trace — pas de fixtures, pas de mocks, le vrai bureau est le banc d'essai.</p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>Pourquoi le tout-visuel ?</h3>
   <div class="fgrid">
@@ -884,7 +963,7 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>Boucle ReAct</h3>
   <div class="steps">
     <div class="step"><div><div class="stt">observe</div><div class="sd">Capture au niveau choisi par le modèle (L0–L3).</div></div></div>
-    <div class="step"><div><div class="stt">think</div><div class="sd">Claude renvoie un <code>tool_use</code> : <code>computer</code>, <code>launch_app</code>, <code>region</code>…</div></div></div>
+    <div class="step"><div><div class="stt">think</div><div class="sd">Le LLM renvoie un <code>tool_use</code> : <code>computer</code>, <code>launch_app</code>, <code>region</code>…</div></div></div>
     <div class="step"><div><div class="stt">safety</div><div class="sd">La couche sécurité filtre mots/coords dangereux, passe le HITL.</div></div></div>
     <div class="step"><div><div class="stt">act</div><div class="sd">Exécution via PyAutoGUI / Win32 SendInput / presse-papier.</div></div></div>
     <div class="step"><div><div class="stt">verify</div><div class="sd">Diff pixel L3 post-action si <code>click_verify_enabled</code>.</div></div></div>
@@ -921,51 +1000,52 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="feat"><div class="fi rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div><h4>Budget de recompression</h4><p>Les vieilles captures sont réduites + JPEG, puis remplacées par un placeholder texte — force la transcription dans le même tour.</p></div>
     <div class="feat"><div class="fi blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 4 10 15 15 0 0 1-4 10 15 15 0 0 1-4-10 15 15 0 0 1 4-10Z"/></svg></div><h4>Coords DPI-aware</h4><p>Per-Monitor V2, pixels physiques via <code>mss</code>, app active épinglée contre les sauts de focus.</p></div>
   </div>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Pourquoi ce design ?</h3>
+  <p>Les images sont le poste de tokens le plus lourd d'un long fil &mdash; donc on ne capture jamais automatiquement. Quatre niveaux explicites laissent le modèle commander juste ce qu'il faut : L0 gratuit, L1 vue d'ensemble bon marché, L2 grille pour lire les coords, L3 la tuile 210&times;210 qui attrape le mode d'échec le plus fréquent (« cliqué sur rien »). Recompresser l'historique et forcer la transcription au même tour enseigne au modèle une posture : <strong>« souvent pas besoin de regarder, juste agir »</strong>. Un fil de 50 tours reste abordable là où une capture naïve à chaque pas brûlerait 80&nbsp;% du budget en pixels.</p>
 </section>
 
 <section id="taskbar">
   <div class="ch-head">
     <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div>
-    <div class="ch-text"><div class="ch-num">CHAPITRE 03</div><h2>Notifications de la barre des tâches</h2><div class="sub">Deux canaux parallèles · le premier qui parle gagne</div></div>
+    <div class="ch-text"><div class="ch-num">CHAPITRE 03</div><h2>Notifications de la barre des tâches</h2><div class="sub">Sweep UIA · diff visuel en repli · préférence par app</div></div>
   </div>
 
-  <p>Le Centre d'action (WinRT <code>UserNotificationListener</code>) rate régulièrement Teams / WeChat : Lucid fait tourner <strong>deux canaux en parallèle</strong>.</p>
+  <p>Le Centre d'action (WinRT <code>UserNotificationListener</code>) rate régulièrement Teams / WeChat : Lucid fait tourner <strong>deux canaux en parallèle</strong>. UIA parle en premier quand l'app coopère ; le diff visuel est le filet de sécurité pour le reste.</p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>Canal A — UIA (par défaut · événementiel) <span class="status"><span class="pulse"></span>EN PROD</span></h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8Z"/></svg>Canal A — Sweep UIA <span class="status"><span class="pulse"></span>EN PROD</span></h3>
   <div class="fgrid">
-    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7Z"/></svg></div><h4>Property-change</h4><p>S'abonne aux changements <code>Name</code> / <code>HelpText</code> sous l'arbre <code>Shell_TrayWnd</code>.</p></div>
-    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20"/></svg></div><h4>Zéro polling, zéro token</h4><p>L'événement dit déjà <em>quelle app</em> et <em>quoi a changé</em>.</p></div>
-    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div><h4>Cooldown + sweep</h4><p>Cooldown par app pour éviter qu'une notif se rejoue.</p></div>
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div><h4>Liste blanche de classes</h4><p>Uniquement <code>Taskbar.TaskListButtonAutomationPeer</code> (boutons d'app Win11) et <code>SystemTray.NormalButton</code> (icônes tray). Horloge, volume, réseau, fente Show-Desktop et chevron sont filtrés à la frontière du handler — pas d'inondation de logs.</p></div>
+    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div><h4>Sweep 500 ms</h4><p>Sur Win11 22H2+ la barre XAML accepte les handlers <code>PropertyChanged</code> mais ne les rappelle jamais — les événements seuls ne voient rien. Donc Lucid balaie la douzaine de boutons toutes les 500 ms, lit deux propriétés, détection d'edge contre le snapshot précédent. &lt;1 % d'un cœur ; plus court n'aide pas, plus long rate le flash WeChat d'~1 s.</p></div>
+    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div><h4>Indices d'unread localisés</h4><p><code>Name</code> comparé à <code>未读 / 新消息 / 新活动 / unread / new message / new activity</code> ; <code>HelpText</code> comparé à <code>已请求注意 / attention requested / flashing</code>. WeChat ne change pas le Name — uniquement le flash HelpText — donc on couvre les deux.</p></div>
   </div>
-  <p><code>lucid/taskbar_uia.py</code> · configuration <code>[taskbar_uia]</code></p>
+  <p><code>lucid/taskbar_uia_monitor.py</code> · signaux bruts dans <code>logs/taskbar-monitor/uia-events.jsonl</code> · configuration <code>[taskbar_uia]</code></p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/></svg>Canal B — Visuel deux étapes (repli) <span class="status"><span class="pulse"></span>EN PROD</span></h3>
   <div class="steps">
-    <div class="step"><div><div class="stt">Diff</div><div class="sd">Toutes les <code>poll_interval_sec</code>, capture de la bande inférieure centrale (~120 px de bas, x ∈ 25–75 %). dHash / diff pixel ; en dessous du seuil → terminé.</div></div></div>
-    <div class="step"><div><div class="stt">Confirmation LLM</div><div class="sd">Sur un vrai diff, on demande « est-ce une nouvelle notif ? quelle app ? » avec la bande jointe. Sortie structurée.</div></div></div>
+    <div class="step"><div><div class="stt">Découper</div><div class="sd">Hauteur réelle de la barre auto-détectée via <code>FindWindow("Shell_TrayWnd")</code> ; par défaut 100 px ignorés à gauche (météo Win11) et 100 px à droite (horloge), donc ils n'entrent jamais dans la bande.</div></div></div>
+    <div class="step"><div><div class="stt">Diff</div><div class="sd">Toutes les <code>poll_interval_sec</code> (2 s par défaut), dHash ou diff pixel sur la bande ; la projection sur X découpe les colonnes qui ont bougé et chaque segment est noté à part.</div></div></div>
+    <div class="step"><div><div class="stt">Confirmation LLM</div><div class="sd">Un segment au-dessus du seuil &rarr; on attache la bande et on demande « nouvelle notif ? quelle app ? » — sortie structurée. Les segments rejetés entrent dans un cooldown de 30 s (&plusmn;20 px) pour qu'un survol ou un soulignement de focus sur la même icône ne brûle pas de LLM.</div></div></div>
   </div>
-  <p>La segmentation par projection sur X isole la colonne qui a changé : l'horloge / météo n'est plus un faux positif.</p>
+  <p><code>lucid/taskbar_monitor.py</code> · configuration <code>[visual_notify]</code></p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>Arbitrage</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M6 12h12M10 18h4"/></svg>Arbitrage &amp; préférence par app</h3>
   <ul>
-    <li>Quand UIA confirme en premier, l'étape 2 du LLM est inhibée pendant <code>visual_suppress_after_uia_sec</code> (20 s par défaut).</li>
+    <li>Sur un hit UIA, appel à <code>bump_external_cooldown()</code> sur le moniteur visuel : l'étape 2 du LLM est inhibée pendant <code>visual_suppress_after_uia_sec</code> (20 s par défaut).</li>
+    <li><code>~/.lucid/taskbar_sources.json</code> stocke la préférence par app : <code>["uia"]</code> seul, <code>["visual"]</code> seul, ou <code>["uia", "visual"]</code> en double avec un <code>primary</code>. Par défaut : Teams / Outlook / Slack / WeChat en UIA seul. Le visuel reste le filet de sécurité pour les apps de longue traîne qui dessinent leur propre badge sans exposer d'indice UIA.</li>
+    <li>Doze vide <code>logs/taskbar-monitor/learn-queue.jsonl</code> — la file contient <strong>à la fois</strong> les événements confirmés et rejetés, donc le LLM apprend aussi « ce widget n'est pas une notif » à partir des contre-exemples (chapitre 4).</li>
     <li>Les événements confirmés sont dédupliqués en mode strict et peuvent déclencher une auto-réponse via <code>auto_chat_instruction</code>.</li>
-    <li>La préférence par app vit dans <code>taskbar_sources.json</code> — Doze apprend et écrit ce fichier (chapitre 4).</li>
   </ul>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Pourquoi ce design ?</h3>
+  <p>On a essayé chaque canal seul d'abord. UIA seul est rapide et gratuit mais muet sur les apps qui dessinent leur propre badge (WeChat). Le diff visuel seul brûle un appel LLM à chaque tic d'horloge ou widget météo. Leçon : <strong>les notifications sont hétérogènes</strong> &mdash; aucune mécanique unique ne couvre tout. Deux canaux parallèles + un fichier de préférence par app : le système <em>apprend</em> qui croire sur quel chemin &mdash; la plupart des apps finissent en UIA seul (Teams, Outlook, Slack, et WeChat depuis qu'on a trouvé la route HelpText flash) ; le visuel reste le filet de sécurité pour la longue traîne. Les contre-exemples reviennent par Doze, et le coût en régime stable tend vers zéro.</p>
 </section>
 
 <section id="doze">
   <div class="ch-head">
     <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg></div>
-    <div class="ch-text"><div class="ch-num">CHAPITRE 04</div><h2>Apprentissage Doze</h2><div class="sub">Réflexion basse priorité au repos · apprend astuces, icônes, widgets</div></div>
+    <div class="ch-text"><div class="ch-num">CHAPITRE 04</div><h2>Apprentissage Doze</h2><div class="sub">Réflexion basse priorité au repos · apprend astuces et widgets</div></div>
   </div>
-
-  <p>
-    <span class="status"><span class="pulse"></span>v0 texte — EN PROD</span>&nbsp;
-    <span class="status"><span class="pulse"></span>v1 icône — EN PROD</span>&nbsp;
-    <span class="status"><span class="pulse"></span>v1 barre visuel — EN PROD</span>&nbsp;
-    <span class="status plan"><span class="pulse"></span>v2 heartbeat — prévu</span>
-  </p>
 
   <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Quand se réveille-t-il ?</h3>
   <p>Toutes les <code>tick_interval_sec</code> (60 s par défaut), le worker vérifie quatre conditions ; <strong>toutes doivent tenir</strong> :</p>
@@ -977,25 +1057,19 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
   </div>
   <p>L'<em>activité utilisateur</em> désigne les RPC qui changent l'état (<code>start_task</code>, <code>thread_new</code>…). Les sondes (<code>ping</code>, <code>get_status</code>) ne comptent pas. Toute activité pendant une passe positionne le flag d'annulation — <strong>l'utilisateur n'attend jamais Doze</strong>.</p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4Z"/><path d="M4 14h16M9 4v5h5"/></svg>v0 — canal texte</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4Z"/><path d="M4 14h16M9 4v5h5"/></svg>Canal texte</h3>
   <p>Une passe lit un fil non traité, monte une transcription compacte (sans image), expose au LLM les tips et le digest mémoire, et n'autorise que <code>learn_tip</code> / <code>remember</code> / <code>load_app_tips</code>. Écrit dans <code>tools.md</code> et <code>apps/&lt;slug&gt;/tips.md</code>. Journaux quotidiens dans <code>~/.lucid/doze-YYYYMMDD.log</code>.</p>
 
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>v1 — canal icône</h3>
-  <p>Ajoute l'outil <code>propose_icon(image_filename, x, y, w, h, label, description?)</code>. Le handler :</p>
-  <ul>
-    <li>vérifie le nom de fichier contre les événements <code>step_image</code> du fil</li>
-    <li>découpe le PNG avec PIL, dHash contre l'atlas existant</li>
-    <li>enfile dans <code>icon_proposals/&lt;id&gt;.png</code> + <code>index.json</code> pour validation humaine sur la page <strong>/doze</strong></li>
-  </ul>
-  <p>L'atlas n'est jamais écrit directement par Doze — seules les propositions acceptées y rentrent.</p>
-
-  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 6-6"/></svg>v1 — apprentissage visuel de la barre</h3>
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 14 4-4 4 4 6-6"/></svg>Apprentissage visuel de la barre</h3>
   <p>L'étape 2 visuelle écrit ses contre-exemples (« diff vu, classifieur a dit non ») dans <code>logs/taskbar-monitor/learn-queue.jsonl</code>. Doze draine la queue, groupe par <code>(app_slug, signature)</code>, et au-delà du seuil (≥ 3) écrit un tip <code>[taskbar_visual]</code> dans <code>apps/&lt;slug&gt;/tips.md</code>. L'appel suivant voit le tip via <code>load_app_tips</code> et arrête de flagger le widget.</p>
 
   <div class="callout">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-12V5l-8-3-8 3v5c0 8 8 12 8 12Z"/></svg>
     <p><strong>Sécurité :</strong> le worker Doze ne peut jamais appeler d'outil GUI — la whitelist refuse tout en dehors de son petit set. Doze lit <code>events.jsonl</code> (pas d'image base64), pas <code>messages.json</code>. Désactivé par défaut ; à activer dans <code>/settings → Doze</code>.</p>
   </div>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Pourquoi ce design ?</h3>
+  <p>La plupart des agents n'apprennent que sur retour explicite. Mais le signal le plus riche, c'est « ce qui vient de se passer, revu à tête reposée ». <strong>Le temps d'inactivité est gratuit</strong> — le CPU est là, l'utilisateur absent, la trace déjà écrite. Doze est un worker secondaire à priorité stricte, limité à un petit set d'outils <em>en écriture</em> (<code>learn_tip</code>, <code>remember</code>) ; il ne peut jamais cliquer, et il est préempté dès que l'utilisateur bouge. Résultat : auto-amélioration silencieuse et continue, sans jamais vous faire attendre.</p>
 </section>
 
 <section id="skills">
@@ -1042,6 +1116,9 @@ read_file("~/.lucid/skills/pptx/SKILL.md")
 learn_tip("PPTX skill installed at ~/.lucid/skills/pptx; entry: build.py")
 run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</code></pre>
   <p>Le RPC <code>install_skill_url</code> est restreint à l'action utilisateur (le LLM ne peut pas l'appeler) ; le résultat est marqué <code>source: "online"</code> (non fiable) pour que la couche sécurité tranche.</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Pourquoi ce design ?</h3>
+  <p>Il existe <em>déjà</em> d'excellents skills dans la nature — le catalogue officiel d'Anthropic, des dépôts communautaires, les bases de connaissances internes des entreprises. Que chaque utilisateur les réinvente est un gâchis et dilue la qualité. On a choisi exprès le format ouvert <code>SKILL.md</code> d'Anthropic : <strong>n'importe quel skill écrit ailleurs marche ici tel quel</strong>, et la boucle principale devient la <em>découverte</em> — trouver et adopter un bon skill — pas l'écriture. La divulgation progressive (catalogue d'une ligne, <code>read_skill</code> à la demande) fait qu'une centaine de skills ne coûte presque rien en tokens tant que l'agent n'en sollicite aucun.</p>
 </section>
 
 <section id="voice">
@@ -1074,6 +1151,41 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     <div class="step"><div><div class="stt"><code>dictation_append</code></div><div class="sd">Compléter le champ d'entrée (« …et mentionne aussi… »).</div></div></div>
   </div>
   <p>Si la confiance est faible, l'overlay propose des chips uniquement quand il retombe en mode <code>result</code> (pas de sink dans la fenêtre principale). L'overlay reste en haut au centre, avec waveform et compte à rebours.</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Pourquoi ce design ?</h3>
+  <p>Deux raisons d'avoir intégré la voix dès le départ :</p>
+  <ol>
+    <li><strong>Vitesse pour tout le monde.</strong> Parler est environ 3&times; plus rapide que taper pour la plupart des gens, et on peut le faire en lisant l'écran. La plupart des assistants bureau supposent un clavier uniquement — un plafond inutile.</li>
+    <li><strong>Accessibilité.</strong> Le clavier n'est pas une option pour les utilisateurs avec un handicap moteur, un TMS, ou une blessure temporaire. Un raccourci à maintenir + un ASR entièrement hors ligne signifient que l'entrée fonctionne sans confiance au cloud ni stack d'accessibilité séparé.</li>
+  </ol>
+  <p>Le push-to-talk (au lieu d'un mot-clé toujours à l'écoute) garde le CPU froid, ne fuit jamais d'audio, et évite la « fatigue du mot-clé » qui rend les assistants téléphoniques peu fiables.</p>
+</section>
+
+<section id="testing">
+  <div class="ch-head">
+    <div class="ch-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+    <div class="ch-text"><div class="ch-num">CHAPITRE 07</div><h2>Tests end-to-end</h2><div class="sub">Un JSON · un runner Python · un SKILL.md · Copilot pilote l&rsquo;itération</div></div>
+  </div>
+
+  <p>Tout le harnais de tests de régression d&rsquo;un agent GUI tient en <strong>trois fichiers</strong> : un <code>queries.json</code> avec ~60 tâches réelles, un <code>run.py</code> de 200 lignes qui ne fait qu&rsquo;<em>enfiler</em> les tâches dans la file prioritaire du sidecar, et un <code>SKILL.md</code> qui apprend à VS Code Copilot comment lire le <code>manifest.json</code> résultant et rédiger le plan de correction de la prochaine itération. Pas de pytest, pas de fixtures, pas de mocks par appli &mdash; le bureau lui-même est le banc d&rsquo;essai.</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18M3 12h18M3 19h18"/></svg>Entrées &mdash; trois fichiers simples</h3>
+  <div class="fgrid">
+    <div class="feat"><div class="fi teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12l4 4v12a2 2 0 0 1-2 2H4Z"/><path d="M16 4v4h4"/></svg></div><h4><code>queries.json</code></h4><p>~60 tâches réelles dans 15 catégories (Notepad, Calculatrice, Edge, Office, WeChat, Teams…), chacune avec un <code>instruction</code> et un <code>expect_files</code> optionnel. Ajouter de la couverture = un objet JSON.</p></div>
+    <div class="feat"><div class="fi purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4v16l7-4 7 4V4Z"/></svg></div><h4><code>run.py</code> &mdash; un enfileur</h4><p>Démarre le sidecar, envoie <code>start_task</code> N fois à 300&nbsp;ms d&rsquo;intervalle, surveille le mtime de chaque <code>events.jsonl</code> ; si une tâche stagne au-delà de <code>--per-task-cap</code>&nbsp;s, il annule juste celle-là. La file prioritaire du sidecar fait l&rsquo;ordonnancement.</p></div>
+    <div class="feat"><div class="fi green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13l2 2 4-4"/></svg></div><h4><code>SKILL.md</code></h4><p>Skill Anthropic Agent qui apprend à VS Code Copilot le protocole d&rsquo;<em>analyse</em> : règles de verdict, fan-out de sous-agents, contrat <code>severity</code> / <code>category_of_fix</code>, langue de sortie. L&rsquo;analyse est un prompt Copilot &mdash; pas du Python.</p></div>
+  </div>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8M12 8v8"/></svg>Boucle d&rsquo;itération <span class="status"><span class="pulse"></span>CHAQUE RELEASE</span></h3>
+  <div class="steps">
+    <div class="step"><div><div class="stt">Exécuter</div><div class="sd"><code>python Test\run.py</code> &mdash; le sidecar exécute ~60 requêtes sur le vrai bureau (ne le nettoyez pas avant ; le désordre fait partie du test). Chaque requête réinscrit à la clôture <code>status</code>, <code>final_text</code> et un <code>deliverables_snapshot</code> (fichier existe / taille / mtime / sous-chaîne trouvée, figé à la fermeture) dans <code>manifest.json</code>.</div></div></div>
+    <div class="step"><div><div class="stt">Juger</div><div class="sd">Verdict en trois couches par requête : <strong>run</strong> (<code>status == "ok"</code>) &times; <strong>goal</strong> (un sous-agent Copilot par thread lit <code>instruction</code> + <code>final_text</code> + <code>context.log</code> + 2&ndash;3 captures, renvoie <code>pass</code> / <code>partial</code> / <code>fail</code>) &times; <strong>deliverables</strong> (snapshot <code>expect_files</code>). Plus de match de sous-chaîne fragile &mdash; les paraphrases passent, les succès hallucinés tombent.</div></div></div>
+    <div class="step"><div><div class="stt">Itérer</div><div class="sd">Fan-out de sous-agents (4&ndash;6 en parallèle), chacun finit par un couple machine-lisible <code>severity:</code> / <code>category_of_fix:</code> (<code>prompt</code> / <code>tool</code> / <code>config</code> / <code>new-region</code> / <code>new-app-spec</code> / <code>bug-fix</code>). Copilot les regroupe dans <code>iteration-plan.md</code> : correctifs à fort levier (&ge; 2 sous-agents d&rsquo;accord) d&rsquo;abord, blockers mono-thread ensuite, tableau complet en dernier. Un <code>baseline</code> en option remonte les régressions.</div></div></div>
+  </div>
+  <p>Effet net : chaque modification de code arrive avec une trace de preuves d&rsquo;un paragraphe (quelles catégories ont régressé, quel correctif les a débloquées) au lieu d&rsquo;une impression ; intégrer une nouvelle appli devient &laquo; ajouter un objet JSON, relancer, lire le plan &raquo;.</p>
+
+  <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.2 1 2v.3h6V17c0-.8.4-1.5 1-2A7 7 0 0 0 12 2Z"/></svg>Pourquoi ce design ?</h3>
+  <p>Les frameworks classiques de tests GUI (Playwright, pytest+Selenium) obligent le développeur à coder chaque assertion. Or l'assertion, c'est précisément le boulot de l'agent — <em>lui</em> sait à quoi ressemble l'objectif. On a donc inversé : <code>queries.json</code> est le seul contrat, Copilot est le juge. Trois bénéfices : (a) ajouter un cas, c'est une ligne JSON, pas une fixture ; (b) le juge tolère la paraphrase (« un mail de rapport hebdo » &harr; « brouillon d'email »), donc plus de match de chaîne fragile ; (c) le même prompt SKILL.md qui juge la release courante produit aussi le plan d'itération de la suivante. <strong>Tests et boucle d'apprentissage deviennent la même boucle.</strong></p>
 </section>
 
 <footer>
@@ -1116,6 +1228,21 @@ run_shell("python ~/.lucid/skills/pptx/build.py proposal.docx proposal.pptx")</c
     bar.addEventListener('click', function(e){
       var t=e.target;
       if(t && t.tagName==='BUTTON' && t.getAttribute('data-lang')) setLang(t.getAttribute('data-lang'));
+    });
+    // Anchor links: scroll to the matching section inside the *visible* page,
+    // because the same id (#testing, #architecture, ...) exists in all three language pages.
+    document.addEventListener('click', function(e){
+      var a = e.target.closest && e.target.closest('a[href^="#"]');
+      if(!a) return;
+      var id = a.getAttribute('href').slice(1);
+      if(!id) return;
+      var page = document.querySelector('.page.show') || document.querySelector('.page');
+      if(!page) return;
+      var target = page.querySelector('#'+CSS.escape(id));
+      if(!target) return;
+      e.preventDefault();
+      target.scrollIntoView({behavior:'smooth', block:'start'});
+      if(history.replaceState) history.replaceState(null, '', '#'+id);
     });
     setLang(pickInitial());
   });
