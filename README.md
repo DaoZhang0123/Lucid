@@ -1,16 +1,19 @@
-# <img src="app/src-tauri/icons/128x128.png" width="32" alt="Lucid icon" /> Lucid
+<p align="center">
+  English &nbsp;|&nbsp; <ins><a href="README.zh-CN.md">简体中文</a></ins> &nbsp;|&nbsp; <ins><a href="README.fr-FR.md">Français</a></ins>
+</p>
 
-A true "human-like computer-use" AI assistant: no MCP, direct control of your Windows apps, and continuous auto-reply while you are away.
+<p align="center">
+  <img src="image/banner.png" alt="Lucid — Eyes on screen, hands on mouse." />
+</p>
 
-> **A clear-eyed assistant for your Windows desktop — Vision Agent for Windows.**
+> **A clear-eyed assistant for your Windows desktop — a true "human-like computer-use" vision agent: no MCP, direct control of your Windows apps, continuous auto-reply while you're away.**
 > Tell Lucid what you want done. It scopes out the screen, works the mouse, reads incoming messages while you're away, and quietly replies on your behalf.
-> **No MCP. No per-app APIs. No browser plugins.** Just **Claude's multimodal vision** driving your real keyboard and mouse.
-> **Unlike official bots (WeChat, etc.), Lucid controls your actual client** — so it can read any message, see any context, and reply as you, with full state persistence and no registration overhead.
 
-> **Why "Lucid"?** *Lucid* — clear, perceptive, transparent of mind. The reticle at the centre of our logo is the eye; what the eye sees, the agent does. A three-level screenshot pyramid plus a taskbar monitor that doesn't blink keep the perception sharp; a single ReAct loop keeps the action honest. **Lucid = the eye that sees + the hands that act.**
-> *Easter egg: watch the launch splash — a tiny crab scuttles into the reticle's centre.*
+- **No MCP. No per-app APIs. No browser plugins.** Just a **vision-capable LLM** driving your real keyboard and mouse.
+- **No UIA, no accessibility tree either.** Lucid feeds the screen straight to the vision model and reads coordinates off a grid overlay on the image — so WeChat, Electron, games, custom-drawn UIs (anything UIA can't see) all work the same way.
+- **Unlike official bots (WeChat, etc.), Lucid controls your actual client** — so it can read any message, see any context, and reply as you, with full state persistence and no registration overhead.
 
-**Languages:** **English** · [简体中文](README.zh-CN.md) · [Français](README.fr-FR.md)
+> **Why "Lucid"?** *Lucid* — clear, perceptive, transparent of mind. Our mascot is a little crab: walking sideways while keeping both eyes wide open on the screen — exactly what the agent does.
 
 > **Demo video** — end-to-end auto-reply: taskbar UIA listener picks up the incoming message → `launch_app` opens Teams → vision-driven clicks navigate the chat → the agent types the reply and hits Enter. No MCP, no API; everything runs through the real client.
 
@@ -24,32 +27,6 @@ Lucid:   *taskbar UIA listener sees a new Teams message (no LLM confirm needed)*
           → think up a joke about a dog and a cat
           → click(chat input) → type("…joke text…") → key("enter")
           → "Done. Replied in Teams with the joke."
-```
-
-> **Second demo** — voice input + precise clicking. Hold the spacebar, speak the request; Lucid transcribes it locally with Whisper, then drives Teams entirely by vision (no Teams API).
-
-https://github.com/user-attachments/assets/b32124f2-0964-457a-9e61-88eba614f9a0
-
-```
-Voice (hold spacebar):  "Send greetings to Dao Zhang in Teams."
-          ↓
-Lucid:   transcribe → launch_app("Microsoft Teams")
-          → click(search) → type("Dao Zhang") → click(top result)
-          → click(chat input) → type("Hi Dao, just sending greetings — hope you're well!") → key("enter")
-          → "Done. Greetings sent in Teams."
-```
-
-> **Third demo** — workplace scenario: Lucid hears the request, opens PowerPoint and drafts the deck end-to-end.
-
-https://github.com/user-attachments/assets/12d4a7d8-33c1-4579-a65b-8b26f6180869
-
-```
-Voice / chat:  "Create a PowerPoint about Microsoft's latest AI strategy."
-          ↓
-Lucid:   launch_app("PowerPoint") → New blank presentation
-          → outline slides (title, pillars, Copilot, Azure AI, roadmap, summary)
-          → click(title) → type(…) → add_slide → type bullets → repeat
-          → "Done. Draft deck ready in PowerPoint."
 ```
 
 > **More demos:** [See all demo videos and scenarios](README.demos.md)

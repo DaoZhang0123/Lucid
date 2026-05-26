@@ -31,12 +31,65 @@ Lucid: transcribes speech with Whisper
         → completes the requested task end-to-end
 ```
 
-## Existing demos from README
+## Voice + precise click (Teams)
 
-- Teams auto-reply (message in, auto reply out)
-- Teams voice + precise click ("Send greetings to Dao Zhang in Teams.")
-- Workplace PPT draft generation
-- Chinese workflow: read desktop document, generate PPT, send back
+Voice input + precise clicking. Hold the spacebar, speak the request; Lucid transcribes it locally with Whisper, then drives Teams entirely by vision (no Teams API).
+
+https://github.com/user-attachments/assets/b32124f2-0964-457a-9e61-88eba614f9a0
+
+```
+Voice (hold spacebar):  "Send greetings to Dao Zhang in Teams."
+          ↓
+Lucid:   transcribe → launch_app("Microsoft Teams")
+          → click(search) → type("Dao Zhang") → click(top result)
+          → click(chat input) → type("Hi Dao, just sending greetings — hope you're well!") → key("enter")
+          → "Done. Greetings sent in Teams."
+```
+
+## Workplace: PowerPoint draft end-to-end
+
+Lucid hears the request, opens PowerPoint and drafts the deck end-to-end.
+
+https://github.com/user-attachments/assets/12d4a7d8-33c1-4579-a65b-8b26f6180869
+
+```
+Voice / chat:  "Create a PowerPoint about Microsoft's latest AI strategy."
+          ↓
+Lucid:   launch_app("PowerPoint") → New blank presentation
+          → outline slides (title, pillars, Copilot, Azure AI, roadmap, summary)
+          → click(title) → type(…) → add_slide → type bullets → repeat
+          → "Done. Draft deck ready in PowerPoint."
+```
+
+## Chinese workflow: voice call via WeChat
+
+Voice input drives WeChat entirely by vision (no WeChat API).
+
+https://github.com/user-attachments/assets/9bb5b9e9-9437-45f5-be00-9ae3dfea782c
+
+```
+Voice (hold spacebar):  "Call dad"
+          ↓
+Lucid:   transcribe → launch_app("WeChat")
+          → find("dad") → click(matched contact)
+          → click(voice call button) → wait for connection
+          → "Done. Voice call to dad started in WeChat."
+```
+
+## Chinese workflow: desktop doc → PPT → send back
+
+Lucid reads a document on the desktop, generates a PowerPoint deck from it, and sends it back through chat.
+
+https://github.com/user-attachments/assets/7841cec9-58bc-49fd-b87a-5a0a27529fd6
+
+```
+Voice / chat:  "There's a document on my desktop. Make a PPT based on it and send it back to me."
+          ↓
+Lucid:   scan desktop → locate source doc → read content
+          → launch_app("PowerPoint") → fill slides per outline
+          → save as .pptx → back to chat → send as attachment
+          → "Done. PPT generated and sent."
+```
 
 ## Language entry points
 

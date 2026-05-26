@@ -1,16 +1,19 @@
-# <img src="app/src-tauri/icons/128x128.png" width="32" alt="Lucid icon" /> Lucid
+<p align="center">
+  <ins><a href="README.md">English</a></ins> &nbsp;|&nbsp; <ins><a href="README.zh-CN.md">简体中文</a></ins> &nbsp;|&nbsp; Français
+</p>
 
-Un véritable assistant IA qui agit comme un humain sur ordinateur : sans MCP, contrôle direct de vos applications Windows, et auto-réponse continue quand vous êtes absent.
+<p align="center">
+  <img src="image/banner_French.png" alt="Lucid — Les yeux à l'écran, les mains sur la souris." />
+</p>
 
-> **Un regard limpide pour votre bureau Windows — Agent visuel pour Windows.**
+> **Un regard limpide pour votre bureau Windows — un véritable agent visuel qui se sert de l'ordinateur comme un humain : sans MCP, contrôle direct de vos applications Windows, auto-réponse continue quand vous êtes absent.**
 > Dites à Lucid ce que vous voulez faire. Il scrute l'écran, manipule la souris ; quand vous n'êtes pas là, il lit les messages entrants et répond poliment à votre place.
-> **Sans MCP. Sans API par application. Sans plugin de navigateur.** Juste la **vision multimodale de Claude** qui pilote votre vrai clavier et votre vraie souris.
+
+- **Sans MCP. Sans API par application. Sans plugin de navigateur.** Juste la **vision multimodale d'un grand modèle** qui pilote votre vrai clavier et votre vraie souris.
+- **Sans UIA ni arbre d'accessibilité non plus.** Lucid envoie l'écran directement au modèle de vision et lit les coordonnées sur une grille superposée à l'image — WeChat, Electron, jeux, UI dessinées à la main (tout ce qu'UIA ne voit pas) sont pilotés de la même façon.
 > **Contrairement aux bots officiels (WeChat, Slack, Teams) — Lucid contrôle votre vrai client**, donc il peut lire n'importe quel message, voir tout l'historique, répondre en votre nom, avec persistance d'état et sans enregistrement.
 
-> **D'où vient le nom ?** *Lucid* — clair, perspicace, l'esprit transparent. Le réticule au centre du logo, c'est l'œil ; ce que l'œil voit, l'agent le fait. Une pyramide de captures à trois niveaux et un moniteur de la barre des tâches qui ne cligne jamais gardent la perception affûtée ; une seule boucle ReAct garde l'action honnête. **Lucid = l'œil qui voit + les mains qui agissent.**
-> *Petit easter egg : gardez un œil sur le splash — un mini crabe vient se nicher au centre du réticule.*
-
-**Langues :** [English](README.md) · [简体中文](README.zh-CN.md) · **Français**
+> **D'où vient le nom ?** *Lucid* — clair, perspicace, l'esprit transparent. Notre mascotte est un petit crabe : il avance de côté sans jamais quitter l'écran des yeux — exactement ce que fait l'agent.
 
 > **Vidéo de démo** — auto-réponse de bout en bout : l'écouteur UIA de la barre des tâches capte le message entrant → `launch_app` ouvre Teams → des clics pilotés par la vision naviguent dans la conversation → l'agent tape la réponse et appuie sur Entrée. Sans MCP, sans API ; tout passe par le vrai client.
 
@@ -24,32 +27,6 @@ Lucid :  *l'écouteur UIA de la barre des tâches voit un nouveau message Teams 
           → invente une blague sur un chien et un chat
           → click(champ de saisie) → type("…texte de la blague…") → key("enter")
           → « Fait. Répondu dans Teams avec la blague. »
-```
-
-> **Deuxième démo** — entrée vocale + clics précis. Maintenez la barre d'espace, parlez ; Lucid transcrit en local avec Whisper, puis pilote Teams uniquement par la vision (sans API Teams).
-
-https://github.com/user-attachments/assets/b32124f2-0964-457a-9e61-88eba614f9a0
-
-```
-Voix (barre d'espace) :  « Send greetings to Dao Zhang in Teams. »
-          ↓
-Lucid :  transcription → launch_app("Microsoft Teams")
-          → click(recherche) → type("Dao Zhang") → click(premier résultat)
-          → click(champ de saisie) → type("Hi Dao, just sending greetings — hope you're well!") → key("enter")
-          → « Fait. Salutations envoyées dans Teams. »
-```
-
-> **Troisième démo** — scénario bureautique : Lucid entend la demande, ouvre PowerPoint et rédige la présentation de bout en bout.
-
-https://github.com/user-attachments/assets/12d4a7d8-33c1-4579-a65b-8b26f6180869
-
-```
-Voix / chat :  « Create a PowerPoint about Microsoft's latest AI strategy. »
-          ↓
-Lucid :  launch_app("PowerPoint") → nouvelle présentation vierge
-          → plan des diapos (titre, piliers, Copilot, Azure AI, feuille de route, résumé)
-          → click(titre) → type(…) → add_slide → saisie des puces → répéter
-          → « Fait. Brouillon de présentation prêt dans PowerPoint. »
 ```
 
 > **Plus de démos :** [Voir toutes les vidéos et scénarios](README.demos.md)
