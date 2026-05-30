@@ -18,7 +18,8 @@
 
 到点时若任一限制项不满足，本次则跳过不触发。hours / weekdays 按 ``spec.tz`` （未设则本机）计算。
 
-调度器线程按最近 next_ms 动态醒来（最慢 60 秒，最快 0.2 秒）；启动时立刻 tick 一次。任务到点时，
+调度器线程按最近 next_ms 动态醒来（最慢 60 秒，最快 0.2 秒）；启动时会先把停机期间错过的触发点
+推进到下一次未来时刻，然后再进入正常 tick。任务到点时，
 通过传入的 ``trigger`` 回调启动一次新任务（``trigger`` 由 sidecar 注入，内部
 会 ``thread_new + start_task``）。
 
@@ -571,13 +572,38 @@ class Scheduler:
             self._thread.join(timeout=2)
 
     def _loop(self) -> None:
-        # 启动时立刻 tick 一次（处理停机错过的任务）。
+        self._skip_overdue_runs_on_startup()
         while not self._stop.is_set():
             try:
                 self._tick()
             except Exception:
                 pass
             self._stop.wait(self._compute_wait_sec())
+
+    def _skip_overdue_runs_on_startup(self) -> None:
+        """Advance missed runs to the next future slot without firing them.
+
+        Startup should not backfill tasks that became due while Lucid was not
+        running. We only reseed ``next_ms`` so future runs continue normally.
+        """
+        items = _load()
+        now = datetime.now()
+        now_ms = int(now.timestamp() * 1000)
+        dirty = False
+        for it in items:
+            if not it.get("enabled"):
+                continue
+            next_ms = int(it.get("next_ms", 0) or 0)
+            if next_ms <= 0:
+                it["next_ms"] = int(_next_run(it["spec"], now).timestamp() * 1000)
+                dirty = True
+                continue
+            if now_ms < next_ms:
+                continue
+            it["next_ms"] = int(_next_run(it["spec"], now).timestamp() * 1000)
+            dirty = True
+        if dirty:
+            _save(items)
 
     def _compute_wait_sec(self) -> float:
         """Pick next wait based on the earliest due item.
