@@ -1,6 +1,6 @@
 [project]
 name = "lucid"
-version = "1.0.0"
+version = "1.1.0"
 description = "Windows desktop agent driven by Claude vision — no MCP, no app APIs."
 requires-python = ">=3.11"
 dependencies = [
