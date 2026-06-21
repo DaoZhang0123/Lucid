@@ -853,6 +853,10 @@ class Agent:
         # Hard safety cap: 200 steps. The system prompt tells the model to
         # bail out itself when it can't make progress (`task failed: ...`).
         hard_cap = HARD_STEP_CAP
+        # Cap consecutive text-only (no tool call, no completion) turns to
+        # prevent the model from spinning in a narrate-only loop forever.
+        _MAX_CONSECUTIVE_NARRATE = 3
+        consecutive_narrate = 0
         for step in range(hard_cap):
             self._check_cancel()
             self._current_step = step + 1
@@ -937,24 +941,39 @@ class Agent:
 
             if not tool_calls:
                 stripped = text_content.strip()
+                # Guard against model echoing back the narration reminder
+                # (which itself contains "task complete:" / "task failed:").
+                # Strip the injected template before checking completion markers.
+                _NARRATION_REMINDER = (
+                    "Please don't just narrate. Either call the `computer` tool for the next step, "
+                    "or summarise and finish with a message starting with \"task complete:\" or \"task failed:\"."
+                )
+                cleaned = stripped.replace(_NARRATION_REMINDER, "").strip()
                 completion_markers = ("任务完成", "任务失败", "无法完成", "task complete", "task failed", "cannot complete")
-                looks_done = any(m in stripped.lower() if m.isascii() else m in stripped for m in completion_markers)
+                looks_done = any(m in cleaned.lower() if m.isascii() else m in cleaned for m in completion_markers)
                 if looks_done:
-                    final = stripped or "(no text output)"
+                    final = cleaned or "(no text output)"
                     log.step_record({"step": step + 1, "final_text": final})
                     log.close(status="ok", final_text=final)
                     self._emit("final", status="ok", text=final)
                     return final
                 # 不调工具又没说完成：温和提醒一下，继续走下一步。
+                # 连续纯叙述超过 3 次时，强制终止避免无限空转。
+                consecutive_narrate += 1
+                if consecutive_narrate >= _MAX_CONSECUTIVE_NARRATE:
+                    final = f"task failed: agent narrated {consecutive_narrate} times in a row without calling any tool or finishing."
+                    log.warning(f"consecutive narration cap ({_MAX_CONSECUTIVE_NARRATE}) reached; force-closing")
+                    log.step_record({"step": step + 1, "final_text": final})
+                    log.close(status="error", final_text=final)
+                    self._emit("final", status="error", text=final)
+                    return final
                 log.warning("assistant returned text without tool_call; reminding to continue")
                 messages.append({
                     "role": "user",
-                    "content": (
-                        "Please don't just narrate. Either call the `computer` tool for the next step, "
-                        "or summarise and finish with a message starting with \"task complete:\" or \"task failed:\"."
-                    ),
+                    "content": _NARRATION_REMINDER,
                 })
                 continue
+            consecutive_narrate = 0  # reset on any tool call
 
             # 派发每个 tool_call
             had_screenshot = False
