@@ -218,14 +218,27 @@ class _State:
     github_user: str = ""           # 可选，仅展示用
     copilot_token: str = ""
     copilot_expires_at: int = 0      # unix seconds
+    # Pending device-code flow — persisted so a sidecar restart (e.g.
+    # triggered by "Save" in Settings which calls reload_config) doesn't
+    # lose the in-flight login that the user is completing in the browser.
+    pending_device_code: str = ""
+    pending_user_code: str = ""
+    pending_interval: int = 5
+    pending_expires_at: float = 0.0
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "github_token": self.github_token,
             "github_user": self.github_user,
             "copilot_token": self.copilot_token,
             "copilot_expires_at": int(self.copilot_expires_at),
         }
+        if self.pending_device_code:
+            d["pending_device_code"] = self.pending_device_code
+            d["pending_user_code"] = self.pending_user_code
+            d["pending_interval"] = self.pending_interval
+            d["pending_expires_at"] = self.pending_expires_at
+        return d
 
     @classmethod
     def from_json(cls, raw: dict[str, Any]) -> _State:
@@ -237,6 +250,16 @@ class _State:
             s.copilot_expires_at = int(raw.get("copilot_expires_at") or 0)
         except (TypeError, ValueError):
             s.copilot_expires_at = 0
+        s.pending_device_code = str(raw.get("pending_device_code") or "")
+        s.pending_user_code = str(raw.get("pending_user_code") or "")
+        try:
+            s.pending_interval = int(raw.get("pending_interval") or 5)
+        except (TypeError, ValueError):
+            s.pending_interval = 5
+        try:
+            s.pending_expires_at = float(raw.get("pending_expires_at") or 0.0)
+        except (TypeError, ValueError):
+            s.pending_expires_at = 0.0
         return s
 
 
@@ -260,7 +283,25 @@ class CopilotTokenManager:
     def __init__(self, state_file: str | Path | None = None) -> None:
         self._state_path: Path = Path(state_file) if state_file else _default_state_file()
         self._state: _State = self._load()
-        self._pending: _PendingDevice | None = None
+        # Restore pending device flow from persisted state (survives
+        # sidecar restarts triggered by settings save / reload_config).
+        if self._state.pending_device_code and time.time() < self._state.pending_expires_at:
+            self._pending = _PendingDevice(
+                device_code=self._state.pending_device_code,
+                user_code=self._state.pending_user_code,
+                interval_seconds=self._state.pending_interval,
+                expires_at=self._state.pending_expires_at,
+            )
+        else:
+            self._pending = None
+            # Clear stale pending fields
+            if self._state.pending_device_code:
+                self._state.pending_device_code = ""
+                self._state.pending_expires_at = 0.0
+                try:
+                    self._save()
+                except Exception:
+                    pass
 
     # ------------------ persistence ------------------
 
@@ -289,6 +330,19 @@ class CopilotTokenManager:
         except OSError as e:
             raise CopilotAuthError(f"写入 {self._state_path} 失败：{e}")
 
+    def _clear_pending(self) -> None:
+        """Clear in-memory + persisted pending device flow."""
+        self._pending = None
+        if self._state.pending_device_code:
+            self._state.pending_device_code = ""
+            self._state.pending_user_code = ""
+            self._state.pending_interval = 5
+            self._state.pending_expires_at = 0.0
+            try:
+                self._save()
+            except Exception:
+                pass
+
     # ------------------ public API ------------------
 
     def status(self) -> dict[str, Any]:
@@ -302,7 +356,7 @@ class CopilotTokenManager:
 
     def logout(self) -> None:
         self._state = _State()
-        self._pending = None
+        self._clear_pending()
         try:
             if self._state_path.is_file():
                 self._state_path.unlink()
@@ -321,6 +375,12 @@ class CopilotTokenManager:
             interval_seconds=interval,
             expires_at=time.time() + expires_in,
         )
+        # Persist pending flow so it survives sidecar restarts.
+        self._state.pending_device_code = self._pending.device_code
+        self._state.pending_user_code = self._pending.user_code
+        self._state.pending_interval = interval
+        self._state.pending_expires_at = self._pending.expires_at
+        self._save()
         return {
             "device_code": self._pending.device_code,
             "user_code": self._pending.user_code,
@@ -340,7 +400,7 @@ class CopilotTokenManager:
         if device_code and device_code != pending.device_code:
             return {"status": "error", "error": "device_code mismatch"}
         if time.time() >= pending.expires_at:
-            self._pending = None
+            self._clear_pending()
             return {"status": "error", "error": "device code expired; restart login"}
         code, body = _http_post_form(_ACCESS_TOKEN_URL, {
             "client_id": _CLIENT_ID,
@@ -352,7 +412,8 @@ class CopilotTokenManager:
             if not access_token:
                 return {"status": "error", "error": "empty access_token"}
             self._state = _State(github_token=access_token)
-            self._pending = None
+            self._clear_pending()
+            # Clear persisted pending (login succeeded, no longer needed).
             try:
                 self._fetch_github_user()
                 # eager-fetch Copilot token so we fail fast if entitlement is missing
@@ -368,10 +429,10 @@ class CopilotTokenManager:
         if err == "slow_down":
             return {"status": "slow_down"}
         if err == "expired_token":
-            self._pending = None
+            self._clear_pending()
             return {"status": "error", "error": "device code expired; restart login"}
         if err == "access_denied":
-            self._pending = None
+            self._clear_pending()
             return {"status": "error", "error": "access denied"}
         return {"status": "error", "error": str(err)}
 
