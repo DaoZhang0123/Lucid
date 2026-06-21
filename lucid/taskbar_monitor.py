@@ -269,6 +269,11 @@ class TaskbarMonitor:
         self._capture_store = TaskbarCaptureStore(cfg, logging_cfg)
         # 异步确认队列：(current_image, prev_image, payload_dict)
         self._confirm_queue: queue.Queue[tuple[Image.Image, Image.Image | None, dict[str, Any]]] = queue.Queue(maxsize=50)
+        # Schedule-driven app whitelist. When non-empty, only LLM-confirmed
+        # app_candidates whose lower-cased name is in this set will be
+        # promoted to _on_confirmed. Empty = no filter (legacy).
+        self._watched_apps: set[str] = set()
+        self._watched_apps_lock = threading.Lock()
 
         self._configured_strip_height_px = max(40, int(cfg.strip_height_px))
         self._auto_detect_taskbar_height = bool(getattr(cfg, "auto_detect_taskbar_height", True))
@@ -308,6 +313,17 @@ class TaskbarMonitor:
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="lucid-taskbar-monitor", daemon=True)
         self._thread.start()
+
+    def set_watched_apps(self, apps: list[str] | None) -> None:
+        """Update the app whitelist from the active schedule's auto_chat_apps.
+
+        When *apps* is non-empty, only LLM-confirmed app_candidates whose
+        name (case-insensitive) appears in the list will be promoted to
+        ``_on_confirmed``. Pass an empty list or ``None`` to disable
+        filtering (all apps pass).
+        """
+        with self._watched_apps_lock:
+            self._watched_apps = {a.lower() for a in apps} if apps else set()
         # 如果启用 LLM 确认，启动确认处理线程
         self._ensure_confirm_worker()
         self._emit({
@@ -614,7 +630,22 @@ class TaskbarMonitor:
                 except Exception:
                     pass
                 if has_new and self._on_confirmed is not None:
-                    self._on_confirmed(emit_payload)
+                    # Schedule-driven app whitelist gate: skip if none of
+                    # the LLM-confirmed app_candidates are in the whitelist.
+                    with self._watched_apps_lock:
+                        wl = self._watched_apps
+                    confirmed_apps = emit_payload.get("app_candidates") or []
+                    if wl and confirmed_apps:
+                        matched = [a for a in confirmed_apps if a.lower() in wl]
+                        if not matched:
+                            self._emit({
+                                "event": "taskbar_visual_skipped_unwatched",
+                                "app_candidates": confirmed_apps,
+                            })
+                        else:
+                            self._on_confirmed(emit_payload)
+                    else:
+                        self._on_confirmed(emit_payload)
 
             except Exception as exc:
                 self._emit({

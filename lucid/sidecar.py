@@ -2549,6 +2549,14 @@ class Sidecar:
                     self._visual_notify_allow_uia = True if raw_u is None else bool(raw_u)
                 except Exception:
                     self._visual_notify_allow_uia = True
+                # Push the whitelist to both monitors so they skip detection
+                # for apps not in the list (upstream gate — no UIA signal,
+                # no visual LLM confirm, zero cost).
+                wl = list(self._visual_notify_filter_apps)
+                if self._taskbar_uia_monitor is not None:
+                    self._taskbar_uia_monitor.set_watched_apps(wl)
+                if self._taskbar_monitor is not None:
+                    self._taskbar_monitor.set_watched_apps(wl)
                 if self._taskbar_monitor is not None and self._visual_notify_allow_visual:
                     self._taskbar_monitor.tick_once()
                 _writeln({"event": "visual_notify_tick", "id": item.get("id"),

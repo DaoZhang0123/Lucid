@@ -275,6 +275,12 @@ class TaskbarUiaMonitor:
         self._attach_prop_count: int = 0
         self._attach_tree_scope_element: int = 0
         self._prefs = taskbar_sources.load()
+        # Schedule-driven app whitelist. When non-empty, only apps whose
+        # lower-cased name is in this set will pass through to
+        # taskbar_notify_confirmed (both event path and sweep path).
+        # Empty = no filter (legacy / all apps allowed).
+        self._watched_apps: set[str] = set()
+        self._watched_apps_lock = threading.Lock()
         # v2: per-app timestamp of the most recent raw UIA signal that made
         # it through `_handle_signal`. The snapshot sweep diffs this against
         # the live UIA tree to detect "taskbar looks unread but event channel
@@ -294,6 +300,16 @@ class TaskbarUiaMonitor:
         """Update the watchdog activity timestamp. Thread-safe enough — a
         single 64-bit int store under CPython is atomic via the GIL."""
         self._last_activity_ms = _ts_ms()
+
+    def set_watched_apps(self, apps: list[str] | None) -> None:
+        """Update the app whitelist from the active schedule's auto_chat_apps.
+
+        When *apps* is non-empty, only apps whose name (case-insensitive)
+        appears in the list will be promoted to ``taskbar_notify_confirmed``.
+        Pass an empty list or ``None`` to disable filtering (all apps pass).
+        """
+        with self._watched_apps_lock:
+            self._watched_apps = {a.lower() for a in apps} if apps else set()
 
     # ----- lifecycle -----
 
@@ -786,6 +802,16 @@ class TaskbarUiaMonitor:
         if not (cur_unread and not prev_unread):
             return
 
+        # Schedule-driven app whitelist gate (upstream filter).
+        with self._watched_apps_lock:
+            wl = self._watched_apps
+        if wl and (app_name.lower() not in wl):
+            self._emit({
+                "event": "taskbar_uia_skipped_unwatched",
+                "app_name": app_name,
+            })
+            return
+
         # Per-app preference gate.
         decision = taskbar_sources.decide_source_allowed(self._prefs, app_name, "uia")
         if decision == "deny":
@@ -980,6 +1006,16 @@ class TaskbarUiaMonitor:
             # If the sweep already saw the app as unread last tick, the
             # event was already emitted then (or pre-empted by cooldown).
             if prev_sweep_unread:
+                continue
+            # Schedule-driven app whitelist gate (upstream filter, same as event path).
+            with self._watched_apps_lock:
+                wl = self._watched_apps
+            if wl and (app.lower() not in wl):
+                self._emit({
+                    "event": "taskbar_uia_skipped_unwatched",
+                    "app_name": app,
+                    "via": "sweep",
+                })
                 continue
             # Per-app preference gate (same as event path).
             decision = taskbar_sources.decide_source_allowed(self._prefs, app, "uia")
