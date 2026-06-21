@@ -236,6 +236,11 @@
   type CopDevice = { device_code: string; user_code: string; verification_uri: string; interval: number; expires_in: number };
   let copDevice = $state<CopDevice | null>(null);
   let copPollTimer: ReturnType<typeof setInterval> | null = null;
+  // When the user switches to the browser for the OAuth device flow and then
+  // switches back, WebView2 may have throttled setInterval so the next poll
+  // can be delayed up to 60 s. We listen for visibilitychange / focus and
+  // fire an immediate poll so the UI refreshes as soon as the window is back.
+  let _copVisCleanup: (() => void) | null = null;
 
   onMount(async () => {
     try {
@@ -342,6 +347,7 @@
 
   onDestroy(() => {
     if (copPollTimer) clearInterval(copPollTimer);
+    if (_copVisCleanup) _copVisCleanup();
   });
 
   // mode=auto → auto_send is locked to true (the classifier owns the
@@ -522,56 +528,79 @@
       copDevice = (await invoke("copilot_login_begin")) as CopDevice;
       if (!copDevice) throw new Error("empty device-code response");
       const intervalMs = Math.max(1000, copDevice.interval * 1000);
-      copPollTimer = setInterval(async () => {
-        try {
-          const r = (await invoke("copilot_login_poll", { deviceCode: copDevice!.device_code })) as { status: string; error?: string };
-          if (r.status === "ok") {
-            if (copPollTimer) { clearInterval(copPollTimer); copPollTimer = null; }
-            copDevice = null;
-            copBusy = false;
-            await refreshCopilotStatus();
-            void refreshCopilotModels();
-            // 自动切到 copilot provider 并保存
-            provider = "copilot";
-            await save();
-          } else if (r.status === "error") {
-            if (copPollTimer) { clearInterval(copPollTimer); copPollTimer = null; }
-            // If sidecar was restarted mid-flow (typical trigger: user hit
-            // Save in this same Settings page, which hot-reloads sidecar and
-            // wipes the in-memory `_pending`), poll will start returning
-            // "no pending login; call begin_login first" forever. Before
-            // surfacing it, check whether we're actually already logged in —
-            // if so, this error is stale; just clear and refresh status.
-            const isStalePending = (r.error || "").indexOf("no pending login") >= 0;
-            if (isStalePending) {
-              await refreshCopilotStatus();
-              if (copStatus.logged_in) {
-                copDevice = null;
-                copBusy = false;
-                copError = "";
-                return;
-              }
-            }
-            copError = r.error || $_("settings.copilot_login_failed_default");
-            copDevice = null;
-            copBusy = false;
-          }
-          // pending / slow_down -> 继续轮询
-        } catch (e) {
-          if (copPollTimer) { clearInterval(copPollTimer); copPollTimer = null; }
-          copError = String(e);
-          copDevice = null;
-          copBusy = false;
-        }
-      }, intervalMs);
+      copPollTimer = setInterval(doPollLogin, intervalMs);
+      // When the user returns from the browser after authorising, WebView2
+      // may have throttled setInterval heavily. Fire an immediate poll on
+      // visibilitychange / window focus so the UI updates instantly.
+      _copVisCleanup?.();
+      const onVisible = () => {
+        if (copDevice && copPollTimer) void doPollLogin();
+      };
+      const onVisChange = () => {
+        if (document.visibilityState === "visible") onVisible();
+      };
+      document.addEventListener("visibilitychange", onVisChange);
+      window.addEventListener("focus", onVisible);
+      _copVisCleanup = () => {
+        document.removeEventListener("visibilitychange", onVisChange);
+        window.removeEventListener("focus", onVisible);
+        _copVisCleanup = null;
+      };
     } catch (e) {
       copError = String(e);
       copBusy = false;
     }
   }
 
+  /** Single poll iteration — shared by setInterval and the focus/visibility handler. */
+  let _copPollInFlight = false;
+  async function doPollLogin() {
+    if (!copDevice || _copPollInFlight) return;
+    _copPollInFlight = true;
+    try {
+      const r = (await invoke("copilot_login_poll", { deviceCode: copDevice!.device_code })) as { status: string; error?: string };
+      if (r.status === "ok") {
+        if (copPollTimer) { clearInterval(copPollTimer); copPollTimer = null; }
+        _copVisCleanup?.();
+        copDevice = null;
+        copBusy = false;
+        await refreshCopilotStatus();
+        void refreshCopilotModels();
+        // 自动切到 copilot provider 并保存
+        provider = "copilot";
+        await save();
+      } else if (r.status === "error") {
+        if (copPollTimer) { clearInterval(copPollTimer); copPollTimer = null; }
+        _copVisCleanup?.();
+        const isStalePending = (r.error || "").indexOf("no pending login") >= 0;
+        if (isStalePending) {
+          await refreshCopilotStatus();
+          if (copStatus.logged_in) {
+            copDevice = null;
+            copBusy = false;
+            copError = "";
+            return;
+          }
+        }
+        copError = r.error || $_("settings.copilot_login_failed_default");
+        copDevice = null;
+        copBusy = false;
+      }
+      // pending / slow_down -> 继续轮询
+    } catch (e) {
+      if (copPollTimer) { clearInterval(copPollTimer); copPollTimer = null; }
+      _copVisCleanup?.();
+      copError = String(e);
+      copDevice = null;
+      copBusy = false;
+    } finally {
+      _copPollInFlight = false;
+    }
+  }
+
   function copilotCancel() {
     if (copPollTimer) { clearInterval(copPollTimer); copPollTimer = null; }
+    _copVisCleanup?.();
     copDevice = null;
     copBusy = false;
   }
