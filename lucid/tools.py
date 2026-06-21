@@ -123,6 +123,7 @@ class ComputerTool:
                                 "left_mouse_down",
                                 "left_mouse_up",
                                 "left_click_drag",
+                                "multi_drag",
                                 "scroll",
                                 "type",
                                 "key",
@@ -170,6 +171,23 @@ class ComputerTool:
                         },
                         "scroll_amount": {"type": "integer", "description": "Number of scroll ticks."},
                         "duration": {"type": "number", "description": "Seconds, for wait/hold_key."},
+                        "strokes": {
+                            "type": "array",
+                            "items": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                                "minItems": 4,
+                                "maxItems": 4,
+                            },
+                            "description": (
+                                "Only for action='multi_drag'. A list of drag strokes, each "
+                                "[from_x, from_y, to_x, to_y] in image-local pixel coordinates. "
+                                "All strokes execute rapidly in sequence without intermediate screenshots. "
+                                "Use this for drawing / handwriting / painting tasks where you need many "
+                                "consecutive drag strokes on the same canvas. "
+                                "Coordinates follow the same image-local convention as `coordinate`."
+                            ),
+                        },
                         "confirmed": {
                             "type": "boolean",
                             "description": (
@@ -212,7 +230,7 @@ class ComputerTool:
         # Generous: long type_text + per-char delay can legitimately take a
         # while; everything else should be sub-second. 20s catches a wedge
         # quickly without false-positiving on slow IME / multi-line typing.
-        timeout_s = 20.0 if action == "type" else 15.0
+        timeout_s = 20.0 if action in ("type", "multi_drag") else 15.0
         # 蟹钳点击脉冲：click / drag 类动作执行期间将光标换为闭合态，
         # ~120ms 后还原为张开态。脱离 CrabCursor block 时自动 no-op。
         _PULSE_ACTIONS = {
@@ -495,6 +513,29 @@ class ComputerTool:
             x, y = self._coord(coord)
             d.left_click_drag(x, y)
             return ToolResult(output=f"drag to {x},{y}")
+
+        if a == "multi_drag":
+            raw_strokes = p.get("strokes", [])
+            if not raw_strokes:
+                return ToolResult(error="multi_drag requires a non-empty 'strokes' array")
+            cap = self.last_capture
+            if cap is None:
+                return ToolResult(error=(
+                    "no screenshot taken yet; call action='screenshot' first so "
+                    "stroke coordinates have a known reference frame."
+                ))
+            screen_strokes: list[tuple[int, int, int, int]] = []
+            for i, s in enumerate(raw_strokes):
+                if not (isinstance(s, (list, tuple)) and len(s) == 4):
+                    return ToolResult(error=f"stroke[{i}] must be [from_x, from_y, to_x, to_y], got {s!r}")
+                try:
+                    fx, fy = cap.model_to_screen(int(s[0]), int(s[1]))
+                    tx, ty = cap.model_to_screen(int(s[2]), int(s[3]))
+                except Exception as exc:
+                    return ToolResult(error=f"stroke[{i}] coordinate conversion failed: {exc}")
+                screen_strokes.append((fx, fy, tx, ty))
+            n = d.multi_drag(screen_strokes)
+            return ToolResult(output=f"multi_drag executed {n} strokes")
 
         if a == "scroll":
             direction = p.get("scroll_direction", "down")

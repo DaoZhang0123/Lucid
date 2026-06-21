@@ -26,7 +26,6 @@ TIPS = """\
 LAUNCHER = {
     "name": "File Explorer",
     "description": "Windows File Explorer.",
-    "shortcut": "win+e",
     "exe": "explorer",
     "process": "explorer.exe",
 }

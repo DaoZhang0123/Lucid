@@ -1,14 +1,16 @@
 """`launch_app` meta tool —— 用 Windows 原生接口启动 / 切换 App，绕开视觉。
 
-设计：4 步策略链（详见 Docs/screenshot.md §12）
+设计：3 步策略链（详见 Docs/screenshot.md §12）
   1. **已在跑** → 找窗口 → SetForegroundWindow（零启动、零截图）
-  2. **全局快捷键** → pyautogui.hotkey
-  3. **协议 URI**   → start <uri>
-  4. **可执行别名 / 路径** → subprocess.Popen("<exe>", shell=True)
+  2. **协议 URI**   → start <uri>
+  3. **可执行别名 / 路径** → subprocess.Popen("<exe>", shell=True)
+
+注：旧版 Step 2（全局快捷键 → pyautogui.hotkey）已删除。快捷键启动不可靠——
+    toggle 类热键（如微信 Ctrl+Alt+W）会反复隐藏/显示窗口，且依赖用户注册了
+    该热键。统一走 URI / exe 更稳定。
 
 数据：`<user data>/launchers.json` 持久化每个 launcher entry。首次启动 sidecar 时
-seed 一份默认表（wechat / vscode / outlook / chrome / explorer / notepad / settings / run）。
-用户可以从 `/launchers` 前端页面手动校准（覆盖默认）。
+seed 一份默认表。用户可以从 `/launchers` 前端页面手动校准（覆盖默认）。
 """
 from __future__ import annotations
 
@@ -422,28 +424,6 @@ def check_app_running(cfg: LaunchersConfig, name: str) -> dict[str, Any]:
     return out
 
 
-def _send_hotkey(combo: Any) -> None:
-    try:
-        import pyautogui  # type: ignore[import-not-found]
-    except Exception:
-        return
-    if isinstance(combo, list):
-        for step in combo:
-            if not step:
-                continue
-            if "+" in step:
-                pyautogui.hotkey(*[k.strip() for k in step.split("+") if k.strip()])
-            else:
-                pyautogui.typewrite(step, interval=0.02)
-            time.sleep(0.15)
-        return
-    if isinstance(combo, str):
-        if "+" in combo:
-            pyautogui.hotkey(*[k.strip() for k in combo.split("+") if k.strip()])
-        else:
-            pyautogui.press(combo)
-
-
 def _wait_for_windows(spec: dict[str, Any], timeout: float = 1.5, interval: float = 0.1) -> list[WindowMatch]:
     """Poll `_find_windows(spec)` up to `timeout` seconds; return the first
     non-empty result, or `[]` if the deadline elapses. Used after we trigger
@@ -550,59 +530,9 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
             **extra,
         }
 
-    # Step 2: shortcut
-    shortcut = spec.get("shortcut")
-    if shortcut:
-        try:
-            _send_hotkey(shortcut)
-            wait_s = _launch_timeout(spec, 1.5)
-            wins2 = _wait_for_windows(spec, timeout=wait_s)
-            note = ""
-            if not wins2:
-                # Many app hotkeys (e.g. WeChat's Ctrl+Alt+W) are TOGGLES:
-                # if the app's main window was already visible but our title /
-                # process matcher missed it in step 1, the hotkey just *hid* it.
-                # Detection: nothing visible after the hotkey + a generous
-                # wait. Recovery: send the same hotkey again to toggle back
-                # on, then poll once more. This is harmless when the first
-                # press was a real "show" that simply hadn't painted yet —
-                # in that case the second press would hide it again, BUT we
-                # only re-send when wins2 is empty, so by definition there
-                # was nothing to hide.
-                _send_hotkey(shortcut)
-                wins2 = _wait_for_windows(spec, timeout=wait_s)
-                if wins2:
-                    note = " (hotkey is a toggle; first press hid an existing window, second press restored it)"
-            if wins2:
-                w = wins2[0]
-                _force_foreground(w.hwnd)
-                return {
-                    "ok": True,
-                    "method": "shortcut",
-                    "slug": slug,
-                    "name": spec.get("name", slug),
-                    "shortcut": shortcut,
-                    "hwnd": w.hwnd,
-                    "window_title": w.title,
-                    "foreground_title": _foreground_title(),
-                    "pid": w.pid,
-                    "message": f"launched {spec.get('name', slug)} via shortcut {shortcut!r}{note}",
-                }
-            # No window after two attempts → fall through to next launch
-            # method, but remember the hint.
-            last_err = (
-                f"shortcut {shortcut!r} fired but no matching window appeared "
-                f"within 3s (hotkey may not be registered, or app failed to start); "
-                f"trying next method"
-            )
-        except Exception as e:
-            last_err = f"shortcut failed: {e}"
-        else:
-            last_err = ""
-    else:
-        last_err = ""
+    last_err = ""
 
-    # Step 3: URI
+    # Step 2: URI
     uri = spec.get("uri")
     if uri:
         try:
@@ -630,7 +560,7 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
         except Exception as e:
             last_err = f"uri failed: {e}"
 
-    # Step 4: exe alias / path
+    # Step 3: exe alias / path
     exe = spec.get("exe")
     if exe:
         try:
@@ -714,7 +644,7 @@ def launch_app(cfg: LaunchersConfig, name: str, page: str | None = None) -> dict
         "method": None,
         "message": (
             f"could not launch {spec.get('name', slug)}; tried "
-            f"{'shortcut, ' if shortcut else ''}{'uri, ' if uri else ''}{'exe' if exe else ''}"
+            f"{'uri, ' if uri else ''}{'exe' if exe else 'no launch method configured'}"
             f"{'; ' + last_err if last_err else ''}"
         ),
     }
@@ -746,8 +676,6 @@ def catalog_for_prompt(cfg: LaunchersConfig) -> str:
     lines = []
     for it in items:
         marks = []
-        if it.get("shortcut"):
-            marks.append("shortcut")
         if it.get("uri"):
             marks.append("uri")
         if it.get("exe"):

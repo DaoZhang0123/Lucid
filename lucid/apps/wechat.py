@@ -5,8 +5,7 @@ TITLE = "WeChat for Windows (微信)"
 
 TIPS = """\
 - [seed · no-region-spec] **WeChat has NO `region(app="wechat", ...)` entries — do NOT call `region(...)` for WeChat.** WeChat is a custom-painted (non-UIA-friendly) Win32 app, so the toolbar / emoji button / input box / sidebar all return nothing useful from UI Automation. `region(app="wechat", name="…")` will fail with `no UIA region spec for 'wechat'`. To locate a button (emoji, file/paperclip, voice, search), take a fresh `screenshot(level="active_window")` and read coordinates off the **L2 colour gridline legend** (see system-prompt rule 7). For the chat input you don't need coordinates at all — focus jumps there automatically after a contact click; just `type` and press `Return`. Prefer keyboard chains (`Ctrl+F` to search a contact, `Tab` / arrow keys inside dialogs, `@` then auto-highlighted first row) over hunting toolbar icons by click.
-- [seed · launch] Prefer `launch_app(name="wechat")` (it tries the global hotkey + tray + start menu) over double-clicking the desktop icon — duplicate launches are usually rejected by the running instance.
-- [seed · hotkey-is-toggle] **`Ctrl+Alt+W` is a TOGGLE, not a "raise to front".** Pressing it when WeChat is **hidden** shows the main window; pressing it when WeChat is **already visible** HIDES it. So after a successful `launch_app(name="wechat")` (which already brings the window forward via `weixin://` URI / tray / hotkey internally), do **NOT** press `Ctrl+Alt+W` again "to make sure it's focused" — that just hides it, and then the next `focus_window(title_substring="微信")` returns `no visible window`, which feels like the launch failed but actually you just toggled it back off. Repeating launch_app + ctrl+alt+w in a loop creates a show/hide oscillation that wastes 4-6 steps. Rule: after `launch_app(wechat)` reports `ok=True`, the next action should be the actual work (search a contact, type, click) — NOT another keypress to "re-focus". **Before pressing `Ctrl+Alt+W` AT ALL** (even as a fallback / "let me just make sure"), first probe with `focus_window(title_substring="微信")` — if it returns success, WeChat is already visible on the desktop and pressing the hotkey would hide it; skip the keypress and go straight to the real work. Only press `Ctrl+Alt+W` when `focus_window` reports `no visible window` (i.e. the window is genuinely hidden / minimized to tray). Never `launch_app` + `ctrl+alt+w` in the same step.
+- [seed · launch] Prefer `launch_app(name="wechat")` (it tries URI / exe launch, or focuses an existing window) over double-clicking the desktop icon — duplicate launches are usually rejected by the running instance.
 - [seed · tray] WeChat lives in the system tray (the green chat-bubble icon among the small icons on the **right of the bottom taskbar**). To open the main window: right-click the tray icon -> "Show main panel", or just left-click the tray icon.
 - [seed · detached-chat-window] Double-clicking a contact can open an independent chat window. Before typing, use `focus_window(title_substring="联系人名")` (or `focus_window(title_substring="微信")`) to ensure keystrokes land in the intended chat window; `ctrl+alt+w` usually returns to the main WeChat window only.
 - [seed · click-contact] After clicking a contact / group in the left chat list, focus **automatically jumps into the input box at the bottom-right** of the window — you do NOT need to click the input box separately. Just `type` your text and press Enter to send. (Useful chain: search contact → Enter → type message → Enter.)
@@ -30,15 +29,13 @@ TIPS = """\
 LAUNCHER = {
     "name": "WeChat",
     "description": "WeChat for Windows (微信). Tray-resident green chat-bubble.",
-    "shortcut": "ctrl+alt+w",
     "uri": "weixin://",
     "exe": "wechat",
     # WeChat 4.0+ ("新版微信") renamed the main process from `WeChat.exe` to
     # `Weixin.exe`; the window title stays "微信" on both. We must accept
     # either name, otherwise `_find_windows()` filters out the already-visible
-    # window (process mismatch) → Step 1 returns empty → Step 2 hotkey toggles
-    # the visible window HIDDEN → backend reports "could not launch" even
-    # though WeChat was right there on the desktop.
+    # window (process mismatch) → Step 1 returns empty → launch_app reports
+    # "could not launch" even though WeChat was right there on the desktop.
     "process": r"(weixin|wechat)\.exe",
     "window_title": "微信",
     # WeChat cold-start (process spawn → main window visible) regularly takes

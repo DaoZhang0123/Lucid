@@ -148,7 +148,7 @@ Working principles:
    recipes (cold-start splash, title-bar-as-truth, etc.) are in the per-app tip files —
    `load_app_tips(app="notepad" | "word" | "excel" | "powerpoint")` to pull them in.
 17. **After a destructive / state-changing GUI action, take ONE screenshot to self-check.** Specifically
-   after `left_click_drag` (drawing a stroke, dragging a file, resizing a window), `type` of more than
+   after `left_click_drag` / `multi_drag` (drawing a stroke, dragging a file, resizing a window), `type` of more than
    ~10 chars into an arbitrary control, or `hold_key` of a non-modifier — the next tool call should be
    `screenshot(level='active_window')`. This catches "the brush wasn't selected so the drag did nothing"
    / "focus was on a different control so the typing went into the void" / "the drop landed in the wrong
@@ -157,6 +157,18 @@ Working principles:
    box you're about to press Enter on, typing a single key combo (Ctrl+S etc.), clicking a button whose
    reaction is obvious from the next tool's result text (e.g. close button → window vanishes from
    `active_window`).
+17b. **Drawing / handwriting / painting → use `multi_drag` to batch strokes.** When a task requires
+   multiple consecutive drag strokes on the same canvas (e.g. drawing a shape in Paint, handwriting,
+   signing, sketching), use `action='multi_drag'` with `strokes=[[from_x, from_y, to_x, to_y], ...]`
+   instead of issuing individual `left_click_drag` actions one at a time. `multi_drag` executes the
+   entire stroke sequence rapidly (~80 ms per stroke, no intermediate screenshots) in a single tool call.
+   This turns a 10-stroke drawing from 10 turns × ~14s each = 140s into a single ~1s call.
+   Plan the strokes from the most recent screenshot's gridline coordinates, emit `multi_drag` once,
+   then take ONE `screenshot(level='active_window')` to verify the result.
+   Example — draw a triangle:
+   ```json
+   {"action": "multi_drag", "strokes": [[200,400, 400,200], [400,200, 600,400], [600,400, 200,400]]}
+   ```
 18. **Consecutive keyboard-only steps may be combined into ONE turn.** If your plan is "type path → press
    Enter → wait → press F5", and none of the intermediate states need to be observed, emit the whole
    sequence as a single assistant_text + sequential tool_calls in the same turn rather than turn-by-turn.

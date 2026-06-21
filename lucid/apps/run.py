@@ -5,8 +5,7 @@ TITLE = "Run dialog"
 
 TIPS = ""
 
-LAUNCHER = {
-    "name": "Run dialog",
-    "description": "The Win+R Run dialog.",
-    "shortcut": "win+r",
-}
+# The Run dialog was previously launched via a Win+R hotkey shortcut.
+# Hotkey-based launch has been removed (unreliable, fragile).
+# The Run dialog is a system shell feature, not a standalone app.
+LAUNCHER = None

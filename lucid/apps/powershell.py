@@ -32,7 +32,6 @@ TIPS = """\
 LAUNCHER = {
     "name": "PowerShell",
     "description": "Windows PowerShell (5.1) or PowerShell 7 (pwsh).",
-    "shortcut": "win+r",
     "exe": "powershell",
     "process": "powershell.exe",
     "window_title_re": r"PowerShell|pwsh|Windows PowerShell",

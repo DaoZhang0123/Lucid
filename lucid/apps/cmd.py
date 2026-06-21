@@ -25,7 +25,6 @@ TIPS = """\
 LAUNCHER = {
     "name": "Command Prompt",
     "description": "Windows Command Prompt (cmd.exe). Legacy DOS-style shell.",
-    "shortcut": "win+r",  # Fallback path: Win+R → type 'cmd' → Enter (handled below by exe).
     "exe": "cmd",
     "process": "cmd.exe",
     "window_title_re": r"Command Prompt|命令提示符|cmd\.exe",

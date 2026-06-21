@@ -244,7 +244,7 @@ UPDATE_LAUNCHER_SCHEMA: dict = {
             "Create OR update a launcher entry — e.g. when you discovered the global shortcut changed, the exe alias was wrong, the window title needs a different regex, or the user wants to register a brand-new app the agent has never heard of (e.g. `feishu`, `notion`, `obsidian`). "
             "The override is written to `<user data>/launchers.json` and takes precedence over the built-in defaults from this version, and survives across tasks / restarts. **Unknown slugs are auto-created**, no UI step required.\n"
             "**When to call**: \n"
-            "  (a) after a `launch_app` / `check_app_running` failure that you traced to a wrong field (e.g. `shortcut` no longer triggers WeChat — try the new combo, then call `update_launcher(name='wechat', shortcut='ctrl+shift+w')`); \n"
+            "  (a) after a `launch_app` / `check_app_running` failure that you traced to a wrong field (e.g. `exe` path changed — try the new path, then call `update_launcher(name='wechat', exe='C:\\...\\WeChat.exe')`); \n"
             "  (b) when the user asks to operate an app whose slug is missing from `list_apps()` — figure out its `exe` (alias like `notion` if installed via `start notion`, otherwise the absolute `.exe` path the user can confirm) and `window_title_re`, then call `update_launcher(name='notion', exe='notion', process='Notion.exe', window_title_re='Notion')`. After creating, call `launch_app('notion')` to verify; if it works, also `learn_tip(app='notion', text='registered on YYYY-MM-DD via exe=notion')` so future sessions remember why this entry exists. \n"
             "Don't call for one-off failures (network glitch, app currently broken)."
         ),
@@ -252,7 +252,6 @@ UPDATE_LAUNCHER_SCHEMA: dict = {
             "type": "object",
             "properties": {
                 "name":            {"type": "string", "description": "Launcher slug. Existing slug → patches that entry; new slug → creates a fresh user override (no built-in default required)."},
-                "shortcut":        {"type": "string", "description": "Optional new global hotkey, e.g. 'ctrl+alt+w'. Pass empty string to clear."},
                 "uri":             {"type": "string", "description": "Optional new shell URI, e.g. 'weixin://'. Pass empty string to clear."},
                 "exe":             {"type": "string", "description": "Optional new exe alias / absolute path."},
                 "process":         {"type": "string", "description": "Optional new process name (Windows tasklist style, e.g. 'WeChat.exe')."},
@@ -1061,8 +1060,6 @@ def dispatch_meta_tool(
         lines = ["Available launcher slugs:"]
         for it in items:
             methods = []
-            if it.get("shortcut"):
-                methods.append(f"shortcut={it['shortcut']}")
             if it.get("uri"):
                 methods.append(f"uri={it['uri']}")
             if it.get("exe"):
@@ -1108,7 +1105,7 @@ def dispatch_meta_tool(
             return ToolResult(error=f"no launcher named {name!r}; call list_apps() to see available slugs")
         # Pull only the writable fields the schema permits.
         spec: dict[str, Any] = {}
-        for key in ("shortcut", "uri", "exe", "process", "window_title", "window_title_re"):
+        for key in ("uri", "exe", "process", "window_title", "window_title_re"):
             if key in args:
                 v = args.get(key)
                 if isinstance(v, str):
@@ -1116,7 +1113,7 @@ def dispatch_meta_tool(
                 elif v is not None:
                     spec[key] = v
         if not spec:
-            return ToolResult(error="no fields to update; pass at least one of shortcut/uri/exe/process/window_title/window_title_re")
+            return ToolResult(error="no fields to update; pass at least one of uri/exe/process/window_title/window_title_re")
         item = launchers_mod.upsert_launcher(cfg.launchers, name, spec)
         changed = ", ".join(f"{k}={v!r}" for k, v in spec.items())
         return ToolResult(output=f"launcher {name!r} updated: {changed}\nnow active: {item}")

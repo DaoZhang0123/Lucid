@@ -150,6 +150,37 @@ class InputDriver:
         pyautogui.dragTo(cx, cy, duration=0.3, button="left")
         self._delay()
 
+    def multi_drag(
+        self,
+        strokes: list[tuple[int, int, int, int]],
+        *,
+        stroke_interval: float = 0.05,
+        drag_duration: float = 0.08,
+    ) -> int:
+        """Execute a batch of drag strokes rapidly for drawing/handwriting.
+
+        Each stroke is ``(from_x, from_y, to_x, to_y)`` in screen coords.
+        Between strokes the mouse button is released then re-pressed at the
+        next start point, with only ``stroke_interval`` seconds of pause
+        (much faster than the normal ``action_delay``).
+
+        Returns the number of strokes executed.
+        """
+        _nudge_off_corner_if_needed()
+        executed = 0
+        for fx, fy, tx, ty in strokes:
+            sfx, sfy = _safe_xy(fx, fy)
+            stx, sty = _safe_xy(tx, ty)
+            pyautogui.moveTo(sfx, sfy, duration=0.0)
+            pyautogui.mouseDown(button="left")
+            pyautogui.moveTo(stx, sty, duration=drag_duration)
+            pyautogui.mouseUp(button="left")
+            executed += 1
+            if stroke_interval > 0:
+                time.sleep(stroke_interval)
+        self._delay()
+        return executed
+
     def scroll(self, x: int | None, y: int | None, direction: str, amount: int) -> None:
         if x is not None:
             _move_to(x, y)
