@@ -170,9 +170,9 @@ def _request_with_fallback(method: str, url: str, *, headers: dict[str, str],
         return resp.status_code, body
     hint = ""
     if _SYSTEM_PROXY:
-        hint = f"（已尝试系统代理 {_SYSTEM_PROXY} + 直连均失败；请检查代理是否在线、能否访问 github.com）"
+        hint = f"(Tried system proxy {_SYSTEM_PROXY} and direct connection; please verify the proxy is online and github.com is reachable.)"
     else:
-        hint = "（无系统代理；如在中国大陆，请打开 V2Ray/Clash 等代理后重试）"
+        hint = "(No system proxy detected; please check your network and whether github.com is reachable.)"
     return 0, {"error": f"network: {last_err} {hint}"}
 
 

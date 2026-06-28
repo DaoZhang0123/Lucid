@@ -241,12 +241,22 @@ You CANNOT control the GUI. The only tools available are:
 
 Strict rules:
   1. Be conservative. If unsure, write nothing. Bad tips are worse than missing tips.
-  2. Deduplicate against the "Existing tips" / "Existing memory" digests below.
-     If something close already exists, skip it.
+  2. Deduplicate against the "Existing memory" (shown IN FULL below) and "Existing
+     tips". If something semantically equivalent already exists — even if worded
+     differently — SKIP it. Read the entire memory section carefully before writing.
   3. Tips must be concrete and actionable: "<App>: <action> via <method>" or
      "<App>: avoid <pitfall> because <reason>". No vague advice.
-  4. Memory entries must be user-stable facts (preferences, naming, paths). Do NOT
-     record one-shot task facts (timestamps, search queries, recipient names).
+  4. Memory entries MUST be user-stable facts ONLY. Valid examples:
+       - User personal info (name, birthday, family member names)
+       - File path conventions (desktop location, encoding)
+       - Strong preferences (language, tools)
+     INVALID — do NOT write these to memory:
+       - Task procedures / workflows ("每日X任务：做A然后B然后C")
+       - Scheduled task parameters (send targets, message templates, signatures)
+       - API coordinates, URLs, or query strings used in tasks
+       - Anything that restates what a scheduler config or tip already covers
+     If the knowledge is about HOW to operate an app → use learn_tip instead.
+     If it describes a repeating task workflow → it belongs in scheduler, skip it.
   5. At most 3 learn_tip calls and 1 remember call per pass.
   6. After your tool_calls, reply ONE short sentence summarising what you wrote
      (or "nothing worth saving" if you skipped everything).
@@ -296,12 +306,20 @@ def _summarise_event(evt: dict[str, Any], max_chars: int) -> str | None:
     return None
 
 
-def _digest(text: str, max_lines: int) -> str:
+def _digest(text: str, max_lines: int, *, tail: bool = False) -> str:
+    """Compress text to at most *max_lines* non-empty lines.
+
+    When *tail* is True the LAST max_lines are kept (most recent entries —
+    important for memory dedup since the reflector is most likely to duplicate
+    recent writes).
+    """
     if not text:
         return "(empty)"
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if len(lines) <= max_lines:
         return "\n".join(lines)
+    if tail:
+        return f"... ({len(lines) - max_lines} older lines elided)\n" + "\n".join(lines[-max_lines:])
     return "\n".join(lines[:max_lines]) + f"\n... ({len(lines) - max_lines} more lines elided)"
 
 
@@ -359,8 +377,8 @@ def build_user_prompt(cfg: Config, thread: dict[str, Any]) -> str:
         f"{_digest(tips_text, cfg.doze.max_tips_digest_lines)}\n"
         f"\n## Existing per-app tips for apps referenced in this thread (do not duplicate)\n"
         f"{per_app_section}\n"
-        f"\n## Existing memory digest (do not duplicate)\n"
-        f"{_digest(mem_text, cfg.doze.max_memory_digest_lines)}\n"
+        f"\n## Existing memory (FULL — read carefully, do NOT duplicate any of these)\n"
+        f"{mem_text.strip() if mem_text.strip() else '(empty)'}\n"
         f"\n## Event timeline\n"
         f"{timeline}\n"
         f"\n## Your turn\n"

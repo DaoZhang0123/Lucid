@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +30,67 @@ from .config import MemoryConfig
 
 _HEADER = "# lucid Long-term Memory\n"
 _ENTRY_RE = re.compile(r"^- \[", re.MULTILINE)
+
+# Regex to strip the timestamp+source prefix from an entry line for comparison.
+_ENTRY_PREFIX_RE = re.compile(r"^- \[[^\]]*\]\s*")
+
+# Characters to strip when computing token overlap for dedup.
+_PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
+
+# CJK character ranges (Unified Ideographs + common extensions).
+_CJK_RE = re.compile(
+    r"([\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff"
+    r"\U00020000-\U0002a6df\U0002a700-\U0002b73f])"
+)
+
+
+def _normalize_for_dedup(text: str) -> set[str]:
+    """Extract a bag-of-tokens from *text* for fuzzy dedup comparison.
+
+    For CJK text (Chinese/Japanese/Korean), each character is treated as a
+    separate token since these languages don't use whitespace word boundaries.
+    For Latin/etc. text, splits on whitespace after stripping punctuation.
+    Tokens shorter than 2 chars are dropped ONLY for non-CJK tokens.
+    """
+    text = _ENTRY_PREFIX_RE.sub("", text)
+    text = _PUNCT_RE.sub(" ", text.lower())
+    # Insert spaces around each CJK character so they become individual tokens.
+    text = _CJK_RE.sub(r" \1 ", text)
+    tokens: set[str] = set()
+    for t in text.split():
+        # Keep all CJK single chars; drop short Latin tokens (articles etc.)
+        if len(t) >= 2 or _CJK_RE.match(t):
+            tokens.add(t)
+    return tokens
+
+
+def _is_duplicate(new_text: str, existing_entries: list[str], threshold: float = 0.65) -> bool:
+    """Return True if *new_text* is semantically redundant with any existing entry.
+
+    Uses token-overlap comparison as a lightweight safety net. The primary dedup
+    mechanism is the LLM seeing full memory content in the doze prompt; this
+    catches cases where the LLM ignores the instruction anyway.
+
+    A threshold of 0.65 means 65% of the smaller token-set must appear in the
+    larger one (overlap coefficient).
+    """
+    new_tokens = _normalize_for_dedup(new_text)
+    if not new_tokens:
+        return False
+    for entry in existing_entries:
+        existing_tokens = _normalize_for_dedup(entry)
+        if not existing_tokens:
+            continue
+        # Use overlap coefficient: |intersection| / min(|A|, |B|)
+        # This is more forgiving than Jaccard when one entry is a superset of
+        # the other (which is the typical duplication pattern here).
+        intersection = new_tokens & existing_tokens
+        smaller = min(len(new_tokens), len(existing_tokens))
+        if smaller == 0:
+            continue
+        if len(intersection) / smaller >= threshold:
+            return True
+    return False
 
 
 def memory_path(cfg: MemoryConfig) -> Path:
@@ -71,7 +133,10 @@ def memory_for_prompt(cfg: MemoryConfig) -> str:
 
 
 def append_memory(cfg: MemoryConfig, text: str, source: str = "agent") -> bool:
-    """追加一条带时间戳的条目。空文本忽略。返回是否成功。"""
+    """追加一条带时间戳的条目。空文本忽略。返回是否成功。
+
+    内置去重：如果新条目与现有条目在 token 重叠度 ≥ 70% 时视为重复，跳过写入。
+    """
     if not cfg.enabled:
         return False
     text = (text or "").strip()
@@ -83,6 +148,20 @@ def append_memory(cfg: MemoryConfig, text: str, source: str = "agent") -> bool:
         text = text[: cfg.max_entry_chars - 1] + "…"
     p = memory_path(cfg)
     p.parent.mkdir(parents=True, exist_ok=True)
+
+    # --- dedup check ---
+    if p.is_file():
+        try:
+            existing_raw = p.read_text(encoding="utf-8")
+        except OSError:
+            existing_raw = ""
+        existing_entries = [
+            ln for ln in existing_raw.splitlines() if ln.startswith("- [")
+        ]
+        if _is_duplicate(text, existing_entries):
+            return False  # skip duplicate
+    # --- end dedup ---
+
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     entry = f"- [{ts} · {source}] {text}\n"
     if not p.exists():

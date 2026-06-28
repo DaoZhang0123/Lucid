@@ -468,7 +468,7 @@ class DozeConfig:
     max_tool_calls_per_pass: int = 6
     max_event_text_chars: int = 600
     max_tips_digest_lines: int = 30
-    max_memory_digest_lines: int = 30
+    max_memory_digest_lines: int = 60
     # LLM reply ceiling (the reflector replies one short sentence + tool_calls).
     max_tokens: int = 1500
     # Persistence (relative to <user data> dir).
